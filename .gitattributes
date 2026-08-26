@@ -1,0 +1,12 @@
+# Auto-detect text files and normalize line endings
+* text=auto eol=lf
+
+# Force LF on shell scripts and executables
+*.sh text eol=lf
+bin/harness text eol=lf
+setup text eol=lf
+install.sh text eol=lf
+
+# Markdown and JSON
+*.md text diff=markdown eol=lf
+*.json text eol=lf

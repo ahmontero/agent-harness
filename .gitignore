@@ -1,0 +1,56 @@
+# OS Files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Node / NPM
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Python / Pytest / Caches
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+.venv/
+env/
+venv/
+
+# Logs & Temporary Files
+*.log
+tmp/
+temp/
+.cache/
+
+# IDE / Editor Files
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Local overrides & environment files
+.env
+.env.local
+.env.*.local
+stack.config.local.json
+
+# Local harness test instances & machine symlinks
+.agents/
+.gemini/
+.claude/
+.codex/
+.cursor/
+CLAUDE.md
+GEMINI.md
+stack.config.json
+rules/

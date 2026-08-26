@@ -1,0 +1,26 @@
+{
+  "project": {
+    "name": "fastapi-service",
+    "defaultProfile": "api"
+  },
+  "profiles": {
+    "api": {
+      "displayName": "FastAPI Service",
+      "detect": {
+        "files": ["pyproject.toml", "poetry.lock", "requirements.txt"]
+      },
+      "qa": {
+        "testRunner": "pytest",
+        "testCommand": "pytest",
+        "tddCommand": "pytest {path}",
+        "lintCommand": "ruff check .",
+        "typeCheckCommand": "mypy ."
+      },
+      "rules": {
+        "invariants": "./rules/floor.md",
+        "landmines": "./rules/landmines.md",
+        "scanner": "./rules/landmines.json"
+      }
+    }
+  }
+}

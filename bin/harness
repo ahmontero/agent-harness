@@ -1,0 +1,172 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# agent-harness: bin/harness
+# Universal Multi-Call CLI Dispatcher & AI Engineering Engine
+# ==============================================================================
+
+set -eo pipefail
+
+SOURCE="${BASH_SOURCE[0]}"
+while [ -L "${SOURCE}" ]; do
+    DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
+    SOURCE="$(readlink "${SOURCE}")"
+    [[ ${SOURCE} != /* ]] && SOURCE="${DIR}/${SOURCE}"
+done
+HARNESS_ROOT="$(cd -P "$(dirname "${SOURCE}")/.." && pwd)"
+SCRIPTS_DIR="${HARNESS_ROOT}/core/scripts"
+
+source "${SCRIPTS_DIR}/lib/utils.sh"
+source "${SCRIPTS_DIR}/lib/config.sh"
+source "${SCRIPTS_DIR}/lib/git.sh"
+source "${SCRIPTS_DIR}/lib/issues.sh"
+
+INVOKED_NAME="$(basename "$0")"
+
+# 1. Multi-call profile resolution
+case "${INVOKED_NAME}" in
+    harness|agh|agent-harness|forge)
+        # Default harness binary names - do not treat as a profile alias
+        ;;
+    *)
+        export STACK_PROFILE="${INVOKED_NAME}"
+        ;;
+esac
+
+# 2. Check for explicit --profile / -p flag
+if [ "${1:-}" = "--profile" ] || [ "${1:-}" = "-p" ]; then
+    export STACK_PROFILE="$2"
+    shift 2
+fi
+
+# 3. Active profile resolution
+ACTIVE_PROFILE="$(get_active_profile)"
+export STACK_PROFILE="${ACTIVE_PROFILE}"
+
+show_help() {
+    print_banner
+    cat << USAGE_EOF
+
+${BOLD}Usage:${RESET}
+  harness [options] <command> [arguments...]
+  ${DIM}(alias: agh, agent-harness)${RESET}
+  ${DIM}(or via profile alias: ${ACTIVE_PROFILE} <command> [arguments...])${RESET}
+
+${BOLD}Options:${RESET}
+  --profile, -p <name>    Explicitly specify active profile (Default: ${CYAN}${ACTIVE_PROFILE}${RESET})
+
+${BOLD}Core Commands:${RESET}
+  ${GREEN}doctor${RESET}        Diagnose environment, symlinks, configs, harnesses & tools
+                harness doctor [--fix] [--check-auth]
+
+  ${GREEN}context${RESET}       Extract fast, token-efficient workspace signals (<1s) for LLMs
+                harness context [--json]
+
+  ${GREEN}spec${RESET}          Spec-Driven Development & Living Delta Specs management
+                harness spec status [--json]
+                harness spec create <issue_key> <slug> [--module <name>]
+                harness spec verify [spec_path]
+                harness spec archive <module_name> [spec_path]
+
+  ${GREEN}qa${RESET}            Run test suites, TDD loops, linters, and type checkers
+                harness qa test [path] [args...]
+                harness qa tdd  <test_path>
+                harness qa scan [--staged|--diff|--all]
+                harness qa lint
+                harness qa types
+                harness qa all
+
+  ${GREEN}scan${RESET}          Run JSON-driven static Landmine & Security scanner
+                harness scan [--staged|--diff|--all] [--install-hook]
+
+  ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
+                harness worktree create <type> <issue_key> <slug> [--base <branch>]
+                harness worktree list
+                harness worktree remove <issue_key>
+
+  ${GREEN}branch${RESET}        Manage & validate issue-driven branches
+                harness branch create <type> <issue_key> <slug> [--base <branch>]
+                harness branch check [branch]
+                harness branch list
+
+  ${GREEN}commit${RESET}        Build conventional commit message with issue prefix
+                harness commit build <type> "<message>"
+                harness commit check [commit_hash]
+
+  ${GREEN}debt${RESET}          Scan & harvest technical debt markers (# pragmatism:, # defer:)
+                harness debt [--json] [--all] [--path <path>]
+
+  ${GREEN}ship${RESET}          Run pre-flight checks, build commit, and open Pull Request
+                harness ship [target_branch]
+
+  ${GREEN}sync${RESET}          Re-sync skills & rules across all installed agent harnesses
+                harness sync
+
+  ${GREEN}init${RESET}          Initialize agent harness in current repository
+                harness init [--recipe <name>]
+USAGE_EOF
+}
+
+COMMAND="${1:-}"
+if [ -z "${COMMAND}" ] || [ "${COMMAND}" = "-h" ] || [ "${COMMAND}" = "--help" ]; then
+    show_help
+    exit 0
+fi
+shift || true
+
+case "${COMMAND}" in
+    doctor)
+        exec "${SCRIPTS_DIR}/stack-doctor.sh" "$@"
+        ;;
+    context)
+        exec "${SCRIPTS_DIR}/stack-context.sh" "$@"
+        ;;
+    spec)
+        exec "${SCRIPTS_DIR}/stack-spec.sh" "$@"
+        ;;
+    branch)
+        exec "${SCRIPTS_DIR}/stack-branch.sh" "$@"
+        ;;
+    commit)
+        exec "${SCRIPTS_DIR}/stack-commit.sh" "$@"
+        ;;
+    scan)
+        exec "${SCRIPTS_DIR}/stack-scan.sh" "$@"
+        ;;
+    qa)
+        exec "${SCRIPTS_DIR}/stack-qa.sh" "$@"
+        ;;
+    tdd)
+        exec "${SCRIPTS_DIR}/stack-qa.sh" tdd "$@"
+        ;;
+    worktree)
+        exec "${SCRIPTS_DIR}/stack-worktree.sh" "$@"
+        ;;
+    debt)
+        exec "${SCRIPTS_DIR}/stack-debt.sh" "$@"
+        ;;
+    ship|pr)
+        exec "${SCRIPTS_DIR}/stack-pr.sh" "$@"
+        ;;
+    completion)
+        exec "${SCRIPTS_DIR}/stack-completion.sh" "$@"
+        ;;
+    sync)
+        exec "${HARNESS_ROOT}/install.sh" --sync-only "$@"
+        ;;
+    init)
+        exec "${HARNESS_ROOT}/install.sh" --target "$(pwd)" "$@"
+        ;;
+    *)
+        # Check custom commands directory if configured
+        CUSTOM_DIR="$(get_profile_value "customCommandsDir" "")"
+        if [ -n "${CUSTOM_DIR}" ] && [ -f "${CUSTOM_DIR}/${COMMAND}.sh" ]; then
+            exec "${CUSTOM_DIR}/${COMMAND}.sh" "$@"
+        elif [ -n "${CUSTOM_DIR}" ] && [ -f "${CUSTOM_DIR}/${COMMAND}" ]; then
+            exec "${CUSTOM_DIR}/${COMMAND}" "$@"
+        else
+            log_error "Unknown command '${COMMAND}'."
+            show_help
+            exit 1
+        fi
+        ;;
+esac

@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "project": {
+    "name": "my-awesome-project",
+    "defaultProfile": "backend"
+  },
+  "profiles": {
+    "backend": {
+      "cliAlias": "backend",
+      "displayName": "Backend API Service",
+      "targetRepoPath": "~/projects/backend-api",
+      "detect": {
+        "files": ["pyproject.toml", "manage.py"],
+        "directories": ["src", "app"]
+      },
+      "git": {
+        "trunkBranch": "main",
+        "releaseBranchPrefix": "release/"
+      },
+      "issueTracker": {
+        "provider": "github",
+        "defaultPrefix": "API"
+      },
+      "qa": {
+        "testRunner": "pytest",
+        "testCommand": "pytest",
+        "tddCommand": "pytest {path}",
+        "lintCommand": "ruff check .",
+        "typeCheckCommand": "mypy ."
+      },
+      "ci": {
+        "provider": "github"
+      },
+      "rules": {
+        "invariants": "./rules/floor.md",
+        "landmines": "./rules/landmines.md",
+        "scanner": "./rules/landmines.json"
+      }
+    }
+  },
+  "localAI": {
+    "enabled": false,
+    "baseUrl": "http://localhost:11434/v1",
+    "model": "qwen2.5-coder:latest",
+    "temperature": 0.2
+  }
+}

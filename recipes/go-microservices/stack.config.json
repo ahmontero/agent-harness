@@ -1,0 +1,25 @@
+{
+  "project": {
+    "name": "go-microservice",
+    "defaultProfile": "service"
+  },
+  "profiles": {
+    "service": {
+      "displayName": "Go Microservice",
+      "detect": {
+        "files": ["go.mod", "go.sum"]
+      },
+      "qa": {
+        "testRunner": "go",
+        "testCommand": "go test ./...",
+        "tddCommand": "go test -v -run {path}",
+        "lintCommand": "golangci-lint run"
+      },
+      "rules": {
+        "invariants": "./rules/floor.md",
+        "landmines": "./rules/landmines.md",
+        "scanner": "./rules/landmines.json"
+      }
+    }
+  }
+}

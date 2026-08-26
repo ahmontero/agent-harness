@@ -1,0 +1,55 @@
+name: "🐛 Bug Report"
+description: Report an issue or unexpected behavior in agent-harness
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for taking the time to fill out this bug report! Please provide as much detail as possible.
+  - type: dropdown
+    id: runtime
+    attributes:
+      label: AI Runtime / IDE
+      description: Which AI agent or harness were you using?
+      options:
+        - Google Antigravity
+        - Claude Code
+        - Cursor Agent
+        - OpenAI Codex / CLI
+        - Generic Agent (.agents)
+        - Standalone CLI (harness directly)
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Operating System & Shell
+      description: e.g. macOS 14.5 (zsh), Ubuntu 22.04 (bash)
+      placeholder: macOS 14.5 (zsh)
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: Provide a clear and concise description of the bug.
+      placeholder: When running `harness scan`, ...
+    validations:
+      required: true
+  - type: textarea
+    id: steps-to-reproduce
+    attributes:
+      label: Steps to Reproduce
+      description: How can maintainers reproduce this issue?
+      value: |
+        1. Run `harness ...`
+        2. In project with ...
+        3. See error ...
+    validations:
+      required: true
+  - type: textarea
+    id: doctor-output
+    attributes:
+      label: Output of `harness doctor`
+      description: Run `harness doctor` in your terminal and paste the output here.
+      render: shell

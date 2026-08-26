@@ -1,0 +1,26 @@
+{
+  "project": {
+    "name": "fullstack-app",
+    "defaultProfile": "fullstack"
+  },
+  "profiles": {
+    "fullstack": {
+      "displayName": "TypeScript Fullstack App",
+      "detect": {
+        "files": ["package.json", "tsconfig.json"]
+      },
+      "qa": {
+        "testRunner": "vitest",
+        "testCommand": "npm test",
+        "tddCommand": "npx vitest run {path}",
+        "lintCommand": "npm run lint",
+        "typeCheckCommand": "npm run typecheck"
+      },
+      "rules": {
+        "invariants": "./rules/floor.md",
+        "landmines": "./rules/landmines.md",
+        "scanner": "./rules/landmines.json"
+      }
+    }
+  }
+}

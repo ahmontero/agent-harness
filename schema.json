@@ -1,0 +1,161 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://raw.githubusercontent.com/ahmontero/agent-harness/main/schema.json",
+  "title": "Agent Harness Configuration",
+  "description": "Configuration schema for agent-harness (stack.config.json)",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "type": "string",
+      "description": "URL to the JSON Schema definition"
+    },
+    "project": {
+      "type": "object",
+      "description": "Global project metadata",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Human-readable name of the project"
+        },
+        "defaultProfile": {
+          "type": "string",
+          "description": "Default active profile when not specified"
+        }
+      },
+      "required": ["name"]
+    },
+    "profiles": {
+      "type": "object",
+      "description": "Map of profile configurations (e.g. backend, frontend, microservices)",
+      "additionalProperties": {
+        "type": "object",
+        "properties": {
+          "cliAlias": {
+            "type": "string",
+            "description": "Custom binary alias (e.g. 'myapi' -> runs 'stack' with this profile)"
+          },
+          "displayName": {
+            "type": "string",
+            "description": "Display name of the profile"
+          },
+          "targetRepoPath": {
+            "type": "string",
+            "description": "Root path to target repository if monorepo or external"
+          },
+          "detect": {
+            "type": "object",
+            "description": "Auto-detection heuristics for this profile",
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Files that indicate this profile is active"
+              },
+              "directories": {
+                "type": "array",
+                "items": { "type": "string" },
+                "description": "Directories that indicate this profile is active"
+              }
+            }
+          },
+          "git": {
+            "type": "object",
+            "description": "Git branch configuration",
+            "properties": {
+              "trunkBranch": {
+                "type": "string",
+                "default": "main",
+                "description": "Primary trunk branch (main or master)"
+              },
+              "releaseBranchPrefix": {
+                "type": "string",
+                "default": "release/",
+                "description": "Prefix for release branches"
+              }
+            }
+          },
+          "issueTracker": {
+            "type": "object",
+            "description": "Issue tracking provider configuration",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["github", "gitlab", "jira", "linear"],
+                "description": "Issue tracker provider"
+              },
+              "defaultPrefix": {
+                "type": "string",
+                "description": "Default issue key prefix (e.g. 'CORE' for 'CORE-123')"
+              }
+            }
+          },
+          "qa": {
+            "type": "object",
+            "description": "Test runner, linter, and type-checker commands",
+            "properties": {
+              "testRunner": {
+                "type": "string",
+                "description": "Test framework (pytest, vitest, jest, cargo, go)"
+              },
+              "testCommand": {
+                "type": "string",
+                "description": "Command to run entire test suite"
+              },
+              "tddCommand": {
+                "type": "string",
+                "description": "Command to run targeted test file ({path} placeholder)"
+              },
+              "lintCommand": {
+                "type": "string",
+                "description": "Command to run linter (e.g. 'ruff check .' or 'eslint .')"
+              },
+              "typeCheckCommand": {
+                "type": "string",
+                "description": "Command to run type checker (e.g. 'mypy .' or 'tsc --noEmit')"
+              }
+            }
+          },
+          "ci": {
+            "type": "object",
+            "description": "CI provider integration",
+            "properties": {
+              "provider": {
+                "type": "string",
+                "enum": ["github", "gitlab", "azure"],
+                "description": "CI provider"
+              }
+            }
+          },
+          "rules": {
+            "type": "object",
+            "description": "Paths to domain quality floor and landmines",
+            "properties": {
+              "invariants": {
+                "type": "string",
+                "description": "Path to floor.md invariants document"
+              },
+              "landmines": {
+                "type": "string",
+                "description": "Path to landmines.md anti-patterns document"
+              },
+              "scanner": {
+                "type": "string",
+                "description": "Path to landmines.json static AST/regex rules"
+              }
+            }
+          }
+        }
+      }
+    },
+    "localAI": {
+      "type": "object",
+      "description": "Local AI provider settings (Ollama / LocalAI)",
+      "properties": {
+        "enabled": { "type": "boolean" },
+        "baseUrl": { "type": "string" },
+        "model": { "type": "string" },
+        "temperature": { "type": "number" }
+      }
+    }
+  }
+}

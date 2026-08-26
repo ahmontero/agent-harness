@@ -1,0 +1,36 @@
+{
+  "$schema": "https://raw.githubusercontent.com/ahmontero/agent-harness/main/schema.json",
+  "project": {
+    "name": "my-project",
+    "defaultProfile": "backend"
+  },
+  "profiles": {
+    "backend": {
+      "displayName": "Backend Service",
+      "detect": {
+        "files": ["package.json", "pyproject.toml", "Cargo.toml", "go.mod"],
+        "directories": ["src", "app"]
+      },
+      "git": {
+        "trunkBranch": "main"
+      },
+      "issueTracker": {
+        "provider": "github",
+        "defaultPrefix": "PROJ"
+      },
+      "qa": {
+        "testRunner": "pytest",
+        "testCommand": "pytest",
+        "tddCommand": "pytest {path}"
+      },
+      "ci": {
+        "provider": "github"
+      },
+      "rules": {
+        "invariants": "./rules/floor.md",
+        "landmines": "./rules/landmines.md",
+        "scanner": "./rules/landmines.json"
+      }
+    }
+  }
+}

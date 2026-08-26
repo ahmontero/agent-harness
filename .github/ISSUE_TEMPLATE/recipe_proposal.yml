@@ -1,0 +1,37 @@
+name: "🍳 New Recipe Proposal"
+description: Propose a new domain or framework recipe (e.g. Django, Rust, Next.js, Elixir)
+labels: ["recipe", "community"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        We love new stack recipes! Recipes provide out-of-the-box quality floors, landmines, and test runners for specific ecosystems.
+  - type: input
+    id: framework
+    attributes:
+      label: Framework / Language Stack
+      description: e.g. Elixir Phoenix, Rust Actix-web, Django + Ninja, Next.js 15
+      placeholder: Next.js 15 App Router + Prisma
+    validations:
+      required: true
+  - type: textarea
+    id: invariants
+    attributes:
+      label: Key Architectural Invariants (`rules/floor.md`)
+      description: What are 3-5 mandatory architectural rules agents should never violate in this stack?
+    validations:
+      required: true
+  - type: textarea
+    id: landmines
+    attributes:
+      label: Common Landmines & Anti-Patterns (`rules/landmines.json`)
+      description: What are regex-detectable antipatterns (e.g. unindexed queries, client-side secret leaks, synchronous I/O in async routes)?
+    validations:
+      required: true
+  - type: input
+    id: test-runner
+    attributes:
+      label: Default Test & Lint Runner
+      description: e.g. `cargo test`, `mix test`, `pytest`, `vitest`
+    validations:
+      required: true

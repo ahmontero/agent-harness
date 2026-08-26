@@ -1,0 +1,45 @@
+{
+  "name": "agent-harness",
+  "version": "1.0.0",
+  "description": "The Universal Engineering Harness & Quality Floor for AI Coding Agents",
+  "main": "bin/harness",
+  "bin": {
+    "harness": "bin/harness",
+    "agh": "bin/agh",
+    "agent-harness": "bin/agent-harness"
+  },
+  "scripts": {
+    "test": "bash test/test_cli.sh",
+    "verify": "bash setup --verify"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/ahmontero/agent-harness.git"
+  },
+  "bugs": {
+    "url": "https://github.com/ahmontero/agent-harness/issues"
+  },
+  "homepage": "https://github.com/ahmontero/agent-harness#readme",
+  "files": [
+    "bin",
+    "core",
+    "recipes",
+    "install.sh",
+    "setup",
+    "schema.json"
+  ],
+  "keywords": [
+    "ai",
+    "agent",
+    "agentic-coding",
+    "antigravity",
+    "claude-code",
+    "cursor",
+    "codex",
+    "tdd",
+    "spec-driven-development",
+    "developer-tools"
+  ],
+  "author": "Antigravity & Open Source Community",
+  "license": "MIT"
+}

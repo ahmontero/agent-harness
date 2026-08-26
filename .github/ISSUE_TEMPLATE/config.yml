@@ -1,0 +1,5 @@
+blank_issues_enabled: false
+contact_links:
+  - name: 💬 Community Discussions
+    url: https://github.com/ahmontero/agent-harness/discussions
+    about: Ask questions, share recipes, or discuss AI agent engineering practices.

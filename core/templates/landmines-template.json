@@ -1,0 +1,29 @@
+[
+  {
+    "id": "SEC-001",
+    "name": "Hardcoded API Key / Token",
+    "pattern": "(api_key|secret_key|auth_token|bearer)\\s*=\\s*['\"][A-Za-z0-9_\\-]{16,}['\"]",
+    "fileExtensions": [".py", ".ts", ".js", ".go", ".rs"],
+    "level": "error",
+    "message": "Potential hardcoded secret or token detected. Use environment variables.",
+    "docLink": "rules/security.md"
+  },
+  {
+    "id": "PERF-001",
+    "name": "Unbounded Query / Missing Limit",
+    "pattern": "\\.objects\\.all\\(\\)(?!\\.iterator|\\.values|\\[)",
+    "fileExtensions": [".py"],
+    "level": "warning",
+    "message": "Unbounded all() query in memory without pagination or iterator.",
+    "docLink": "rules/landmines.md"
+  },
+  {
+    "id": "SEC-002",
+    "name": "Raw SQL String Formatting",
+    "pattern": "(cursor\\.execute|raw_query|execute_sql)\\s*\\(\\s*f['\"]",
+    "fileExtensions": [".py", ".ts", ".js"],
+    "level": "error",
+    "message": "Raw f-string SQL query detected. Always use parameterized queries.",
+    "docLink": "rules/security.md"
+  }
+]
