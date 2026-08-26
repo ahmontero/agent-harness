@@ -81,6 +81,9 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 ```bash
 # ⚡ Install globally with zero dependencies
 curl -fsSL https://raw.githubusercontent.com/ahmontero/agent-harness/main/install.sh | bash
+
+# Or via npm
+npm install -g @ahmontero/agent-harness
 ```
 
 *Or via local clone:*
@@ -95,7 +98,7 @@ cd agent-harness
 ```bash
 cd ~/projects/my-awesome-app
 
-# Run with harness CLI (or aliases: agh, npx agent-harness)
+# Run with harness CLI (or npx @ahmontero/agent-harness)
 harness init
 ```
 
