@@ -31,7 +31,7 @@
 - [⚖️ Why agent-harness? (The Agent Quality Gap)](#️-why-agent-harness-the-agent-quality-gap)
 - [🌐 Universal Multi-Harness Compatibility](#-universal-multi-harness-compatibility)
 - [⚡ 10-Second Quickstart](#-10-second-quickstart)
-- [🧠 The 14 Standard Agent Skills](#-the-14-standard-agent-skills)
+- [🧠 The 16 Standard Agent Skills](#-the-16-standard-agent-skills)
 - [🛡️ Injecting Domain Rules & Landmines](#️-injecting-domain-rules--landmines)
 - [💻 Multi-Call CLI Dispatcher (`harness`)](#-multi-call-cli-dispatcher-harness)
 - [🍳 Ready-to-Use Recipes](#-ready-to-use-recipes)
@@ -48,14 +48,18 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 ❌ Without agent-harness:
    1. The agent immediately edits source code without creating reproduction tests (Violating TDD).
    2. Modifies code directly in your active branch, leaving untracked experimental debris.
-   3. Introduces unindexed database queries or raw SQL, bypassing historical architectural invariants.
-   4. Blindly patches symptoms upon error without isolating the deterministic root cause.
+   3. Rationalizes cutting corners ("this fix is too simple for tests/specs", over-mocking).
+   4. Introduces unindexed database queries or raw SQL, bypassing historical architectural invariants.
+   5. Blindly patches symptoms upon error without isolating the deterministic root cause.
+   6. Dumps walls of conversational text and wanders off on unrelated tangents.
 
 ✅ With agent-harness:
-   1. Strictly enforced Red-Green-Refactor loop (`/tdd`).
+   1. Strictly enforced Red-Green-Refactor loop (`/tdd`) with Anti-Rationalization Gates.
    2. Automatic branch/worktree isolation (`/worktree`) keeps your workspace clean.
-   3. Static JSON AST/regex scanner (`/scan`) prevents known landmines before commit.
-   4. Matt Pocock-inspired 6-Phase Deterministic Debugging (`/bug`) with tagged probe instrumentation.
+   3. Anti-Rationalization Matrices cut off LLM excuses across all critical engineering skills.
+   4. Static JSON AST/regex scanner (`/scan`) prevents known landmines before commit.
+   5. Matt Pocock-inspired 6-Phase Deterministic Debugging (`/bug`) with tagged probe instrumentation.
+   6. Action-First & State-Anchored communication with automatic debt harvesting (`/debt`).
 ```
 
 ---
@@ -109,7 +113,7 @@ harness init
 
 ---
 
-## 🧠 The 14 Standard Agent Skills
+## 🧠 The 16 Standard Agent Skills
 
 <details>
 <summary><b>1. 🐛 Deterministic Debugging (<code>/bug &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
@@ -210,6 +214,18 @@ Runs full QA validation, checks git status, and opens a Pull Request on GitHub o
 <summary><b>14. 🎯 Architectural Task Planner (<code>/task &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
 
 Discovers requirements, identifies deep module seams, drafts delta specs, and sets up isolated branches.
+</details>
+
+<details>
+<summary><b>15. 🧹 Code Simplifier & Complexity Reducer (<code>/simplify [path]</code>)</b></summary>
+
+Audits generated code to strip speculative abstractions, shallow wrappers, dead types, and over-engineering (YAGNI & Deep Modules) while maintaining GREEN tests.
+</details>
+
+<details>
+<summary><b>16. 💬 Socratic Requirement Interrogator (<code>/interview [topic]</code>)</b></summary>
+
+Resolves architectural ambiguity by asking exactly **one structured multiple-choice question at a time** with a recommended option before drafting specs.
 </details>
 
 ---

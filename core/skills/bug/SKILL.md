@@ -44,3 +44,20 @@ flowchart TD
 ### Phase 6: Verification & Cleanup
 - Remove all `[DEBUG-xxxx]` probes.
 - Run `harness qa all` to ensure zero regressions.
+
+---
+
+## 🛑 Anti-Rationalization Gate (Banned LLM Excuses)
+
+| Agent Rationalization (Excuse) | Mandatory Rule / Rebuttal |
+| :--- | :--- |
+| *"I already know what the bug is, no need for a red command."* | **BANNED.** Unverified assumptions lead to guessing loops. Create the red test first. |
+| *"I can just fix it and ask the user to verify."* | **BANNED.** The user is not your test runner. Automate reproduction before fixing. |
+| *"The debug probe is helpful, I'll leave it in."* | **BANNED.** All `[DEBUG-xxxx]` probes must be scrubbed before committing. |
+| *"I found another bug/refactoring opportunity, fixing it now."* | **BANNED.** Do not derail. Log it as `# pragmatism:` / `harness debt` and stay on the active bug. |
+
+---
+
+## 📍 State Anchor Format
+When executing `/bug`, report progress on every turn:
+`[DEBUG: Phase X/6 - <Phase Name> | Active: <Target File/Command> | Next: <Next Phase>]`

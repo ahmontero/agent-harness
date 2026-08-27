@@ -19,3 +19,19 @@ Evaluates code quality along two independent, orthogonal axes:
 - **Spec Compliance:** Does the implementation match the Delta Spec in `specs/delta-*.md`?
 - **Edge Cases:** Are boundary conditions, nullables, and error handling tested?
 - **No Scope Creep:** Were unrelated files or speculative abstractions introduced?
+
+---
+
+## 🛑 Anti-Rationalization Gate (Banned LLM Excuses)
+
+| Agent Rationalization (Excuse) | Mandatory Rule / Rebuttal |
+| :--- | :--- |
+| *"The diff is small, no need to run static scan."* | **BANNED.** Always run `harness scan --diff` to catch regex/AST landmines. |
+| *"These extra abstractions are good for future-proofing."* | **BANNED.** Unrequested abstractions are scope creep. Keep modules deep and minimal. |
+| *"Edge cases can be handled in a follow-up PR."* | **BANNED.** Code is not complete until boundary conditions and error paths are tested. |
+
+---
+
+## 📍 State Anchor Format
+When executing `/review`, report results using:
+`[REVIEW: Axis 1 (Standards & Landmines) -> PASS/FAIL | Axis 2 (Spec Conformance) -> PASS/FAIL]`

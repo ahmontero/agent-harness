@@ -18,3 +18,20 @@ harness spec create <issue_key> <slug>
 # 3. Verify compliance
 harness spec verify specs/delta-<issue_key>-<slug>.md
 ```
+
+---
+
+## 🛑 Anti-Rationalization Gate (Banned LLM Excuses)
+
+| Agent Rationalization (Excuse) | Mandatory Rule / Rebuttal |
+| :--- | :--- |
+| *"I will write the code first to see how it looks, then generate the spec."* | **BANNED.** Specs establish boundaries and non-goals *before* writing code. |
+| *"The task is too simple for a delta spec."* | **BANNED.** Any architectural change, new endpoint, or schema mutation requires a spec. |
+| *"I don't need to specify non-goals or edge cases."* | **BANNED.** Explicit non-goals prevent agent scope creep and unintended side-effects. |
+
+---
+
+## 📍 State Anchor Format
+When executing `/spec`, report progress using:
+`[SPEC: Status -> Drafting delta spec specs/delta-<key>-<slug>.md]`
+`[SPEC: Verified -> All acceptance criteria mapped to tests]`
