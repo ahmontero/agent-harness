@@ -308,6 +308,15 @@ while IFS= read -r doc_link; do
         exit 1
     fi
 done < <(jq -r '.[].docLink // empty' "${HARNESS_ROOT}/rules/landmines.json" | sort -u)
+if [ ! -f "${HARNESS_ROOT}/harness.config.json" ]; then
+    echo "  [FAIL] Repository must define local QA commands instead of using config.example.json"
+    exit 1
+fi
+if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config.json")" != "env -u STACK_PROFILE npm test" ] || \
+   [ "$(jq -r '.profiles.harness.qa.lintCommand' "${HARNESS_ROOT}/harness.config.json")" != "./setup --verify" ]; then
+    echo "  [FAIL] Repository QA configuration does not target its canonical verification commands"
+    exit 1
+fi
 echo "  [PASS] repository provides its canonical floor and landmine documentation."
 
 echo ""
