@@ -53,4 +53,7 @@ stack.config.local.json
 CLAUDE.md
 GEMINI.md
 stack.config.json
-rules/
+rules/*
+!rules/floor.md
+!rules/landmines.md
+!rules/landmines.json

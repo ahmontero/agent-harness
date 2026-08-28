@@ -181,6 +181,12 @@ install_target_repo() {
     fi
 
     mkdir -p "${target}/rules"
+    if [ ! -f "${target}/rules/floor.md" ]; then
+        cp "${HARNESS_ROOT}/core/templates/floor-template.md" "${target}/rules/floor.md"
+    fi
+    if [ ! -f "${target}/rules/landmines.md" ]; then
+        cp "${HARNESS_ROOT}/core/templates/landmines-template.md" "${target}/rules/landmines.md"
+    fi
     if [ ! -f "${target}/rules/landmines.json" ]; then
         cp "${HARNESS_ROOT}/core/templates/landmines-template.json" "${target}/rules/landmines.json"
     fi

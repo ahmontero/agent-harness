@@ -1,6 +1,6 @@
 # 🏛️ Architecture & System Design
 
-`agent-harness` is designed as a **zero-dependency, sub-second engineering harness** that operates across any AI coding agent runtime.
+`agent-harness` is designed as a **small, shell-native engineering harness** that operates across AI coding agent runtimes without a language-runtime package bundle.
 
 ---
 
@@ -9,11 +9,12 @@
 ```mermaid
 flowchart TD
     subgraph Engine["⚡ Core Agnostic Engine"]
-        CLI["bin/harness<br>(Multi-Call Dispatcher & POSIX Shell Core)"]
+        CLI["bin/harness<br>(Multi-Call Dispatcher & Bash Core)"]
         Scanner["Static Landmine Scanner<br>(rules/landmines.json + Regex AST Engine)"]
         Context["Sub-Second Context Engine<br>(<0.5s JSON Signal Generator)"]
         Worktree["Git Worktree Manager<br>(Isolated Per-Ticket Workspaces)"]
-        Skills["14 Core Agent Skills<br>(TDD, 6-Phase Debug, Two-Axis Review, Living Specs)"]
+        Receipts["Private Execution Receipts<br>(Git metadata + JSONL lifecycle events)"]
+        Skills["19 Core Agent Skills<br>(3 Workflows + TDD, Debug, Review, Specs, QA)"]
     end
 
     subgraph Federation["🔄 Multi-Harness Bridge"]
@@ -34,20 +35,21 @@ flowchart TD
     Federation --> ProjectSpace
     Context --> ProjectSpace
     Scanner --> ProjectSpace
+    Skills --> Receipts
 ```
 
 ---
 
 ## ⚡ Core Design Principles
 
-### 1. Zero External Dependencies
-- Written entirely in clean, portable POSIX/Bash (`set -eo pipefail`).
-- No heavy runtime overhead, node bundles, or Python dependencies required to run the CLI or hooks.
-- Fast startup time (<50ms).
+### 1. Minimal System Dependencies
+- Written in Bash with no Node, Python, or compiled runtime bundle.
+- Requires Git and `jq`; network and optional AI integrations additionally use `curl`.
+- Keeps startup and installation overhead small by relying on standard system tooling.
 
 ### 2. Universal Multi-Harness Federation
 - Creates synchronized symbolic links across `.gemini/skills`, `.claude/skills`, `.codex/skills`, `.cursor/rules`, and `.agents/skills`.
 - Single source of truth for living specs and domain rules.
 
 ### 3. Sub-Second Context Extraction
-- `harness context --json` extracts git state, active branch, ticket metadata, modified files, and applicable floor rules in `< 500ms`, feeding agents exact signals without consuming tens of thousands of prompt tokens.
+- `harness context --json` extracts the active profile, repository, branch/trunk, dirty state, configured test runner and issue provider, plus active-spec and debt counts in a compact JSON signal.
