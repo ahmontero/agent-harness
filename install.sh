@@ -26,8 +26,10 @@ usage() {
 ${BOLD}Usage:${RESET}
   ./setup                     # Guided interactive installer (Default)
   ./setup --target <path>     # Initialize harness in target repository
+  ./setup --target <path> --expert # Expose advanced primitive skills too
   ./setup --recipe <name>     # Initialize with recipe (python-fastapi, typescript-fullstack, go-microservices)
   ./setup --global            # Install skills & rules globally to user home
+  ./setup --global --expert   # Install public workflows and advanced primitives
   ./setup --cli-only          # Install only CLI binaries to ~/.local/bin
   ./setup --verify            # Verify installation health, script syntax & skill frontmatter
   ./setup --sync-only         # Re-sync skills and rules across harnesses
@@ -46,6 +48,7 @@ CLI_ONLY=false
 VERIFY_MODE=false
 SYNC_ONLY=false
 GUIDED_MODE=false
+SKILL_MODE="curated"
 
 if [ $# -eq 0 ]; then
     GUIDED_MODE=true
@@ -60,6 +63,7 @@ while [[ $# -gt 0 ]]; do
         --cli-only) CLI_ONLY=true; shift ;;
         --verify) VERIFY_MODE=true; shift ;;
         --sync-only) SYNC_ONLY=true; shift ;;
+        --expert) SKILL_MODE="expert"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
@@ -92,6 +96,111 @@ fi
 # Ensure executable permissions
 find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" -type f \( -name "*.sh" -o -name "harness" \) -exec chmod +x {} + 2>/dev/null || true
 chmod +x "${HARNESS_ROOT}/install.sh" "${HARNESS_ROOT}/setup" 2>/dev/null || true
+
+SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
+MANAGED_MARKER="agent-harness-skill-bundle-v1"
+
+require_skill_catalog() {
+    local skill
+
+    if ! command -v jq >/dev/null 2>&1; then
+        log_error "jq is required to install the curated skill surface."
+        return 1
+    fi
+    if [ ! -f "${SKILL_CATALOG}" ] || ! jq empty "${SKILL_CATALOG}" >/dev/null 2>&1; then
+        log_error "Invalid or missing skill catalog: ${SKILL_CATALOG}"
+        return 1
+    fi
+
+    while IFS= read -r skill; do
+        case "${skill}" in
+            ""|*[!a-z0-9_-]*)
+                log_error "Unsafe skill name in catalog: ${skill}"
+                return 1
+                ;;
+        esac
+        if [ ! -f "${HARNESS_ROOT}/core/skills/${skill}/SKILL.md" ]; then
+            log_error "Catalog references missing skill: ${skill}"
+            return 1
+        fi
+    done < <(jq -r '(.public | keys[]), .internal[], (.public[] | .[])' "${SKILL_CATALOG}" | sort -u)
+
+    while IFS= read -r skill; do
+        case "${skill}" in
+            ""|*[!a-z0-9_-]*)
+                log_error "Unsafe removed skill name in catalog: ${skill}"
+                return 1
+                ;;
+        esac
+        if [ -e "${HARNESS_ROOT}/core/skills/${skill}" ]; then
+            log_error "Removed skill is still present in source: ${skill}"
+            return 1
+        fi
+    done < <(jq -r '.removed[]' "${SKILL_CATALOG}")
+}
+
+remove_managed_skill() {
+    local skill_path="$1"
+
+    if [ -L "${skill_path}" ]; then
+        case "$(readlink "${skill_path}")" in
+            "${HARNESS_ROOT}/core/skills/"*) rm -f "${skill_path}" ;;
+        esac
+    elif [ -d "${skill_path}" ] && [ -f "${skill_path}/.agent-harness-managed" ] && \
+         grep -qx "${MANAGED_MARKER}" "${skill_path}/.agent-harness-managed"; then
+        rm -rf "${skill_path}"
+    fi
+}
+
+install_workflow_bundle() {
+    local destination="$1"
+    local workflow="$2"
+    local workflow_source="${HARNESS_ROOT}/core/skills/${workflow}/SKILL.md"
+    local workflow_destination="${destination}/${workflow}"
+
+    if [ -e "${workflow_destination}" ] || [ -L "${workflow_destination}" ]; then
+        log_warn "Preserving unmanaged skill path: ${workflow_destination}"
+        return
+    fi
+
+    mkdir -p "${workflow_destination}/references"
+    cp "${workflow_source}" "${workflow_destination}/SKILL.md"
+    printf '%s\n' "${MANAGED_MARKER}" > "${workflow_destination}/.agent-harness-managed"
+
+    while IFS= read -r primitive; do
+        local primitive_source="${HARNESS_ROOT}/core/skills/${primitive}/SKILL.md"
+        if [ ! -f "${primitive_source}" ]; then
+            log_error "Workflow '${workflow}' references missing primitive '${primitive}'."
+            return 1
+        fi
+        cp "${primitive_source}" "${workflow_destination}/references/${primitive}.md"
+    done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
+}
+
+install_skill_surface() {
+    local destination="$1"
+    mkdir -p "${destination}"
+    require_skill_catalog
+
+    while IFS= read -r skill; do
+        remove_managed_skill "${destination}/${skill}"
+    done < <(jq -r '(.public | keys[]), .internal[], .removed[]' "${SKILL_CATALOG}" | sort -u)
+
+    while IFS= read -r workflow; do
+        install_workflow_bundle "${destination}" "${workflow}"
+    done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
+
+    if [ "${SKILL_MODE}" = "expert" ]; then
+        while IFS= read -r primitive; do
+            local primitive_destination="${destination}/${primitive}"
+            if [ -e "${primitive_destination}" ] || [ -L "${primitive_destination}" ]; then
+                log_warn "Preserving unmanaged skill path: ${primitive_destination}"
+                continue
+            fi
+            ln -s "${HARNESS_ROOT}/core/skills/${primitive}" "${primitive_destination}"
+        done < <(jq -r '.internal[]' "${SKILL_CATALOG}")
+    fi
+}
 
 # 1. Install CLI binary into ~/.local/bin
 install_cli() {
@@ -153,16 +262,9 @@ install_target_repo() {
     mkdir -p "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}" \
              "${gemini_rules}" "${claude_rules}" "${codex_rules}" "${cursor_rules}" "${agents_rules}"
 
-    # Link Core Skills
-    for skill_dir in "${HARNESS_ROOT}/core/skills"/*; do
-        if [ -d "${skill_dir}" ]; then
-            local sname
-            sname=$(basename "${skill_dir}")
-            ln -sfn "${skill_dir}" "${gemini_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${claude_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${codex_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${agents_skills}/${sname}"
-        fi
+    local skills_destination
+    for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
+        install_skill_surface "${skills_destination}"
     done
 
     # Create AGENTS.md and symlinks
@@ -196,7 +298,7 @@ install_target_repo() {
 
 # 3. Global Installation
 install_global() {
-    log_info "Installing skills globally to ~/.gemini, ~/.claude, ~/.codex, ~/.agents..."
+    log_info "Installing ${SKILL_MODE} skill surface globally to ~/.gemini, ~/.claude, ~/.codex, ~/.agents..."
     local gemini_skills="${HOME}/.gemini/antigravity/skills"
     local claude_skills="${HOME}/.claude/skills"
     local codex_skills="${HOME}/.codex/skills"
@@ -204,18 +306,12 @@ install_global() {
 
     mkdir -p "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"
 
-    for skill_dir in "${HARNESS_ROOT}/core/skills"/*; do
-        if [ -d "${skill_dir}" ]; then
-            local sname
-            sname=$(basename "${skill_dir}")
-            ln -sfn "${skill_dir}" "${gemini_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${claude_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${codex_skills}/${sname}"
-            ln -sfn "${skill_dir}" "${agents_skills}/${sname}"
-        fi
+    local skills_destination
+    for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
+        install_skill_surface "${skills_destination}"
     done
 
-    log_success "Global agent skills linked."
+    log_success "Global agent skill surface installed."
 }
 
 # Execution

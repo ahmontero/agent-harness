@@ -11,7 +11,7 @@ Use this workflow for new behavior, enhancements, and intentional changes. If th
 ## Workflow Contract
 
 - Start from explicit acceptance criteria and identify the smallest observable behavior change.
-- Compose the existing primitive skills; do not restate, weaken, or bypass their gates.
+- Load the private protocols named in each phase from `references/`; do not restate, weaken, or bypass their gates.
 - Advance only when the current phase has produced its required evidence.
 - Finish with a reviewed, verified working tree. Publication is a separate, explicitly authorized action.
 
@@ -25,13 +25,13 @@ Omit `--issue` when no safe issue token exists. After each phase, record only th
 
 ## Phases
 
-1. **Understand** — Run `harness context`, inspect applicable rules, and state acceptance criteria, constraints, and non-goals. Use `/interview` only when a missing decision would materially change the implementation.
-2. **Scope and isolate** — Use `/task` to identify architectural seams. Follow project policy for `/spec` and `/worktree`; significant changes require both before production edits.
-3. **RED** — Invoke `/tdd` and add the smallest failing test for one acceptance criterion. Record the command and expected failure reason.
-4. **GREEN** — Continue `/tdd` with the minimal production change that makes the targeted test pass.
-5. **REFACTOR** — Complete `/tdd`, then invoke `/simplify` on the diff. Remove duplication and accidental complexity while keeping tests green.
-6. **Validate** — Invoke `/qa`. Every required gate must pass; a missing configured gate must be reported, not represented as success.
-7. **Review and hand off** — Invoke `/review` against the delta spec and quality floor. Summarize changed behavior, evidence, remaining risks, and the exact working-tree location.
+1. **Understand** — Run `harness context`, inspect applicable rules, and state acceptance criteria, constraints, and non-goals. Load `references/interview.md` only when a missing decision would materially change the implementation.
+2. **Scope and isolate** — Load `references/task.md` to identify architectural seams. Follow `references/spec.md` and `references/worktree.md`; significant changes require both before production edits.
+3. **RED** — Load `references/tdd.md` and add the smallest failing test for one acceptance criterion. Record the command and expected failure reason.
+4. **GREEN** — Continue the protocol in `references/tdd.md` with the minimal production change that makes the targeted test pass.
+5. **REFACTOR** — Complete `references/tdd.md`, then apply `references/simplify.md` to the diff. Remove duplication and accidental complexity while keeping tests green.
+6. **Validate** — Apply `references/qa.md`. Every required gate must pass; a missing configured gate must be reported, not represented as success.
+7. **Review and hand off** — Apply `references/review.md` against the delta spec and quality floor. Summarize changed behavior, evidence, remaining risks, and the exact working-tree location.
 
 For multiple acceptance criteria, repeat phases 3–5 in small vertical slices instead of implementing the whole feature before testing.
 
@@ -39,7 +39,7 @@ For multiple acceptance criteria, repeat phases 3–5 in small vertical slices i
 
 - Do not use this workflow for a bug until the request is reclassified or the user confirms the intent.
 - Do not edit production code before the spec/isolation policy is satisfied and a RED test is verified.
-- Do not commit, push, invoke `/ship`, open a pull request, or change external systems unless the user explicitly asks.
+- Do not commit, push, open a pull request, or change external systems unless the user explicitly asks.
 - Do not absorb unrelated refactors; record them as debt and continue with the active requirement.
 
 ## State Anchor

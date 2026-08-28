@@ -25,7 +25,7 @@ Omit `--issue` when unavailable. Record phase outcomes without free-form content
 
 ## Phases
 
-1. **Frame the question** — State the decision to be made, scope, success criteria, and relevant unknowns. Use `/interview` only if a missing answer changes the analysis materially.
+1. **Frame the question** — State the decision to be made, scope, success criteria, and relevant unknowns. Load `references/interview.md` only if a missing answer changes the analysis materially.
 2. **Gather evidence** — Run `harness context`; inspect architecture, code paths, rules, specs, history, and authoritative external sources when needed.
 3. **Establish constraints** — Identify compatibility, operational, security, performance, delivery, and policy constraints supported by evidence.
 4. **Develop options** — Present at least two materially different options when alternatives exist, including the status quo when it is viable.
@@ -36,7 +36,7 @@ Omit `--issue` when unavailable. Record phase outcomes without free-form content
 
 - Apart from its private execution receipt, this workflow is read-only: do not edit working-tree files, create specs or worktrees, install dependencies, mutate external systems, or run destructive commands.
 - Do not silently transition into `/implement` or `/fix` after finding an answer.
-- Do not commit, push, invoke `/ship`, or open a pull request.
+- Do not commit, push, or open a pull request.
 - If the user explicitly requests implementation during the investigation, finish the current evidence summary and start the appropriate workflow as a distinct phase of work.
 
 ## State Anchor

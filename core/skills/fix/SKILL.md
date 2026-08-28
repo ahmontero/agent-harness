@@ -10,7 +10,7 @@ Use this workflow when observed behavior violates an existing expectation. If th
 
 ## Workflow Contract
 
-- `/bug` owns the diagnostic lifecycle; `/tdd` provides the persistent regression proof inside that lifecycle.
+- The private `references/bug.md` protocol owns the diagnostic lifecycle; `references/tdd.md` provides the persistent regression proof inside it.
 - Production edits are forbidden until a deterministic reproduction and a causal root-cause statement exist.
 - A plausible explanation is not a confirmed cause. Evidence must falsify the competing hypotheses that matter.
 - The final diff must be the smallest change that breaks the demonstrated causal chain.
@@ -25,20 +25,20 @@ Omit `--issue` when unavailable. Record phase outcomes with allowlisted tokens s
 
 ## Phases
 
-1. **Reproduce** — Invoke `/bug` and establish one deterministic RED command that exhibits the exact defect.
-2. **Minimize and diagnose** — Continue `/bug`: reduce the reproduction, inspect the execution path and relevant history, then rank falsifiable hypotheses.
-3. **Confirm root cause** — Use the targeted evidence required by `/bug`. State the causal chain from input or state to incorrect output and identify the evidence that proves it.
-4. **Regression RED** — Invoke `/tdd` at the load-bearing seam. Preserve the minimized reproduction as an automated regression test and verify that it fails for the confirmed cause.
-5. **Surgical GREEN** — Complete the fix through `/bug` and `/tdd`; change the root-cause layer, verify GREEN, and remove every temporary debug probe.
-6. **Validate** — Invoke `/qa`; all required gates must pass without suppressed failures.
-7. **Review and hand off** — Invoke `/review`. Report the cause, regression test, fix, blast radius, verification evidence, and working-tree location.
+1. **Reproduce** — Load `references/bug.md` and establish one deterministic RED command that exhibits the exact defect.
+2. **Minimize and diagnose** — Continue `references/bug.md`: reduce the reproduction, inspect the execution path and relevant history, then rank falsifiable hypotheses.
+3. **Confirm root cause** — Use the targeted evidence required by `references/bug.md`. State the causal chain from input or state to incorrect output and identify the evidence that proves it.
+4. **Regression RED** — Load `references/tdd.md` at the load-bearing seam. Preserve the minimized reproduction as an automated regression test and verify that it fails for the confirmed cause.
+5. **Surgical GREEN** — Complete the fix through `references/bug.md` and `references/tdd.md`; change the root-cause layer, verify GREEN, and remove every temporary debug probe.
+6. **Validate** — Apply `references/qa.md`; all required gates must pass without suppressed failures.
+7. **Review and hand off** — Apply `references/review.md`. Report the cause, regression test, fix, blast radius, verification evidence, and working-tree location.
 
 ## Safety Boundary
 
 - Do not change production code before the root-cause gate in phase 3 passes.
 - Do not broaden the fix into cleanup or redesign; record unrelated findings separately.
 - Do not leave temporary instrumentation or `[DEBUG-xxxx]` probes in the final diff.
-- Do not commit, push, invoke `/ship`, open a pull request, or change external systems unless the user explicitly asks.
+- Do not commit, push, open a pull request, or change external systems unless the user explicitly asks.
 
 ## State Anchor
 

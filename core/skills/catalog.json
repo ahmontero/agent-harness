@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "public": {
+    "implement": [
+      "interview",
+      "task",
+      "spec",
+      "worktree",
+      "tdd",
+      "simplify",
+      "qa",
+      "review"
+    ],
+    "fix": [
+      "bug",
+      "tdd",
+      "qa",
+      "review"
+    ],
+    "investigate": [
+      "interview"
+    ]
+  },
+  "internal": [
+    "bug",
+    "commit",
+    "conflicts",
+    "debt",
+    "doctor",
+    "interview",
+    "qa",
+    "questionnaire",
+    "review",
+    "scan",
+    "simplify",
+    "spec",
+    "task",
+    "tdd",
+    "worktree"
+  ],
+  "removed": [
+    "ship"
+  ]
+}
