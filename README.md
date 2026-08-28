@@ -78,6 +78,8 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 | **OpenAI Codex** | ✅ (`.codex/skills`) | ✅ (`.codex/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 | **Generic (.agents)** | ✅ (`.agents/skills`) | ✅ (`.agents/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 
+The installation contract is exercised as an eight-cell Ubuntu/macOS matrix covering target and global installation in both default and expert modes. See [Verified Compatibility](docs/COMPATIBILITY.md) for the exact assertions, evidence artifacts, and reproducible commands.
+
 ---
 
 ## ⚡ 10-Second Quickstart
