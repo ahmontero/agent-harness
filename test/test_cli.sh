@@ -415,7 +415,60 @@ fi
 echo "  [PASS] README presents the workflow surface and accurate dependency model."
 
 echo ""
-echo "=== 11. Testing Local Execution Receipts ==="
+echo "=== 11. Testing Compatibility Evidence Contract ==="
+COMPAT_RUNNER="${HARNESS_ROOT}/test/e2e/test_install_matrix.sh"
+COMPAT_REPORT="${TMP_TEST_DIR}/compatibility-target-default.json"
+if [ ! -x "${COMPAT_RUNNER}" ]; then
+    echo "  [FAIL] Missing executable compatibility runner: test/e2e/test_install_matrix.sh"
+    exit 1
+fi
+"${COMPAT_RUNNER}" --scope target --mode default --report "${COMPAT_REPORT}" >/dev/null
+if ! jq -e '
+    .schemaVersion == 1 and
+    .scope == "target" and
+    .mode == "default" and
+    .status == "passed" and
+    (.os | type == "string" and length > 0) and
+    (.verifiedContracts | sort == ["agents", "claude", "codex", "cursor", "gemini"])
+' "${COMPAT_REPORT}" >/dev/null; then
+    echo "  [FAIL] Compatibility runner did not emit the required evidence schema"
+    exit 1
+fi
+BLOCKED_REPORT_PARENT="${TMP_TEST_DIR}/compatibility-report-parent"
+printf '%s\n' "not-a-directory" > "${BLOCKED_REPORT_PARENT}"
+if "${COMPAT_RUNNER}" --scope target --mode default --report "${BLOCKED_REPORT_PARENT}/result.json" >/dev/null 2>&1; then
+    echo "  [FAIL] Compatibility runner reported success after evidence output failed"
+    exit 1
+fi
+if "${COMPAT_RUNNER}" --scope unsupported --mode default >/dev/null 2>&1 || \
+   "${COMPAT_RUNNER}" --scope target --mode unsupported >/dev/null 2>&1 || \
+   "${COMPAT_RUNNER}" --report "${TMP_TEST_DIR}/ambiguous.json" >/dev/null 2>&1; then
+    echo "  [FAIL] Compatibility runner accepted an invalid or ambiguous matrix request"
+    exit 1
+fi
+for evidence_file in docs/COMPATIBILITY.md .github/workflows/compatibility.yml; do
+    if [ ! -s "${HARNESS_ROOT}/${evidence_file}" ]; then
+        echo "  [FAIL] Missing compatibility evidence asset: ${evidence_file}"
+        exit 1
+    fi
+done
+for matrix_contract in \
+    "os: [ubuntu-latest, macos-latest]" \
+    "scope: [target, global]" \
+    "mode: [default, expert]"; do
+    if ! grep -Fq "${matrix_contract}" "${HARNESS_ROOT}/.github/workflows/compatibility.yml"; then
+        echo "  [FAIL] Compatibility workflow is missing matrix contract: ${matrix_contract}"
+        exit 1
+    fi
+done
+if ! grep -Fq "docs/COMPATIBILITY.md" "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] README does not link to the compatibility evidence contract"
+    exit 1
+fi
+echo "  [PASS] compatibility runner exposes a machine-readable evidence contract."
+
+echo ""
+echo "=== 12. Testing Local Execution Receipts ==="
 RECEIPT_TEST_DIR="${TMP_TEST_DIR}/receipt-test"
 mkdir -p "${RECEIPT_TEST_DIR}"
 git -C "${RECEIPT_TEST_DIR}" init -q

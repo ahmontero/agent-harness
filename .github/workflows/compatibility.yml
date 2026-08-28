@@ -1,0 +1,74 @@
+name: Compatibility Evidence
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: compatibility-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  install-matrix:
+    name: ${{ matrix.os }} / ${{ matrix.scope }} / ${{ matrix.mode }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+        scope: [target, global]
+        mode: [default, expert]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install jq on Linux
+        if: runner.os == 'Linux'
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install jq on macOS
+        if: runner.os == 'macOS'
+        run: command -v jq >/dev/null 2>&1 || brew install jq
+
+      - name: Verify installation contract
+        id: compatibility
+        shell: bash
+        run: |
+          report="compatibility-${{ runner.os }}-${{ matrix.scope }}-${{ matrix.mode }}.json"
+          echo "report=${report}" >> "${GITHUB_OUTPUT}"
+          bash test/e2e/test_install_matrix.sh \
+            --scope "${{ matrix.scope }}" \
+            --mode "${{ matrix.mode }}" \
+            --report "${report}"
+
+      - name: Publish evidence summary
+        if: always() && steps.compatibility.outputs.report != ''
+        shell: bash
+        run: |
+          report="${{ steps.compatibility.outputs.report }}"
+          if [ -s "${report}" ]; then
+            {
+              echo "## Compatibility evidence"
+              echo
+              echo '| OS | Scope | Mode | Status | Idempotent | User content preserved |'
+              echo '| :--- | :--- | :--- | :--- | :---: | :---: |'
+              jq -r '"| \(.os) | \(.scope) | \(.mode) | \(.status) | \(.idempotent) | \(.userContentPreserved) |"' "${report}"
+            } >> "${GITHUB_STEP_SUMMARY}"
+          fi
+
+      - name: Upload compatibility evidence
+        if: always() && steps.compatibility.outputs.report != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: compatibility-${{ runner.os }}-${{ matrix.scope }}-${{ matrix.mode }}
+          path: ${{ steps.compatibility.outputs.report }}
+          if-no-files-found: error
+          retention-days: 30
