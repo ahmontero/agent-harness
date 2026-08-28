@@ -37,6 +37,7 @@
 - [💻 Multi-Call CLI Dispatcher (`harness`)](#-multi-call-cli-dispatcher-harness)
 - [🍳 Ready-to-Use Recipes](#-ready-to-use-recipes)
 - [🏛️ Architecture & System Design](#️-architecture--system-design)
+- [🙏 Acknowledgements & Provenance](#-acknowledgements--provenance)
 - [🤝 Contributing & Community](#-contributing--community)
 
 ---
@@ -324,6 +325,20 @@ Jumpstart your stack with production-ready presets:
 ## 🏛️ Architecture & System Design
 
 For a deep dive into sub-second context signals, multi-harness synchronization, and POSIX core architecture, see [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+
+---
+
+## 🙏 Acknowledgements & Provenance
+
+`agent-harness` is an independent implementation that synthesizes proven ideas from the open-source agent engineering community. In particular:
+
+- **[addyosmani/agent-skills](https://github.com/addyosmani/agent-skills)** — workflow-oriented skills, explicit verification gates, and anti-rationalization safeguards.
+- **[obra/superpowers](https://github.com/obra/superpowers)** — strict Red-Green-Refactor discipline, systematic debugging, and isolated worktree workflows.
+- **[mattpocock/skills](https://github.com/mattpocock/skills)** — tight red-capable feedback loops, ranked falsifiable hypotheses, and tagged diagnostic instrumentation.
+- **[Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec)** — Spec-Driven Development, living specifications, and delta-based requirements.
+- **[ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd)** — action-first communication, visible state anchors, and cognitive-load reduction.
+
+These projects are sources of inspiration and adapted engineering patterns; they are not runtime dependencies of `agent-harness`. See [Provenance and Acknowledgements](docs/PROVENANCE.md) for the exact relationships, source snapshots, and licensing policy.
 
 ---
 
