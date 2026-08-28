@@ -31,7 +31,8 @@
 - [⚖️ Why agent-harness? (The Agent Quality Gap)](#️-why-agent-harness-the-agent-quality-gap)
 - [🌐 Universal Multi-Harness Compatibility](#-universal-multi-harness-compatibility)
 - [⚡ 10-Second Quickstart](#-10-second-quickstart)
-- [🧠 The 16 Standard Agent Skills](#-the-16-standard-agent-skills)
+- [🚦 Three Engineering Workflows](#-three-engineering-workflows)
+- [🧠 The 19 Standard Agent Skills](#-the-19-standard-agent-skills)
 - [🛡️ Injecting Domain Rules & Landmines](#️-injecting-domain-rules--landmines)
 - [💻 Multi-Call CLI Dispatcher (`harness`)](#-multi-call-cli-dispatcher-harness)
 - [🍳 Ready-to-Use Recipes](#-ready-to-use-recipes)
@@ -72,7 +73,7 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 | :--- | :---: | :---: | :---: | :---: | :---: |
 | **Google Antigravity** | ✅ (`.gemini/skills`) | ✅ (`.gemini/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 | **Claude Code** | ✅ (`.claude/skills`) | ✅ (`.claude/rules`) | ✅ | ✅ | ✅ (`harness context`) |
-| **Cursor Agent** | ✅ (`.cursor/skills`) | ✅ (`.cursor/rules`) | ✅ | ✅ | ✅ (`harness context`) |
+| **Cursor Agent** | ✅ (`.agents/skills`) | ✅ (`.cursor/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 | **OpenAI Codex** | ✅ (`.codex/skills`) | ✅ (`.codex/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 | **Generic (.agents)** | ✅ (`.agents/skills`) | ✅ (`.agents/rules`) | ✅ | ✅ | ✅ (`harness context`) |
 
@@ -83,7 +84,7 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 ### 1. One-Line Global Installation
 
 ```bash
-# ⚡ Install globally with zero dependencies
+# ⚡ Install globally without a language runtime or package bundle
 curl -fsSL https://raw.githubusercontent.com/ahmontero/agent-harness/main/install.sh | bash
 
 # Or via npm
@@ -109,11 +110,38 @@ harness init
 `harness` will automatically:
 - Detect your language and test runner (`pytest`, `vitest`, `jest`, `cargo`, `go`).
 - Generate `stack.config.json` and a starter `rules/` directory.
-- Link agent skills and rules across your active AI harnesses (`.gemini`, `.claude`, `.cursor`, `.codex`, `.agents`).
+- Link agent skills through `.gemini`, `.claude`, `.codex`, and `.agents`, plus runtime-specific rule directories including `.cursor/rules`.
 
 ---
 
-## 🧠 The 16 Standard Agent Skills
+## 🚦 Three Engineering Workflows
+
+Most work starts with one of three intent-level workflows. They compose the primitive skills below and preserve their quality gates:
+
+```text
+/implement <requirement>     Build or change behavior through spec-aware TDD, QA, and review.
+/fix <defect>                Reproduce, prove root cause, add a regression test, and apply a surgical fix.
+/investigate <question>      Gather evidence, compare options, recommend, and stop without editing.
+```
+
+`/implement` and `/fix` produce verified working-tree changes but never publish them without an explicit request. `/investigate` is read-only and cannot silently transition into implementation.
+
+### Local execution receipts
+
+The workflows record a small JSONL lifecycle receipt inside the repository's private Git metadata. Nothing is added to the working tree or sent remotely, and the schema does not accept prompts, code, file paths, secrets, or free-form evidence.
+
+```bash
+run_id="$(harness receipt start implement --issue PROJ-123)"
+harness receipt phase "${run_id}" tdd passed
+harness receipt phase "${run_id}" qa passed
+harness receipt finish "${run_id}" completed
+```
+
+Receipts live under `.git/agent-harness/runs/`, are shared across the repository's worktrees, and provide the input contract for future local statistics.
+
+---
+
+## 🧠 The 19 Standard Agent Skills
 
 <details>
 <summary><b>1. 🐛 Deterministic Debugging (<code>/bug &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
@@ -228,6 +256,24 @@ Audits generated code to strip speculative abstractions, shallow wrappers, dead 
 Resolves architectural ambiguity by asking exactly **one structured multiple-choice question at a time** with a recommended option before drafting specs.
 </details>
 
+<details>
+<summary><b>17. 🛠️ Feature Delivery Workflow (<code>/implement [requirement]</code>)</b></summary>
+
+Composes discovery, isolation, specification, TDD, simplification, QA, and review for intentional behavior changes.
+</details>
+
+<details>
+<summary><b>18. 🩹 Root-Cause Fix Workflow (<code>/fix [defect]</code>)</b></summary>
+
+Requires deterministic reproduction and confirmed root cause before regression TDD and a minimal production fix.
+</details>
+
+<details>
+<summary><b>19. 🔎 Evidence-to-Decision Workflow (<code>/investigate [question]</code>)</b></summary>
+
+Inspects the codebase and relevant evidence, compares options, recommends a path, and stops without implementation.
+</details>
+
 ---
 
 ## 🛡️ Injecting Domain Rules & Landmines
@@ -265,7 +311,7 @@ harness scan --install-hook
 
 ## 💻 Multi-Call CLI Dispatcher (`harness`)
 
-The single `harness` executable acts as a multi-call dispatcher (like `busybox` or `git`) with zero dependencies:
+The single `harness` executable acts as a multi-call dispatcher (like `busybox` or `git`) without a language-runtime package bundle. It expects standard shell tooling plus Git and `jq`; `curl` is required for optional AI and network integrations.
 
 - **Primary command:** `harness <command>` (aliases: `agh`, `agent-harness`).
 - **Dynamic profile resolution:** Auto-detects the active profile based on the current directory or explicit `--profile <name>`.

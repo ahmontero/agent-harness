@@ -64,11 +64,29 @@ case "${ACTION}" in
         ;;
     all)
         log_info "Running full QA suite (Scan -> Lint -> Types -> Tests)..."
-        "${SCRIPT_DIR}/stack-scan.sh" --diff || true
-        "${SCRIPT_DIR}/stack-qa.sh" lint || true
-        "${SCRIPT_DIR}/stack-qa.sh" types || true
-        "${SCRIPT_DIR}/stack-qa.sh" test
-        log_success "All QA checks completed."
+        FAILED_GATES=()
+
+        run_gate() {
+            local gate_name="$1"
+            shift
+            if "$@"; then
+                log_success "QA gate passed: ${gate_name}"
+            else
+                log_error "QA gate failed: ${gate_name}"
+                FAILED_GATES+=("${gate_name}")
+            fi
+        }
+
+        run_gate "scan" "${SCRIPT_DIR}/stack-scan.sh" --diff
+        run_gate "lint" "${SCRIPT_DIR}/stack-qa.sh" lint
+        run_gate "types" "${SCRIPT_DIR}/stack-qa.sh" types
+        run_gate "tests" "${SCRIPT_DIR}/stack-qa.sh" test
+
+        if [ ${#FAILED_GATES[@]} -gt 0 ]; then
+            log_error "QA failed. Required gates: ${FAILED_GATES[*]}"
+            exit 1
+        fi
+        log_success "All required QA gates passed."
         ;;
     *)
         log_error "Unknown QA action: ${ACTION}"

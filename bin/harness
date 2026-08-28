@@ -95,6 +95,11 @@ ${BOLD}Core Commands:${RESET}
   ${GREEN}debt${RESET}          Scan & harvest technical debt markers (# pragmatism:, # defer:)
                 harness debt [--json] [--all] [--path <path>]
 
+  ${GREEN}receipt${RESET}       Record private local workflow lifecycle events
+                harness receipt start <implement|fix|investigate> [--issue <token>]
+                harness receipt phase <run_id> <phase> <status>
+                harness receipt finish <run_id> <outcome>
+
   ${GREEN}ship${RESET}          Run pre-flight checks, build commit, and open Pull Request
                 harness ship [target_branch]
 
@@ -143,6 +148,9 @@ case "${COMMAND}" in
         ;;
     debt)
         exec "${SCRIPTS_DIR}/stack-debt.sh" "$@"
+        ;;
+    receipt)
+        exec "${SCRIPTS_DIR}/stack-receipt.sh" "$@"
         ;;
     ship|pr)
         exec "${SCRIPTS_DIR}/stack-pr.sh" "$@"
