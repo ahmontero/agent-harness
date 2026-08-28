@@ -28,6 +28,20 @@ done
 
 echo ""
 echo "=== 2b. Testing Composite Workflow Contracts ==="
+SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
+if [ ! -f "${SKILL_CATALOG}" ]; then
+    echo "  [FAIL] Missing canonical skill catalog"
+    exit 1
+fi
+if [ "$(jq -r '.public | keys | sort | join(" ")' "${SKILL_CATALOG}")" != "fix implement investigate" ]; then
+    echo "  [FAIL] Public skill catalog must expose exactly fix, implement, and investigate"
+    exit 1
+fi
+if jq -e '(.public | has("ship")) or (.internal | index("ship") != null)' "${SKILL_CATALOG}" >/dev/null || \
+   [ "$(jq -r '.removed | index("ship") != null' "${SKILL_CATALOG}")" != "true" ]; then
+    echo "  [FAIL] ship must be removed rather than public or internal"
+    exit 1
+fi
 for workflow in implement fix investigate; do
     workflow_file="${HARNESS_ROOT}/core/skills/${workflow}/SKILL.md"
     if [ ! -f "${workflow_file}" ]; then
@@ -48,15 +62,17 @@ for workflow in implement fix investigate; do
     done
 done
 
-for primitive in /tdd /qa /review /simplify; do
-    if ! grep -Fq "${primitive}" "${HARNESS_ROOT}/core/skills/implement/SKILL.md"; then
-        echo "  [FAIL] implement does not compose required primitive: ${primitive}"
+for primitive in tdd qa review simplify; do
+    reference="references/${primitive}.md"
+    if ! grep -Fq "${reference}" "${HARNESS_ROOT}/core/skills/implement/SKILL.md"; then
+        echo "  [FAIL] implement does not load required private protocol: ${reference}"
         exit 1
     fi
 done
-for primitive in /bug /tdd /qa /review; do
-    if ! grep -Fq "${primitive}" "${HARNESS_ROOT}/core/skills/fix/SKILL.md"; then
-        echo "  [FAIL] fix does not compose required primitive: ${primitive}"
+for primitive in bug tdd qa review; do
+    reference="references/${primitive}.md"
+    if ! grep -Fq "${reference}" "${HARNESS_ROOT}/core/skills/fix/SKILL.md"; then
+        echo "  [FAIL] fix does not load required private protocol: ${reference}"
         exit 1
     fi
 done
@@ -138,14 +154,62 @@ while IFS= read -r doc_link; do
 done < <(jq -r '.[].docLink // empty' "${DEFAULT_TARGET_DIR}/rules/landmines.json" | sort -u)
 echo "  [PASS] Default initialization includes its complete quality floor."
 for runtime_dir in .agents/skills .claude/skills .codex/skills .gemini/skills; do
+    installed_count=$(find "${DEFAULT_TARGET_DIR}/${runtime_dir}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')
+    if [ "${installed_count}" -ne 3 ]; then
+        echo "  [FAIL] Curated installation exposed ${installed_count} skills in ${runtime_dir}; expected 3"
+        exit 1
+    fi
     for workflow in implement fix investigate; do
         if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${workflow}/SKILL.md" ]; then
             echo "  [FAIL] Default initialization did not expose '${workflow}' in ${runtime_dir}"
             exit 1
         fi
+        while IFS= read -r primitive; do
+            if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${workflow}/references/${primitive}.md" ]; then
+                echo "  [FAIL] Workflow '${workflow}' omitted private protocol '${primitive}' in ${runtime_dir}"
+                exit 1
+            fi
+        done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
     done
+    if [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/tdd" ] || [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/ship" ]; then
+        echo "  [FAIL] Curated installation exposed an internal or removed skill in ${runtime_dir}"
+        exit 1
+    fi
 done
 echo "  [PASS] Default initialization exposes composite workflows to supported runtimes."
+
+EXPERT_TARGET_DIR="${TMP_TEST_DIR}/expert-init-test"
+mkdir -p "${EXPERT_TARGET_DIR}"
+git -C "${EXPERT_TARGET_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" --expert >/dev/null
+while IFS= read -r skill; do
+    if [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/${skill}/SKILL.md" ]; then
+        echo "  [FAIL] Expert installation omitted skill: ${skill}"
+        exit 1
+    fi
+done < <(jq -r '(.public | keys[]), .internal[]' "${SKILL_CATALOG}")
+if [ -e "${EXPERT_TARGET_DIR}/.codex/skills/ship" ]; then
+    echo "  [FAIL] Expert installation restored the removed ship skill"
+    exit 1
+fi
+echo "  [PASS] Expert initialization exposes workflows and supported primitives."
+
+mkdir -p "${EXPERT_TARGET_DIR}/.codex/skills/user-owned"
+echo "user-owned" > "${EXPERT_TARGET_DIR}/.codex/skills/user-owned/SKILL.md"
+ln -s "${HARNESS_ROOT}/core/skills/ship" "${EXPERT_TARGET_DIR}/.codex/skills/ship"
+"${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" >/dev/null
+"${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" >/dev/null
+if [ -e "${EXPERT_TARGET_DIR}/.codex/skills/tdd" ] || \
+   [ -L "${EXPERT_TARGET_DIR}/.codex/skills/ship" ] || \
+   [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/user-owned/SKILL.md" ]; then
+    echo "  [FAIL] Curated migration did not safely remove managed primitives or preserve user skills"
+    exit 1
+fi
+if [ "$(find "${EXPERT_TARGET_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')" -ne 4 ]; then
+    echo "  [FAIL] Curated migration is not idempotent"
+    exit 1
+fi
+echo "  [PASS] Curated migration is safe and idempotent."
 
 echo ""
 echo "=== 7. Testing Fail-Closed QA Aggregation ==="
@@ -323,7 +387,8 @@ echo ""
 echo "=== 10. Testing Public Workflow Documentation ==="
 for documented_contract in \
     "## 🚦 Three Engineering Workflows" \
-    "## 🧠 The 19 Standard Agent Skills" \
+    "## 🧠 Internal Engineering Protocols" \
+    "./setup --global --expert" \
     '`/implement`' \
     '`/fix`' \
     '`/investigate`'; do
@@ -332,6 +397,11 @@ for documented_contract in \
         exit 1
     fi
 done
+if grep -Fq "The 19 Standard Agent Skills" "${HARNESS_ROOT}/README.md" || \
+   grep -Fq '<code>/ship' "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] README still exposes the legacy skill surface or removed ship workflow"
+    exit 1
+fi
 if ! grep -Fq "harness receipt start" "${HARNESS_ROOT}/README.md" || \
    ! "${HARNESS_ROOT}/bin/harness" --help | grep -Fq "receipt"; then
     echo "  [FAIL] Receipt lifecycle is missing from the public CLI documentation"

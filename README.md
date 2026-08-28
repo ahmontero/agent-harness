@@ -32,7 +32,7 @@
 - [🌐 Universal Multi-Harness Compatibility](#-universal-multi-harness-compatibility)
 - [⚡ 10-Second Quickstart](#-10-second-quickstart)
 - [🚦 Three Engineering Workflows](#-three-engineering-workflows)
-- [🧠 The 19 Standard Agent Skills](#-the-19-standard-agent-skills)
+- [🧠 Internal Engineering Protocols](#-internal-engineering-protocols)
 - [🛡️ Injecting Domain Rules & Landmines](#️-injecting-domain-rules--landmines)
 - [💻 Multi-Call CLI Dispatcher (`harness`)](#-multi-call-cli-dispatcher-harness)
 - [🍳 Ready-to-Use Recipes](#-ready-to-use-recipes)
@@ -96,6 +96,9 @@ npm install -g @ahmontero/agent-harness
 git clone https://github.com/ahmontero/agent-harness.git
 cd agent-harness
 ./setup --global
+
+# Optional: expose advanced primitive skills as standalone commands
+./setup --global --expert
 ```
 
 ### 2. Initialize in Any Existing Project
@@ -110,13 +113,13 @@ harness init
 `harness` will automatically:
 - Detect your language and test runner (`pytest`, `vitest`, `jest`, `cargo`, `go`).
 - Generate `stack.config.json` and a starter `rules/` directory.
-- Link agent skills through `.gemini`, `.claude`, `.codex`, and `.agents`, plus runtime-specific rule directories including `.cursor/rules`.
+- Install the three curated workflow bundles through `.gemini`, `.claude`, `.codex`, and `.agents`, plus runtime-specific rule directories including `.cursor/rules`.
 
 ---
 
 ## 🚦 Three Engineering Workflows
 
-Most work starts with one of three intent-level workflows. They compose the primitive skills below and preserve their quality gates:
+Most work starts with one of three intent-level workflows. Their private protocol bundles preserve the underlying engineering gates without exposing every primitive as a user command:
 
 ```text
 /implement <requirement>     Build or change behavior through spec-aware TDD, QA, and review.
@@ -141,7 +144,11 @@ Receipts live under `.git/agent-harness/runs/`, are shared across the repository
 
 ---
 
-## 🧠 The 19 Standard Agent Skills
+## 🧠 Internal Engineering Protocols
+
+Default installations expose only `/implement`, `/fix`, and `/investigate`. The protocols below are bundled privately inside those workflows, so agents still apply TDD, debugging, specs, QA, and review without adding those primitives to the normal command surface.
+
+Advanced users can expose the supported primitives as standalone skills with `./setup --global --expert` or `./setup --target <path> --expert`. This mode is optional; operational CLI commands such as `harness qa`, `harness commit`, and `harness pr` remain available in both modes.
 
 <details>
 <summary><b>1. 🐛 Deterministic Debugging (<code>/bug &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
@@ -184,7 +191,7 @@ Lightweight Spec-Driven Development (OpenSpec):
 <summary><b>5. 🩺 Self-Healing Doctor (<code>/doctor [--fix]</code>)</b></summary>
 
 Diagnoses environment health:
-- Verifies PATH executables, symlink integrity across AI harnesses, test runner health, and Git configuration.
+- Verifies required executables, target repository health, and Git configuration.
 </details>
 
 <details>
@@ -233,45 +240,21 @@ Formats semantic Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) a
 </details>
 
 <details>
-<summary><b>13. 🚢 Pre-Flight Ship (<code>/ship</code>)</b></summary>
-
-Runs full QA validation, checks git status, and opens a Pull Request on GitHub or GitLab.
-</details>
-
-<details>
-<summary><b>14. 🎯 Architectural Task Planner (<code>/task &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
+<summary><b>13. 🎯 Architectural Task Planner (<code>/task &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
 
 Discovers requirements, identifies deep module seams, drafts delta specs, and sets up isolated branches.
 </details>
 
 <details>
-<summary><b>15. 🧹 Code Simplifier & Complexity Reducer (<code>/simplify [path]</code>)</b></summary>
+<summary><b>14. 🧹 Code Simplifier & Complexity Reducer (<code>/simplify [path]</code>)</b></summary>
 
 Audits generated code to strip speculative abstractions, shallow wrappers, dead types, and over-engineering (YAGNI & Deep Modules) while maintaining GREEN tests.
 </details>
 
 <details>
-<summary><b>16. 💬 Socratic Requirement Interrogator (<code>/interview [topic]</code>)</b></summary>
+<summary><b>15. 💬 Socratic Requirement Interrogator (<code>/interview [topic]</code>)</b></summary>
 
 Resolves architectural ambiguity by asking exactly **one structured multiple-choice question at a time** with a recommended option before drafting specs.
-</details>
-
-<details>
-<summary><b>17. 🛠️ Feature Delivery Workflow (<code>/implement [requirement]</code>)</b></summary>
-
-Composes discovery, isolation, specification, TDD, simplification, QA, and review for intentional behavior changes.
-</details>
-
-<details>
-<summary><b>18. 🩹 Root-Cause Fix Workflow (<code>/fix [defect]</code>)</b></summary>
-
-Requires deterministic reproduction and confirmed root cause before regression TDD and a minimal production fix.
-</details>
-
-<details>
-<summary><b>19. 🔎 Evidence-to-Decision Workflow (<code>/investigate [question]</code>)</b></summary>
-
-Inspects the codebase and relevant evidence, compares options, recommends a path, and stops without implementation.
 </details>
 
 ---
