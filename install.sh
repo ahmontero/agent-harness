@@ -7,7 +7,41 @@
 
 set -eo pipefail
 
-SOURCE="${BASH_SOURCE[0]}"
+SOURCE="${BASH_SOURCE[0]:-}"
+
+bootstrap_remote_install() {
+    local repository="${AGENT_HARNESS_REPOSITORY:-https://github.com/ahmontero/agent-harness.git}"
+    local ref="${AGENT_HARNESS_REF:-main}"
+    local data_home="${XDG_DATA_HOME:-${HOME}/.local/share}"
+    local install_dir="${AGENT_HARNESS_INSTALL_DIR:-${data_home}/agent-harness}"
+
+    if ! command -v git >/dev/null 2>&1; then
+        printf '%s\n' "agent-harness remote installation requires git." >&2
+        return 1
+    fi
+
+    if [ -d "${install_dir}/.git" ]; then
+        printf '%s\n' "Updating agent-harness in ${install_dir}..."
+        git -C "${install_dir}" pull --ff-only origin "${ref}"
+    elif [ -e "${install_dir}" ]; then
+        printf '%s\n' "Cannot install agent-harness: ${install_dir} exists and is not a Git checkout." >&2
+        return 1
+    else
+        printf '%s\n' "Downloading agent-harness to ${install_dir}..."
+        mkdir -p "$(dirname "${install_dir}")"
+        git clone --depth 1 --branch "${ref}" -- "${repository}" "${install_dir}"
+    fi
+
+    if [ "$#" -eq 0 ]; then
+        set -- --global
+    fi
+    exec "${install_dir}/install.sh" "$@"
+}
+
+if [ -z "${SOURCE}" ]; then
+    bootstrap_remote_install "$@"
+fi
+
 while [ -L "${SOURCE}" ]; do
     DIR="$(cd -P "$(dirname "${SOURCE}")" && pwd)"
     SOURCE="$(readlink "${SOURCE}")"

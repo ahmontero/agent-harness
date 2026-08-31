@@ -582,4 +582,12 @@ fi
 echo "  [PASS] receipts are private, validated, terminal, concurrent-safe, and worktree-shared."
 
 echo ""
+echo "=== 13. Testing Remote Installer Bootstrap ==="
+if ! bash "${HARNESS_ROOT}/test/test_remote_install.sh" >/dev/null; then
+    echo "  [FAIL] install.sh cannot bootstrap a persistent installation from stdin"
+    exit 1
+fi
+echo "  [PASS] stdin bootstrap installs globally from a persistent checkout."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
