@@ -56,12 +56,12 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
    6. Dumps walls of conversational text and wanders off on unrelated tangents.
 
 ✅ With agent-harness:
-   1. Strictly enforced Red-Green-Refactor loop (`/tdd`) with Anti-Rationalization Gates.
-   2. Automatic branch/worktree isolation (`/worktree`) keeps your workspace clean.
+   1. Strictly enforced Red-Green-Refactor loop (`/harness-tdd`) with Anti-Rationalization Gates.
+   2. Automatic branch/worktree isolation (`/harness-worktree`) keeps your workspace clean.
    3. Anti-Rationalization Matrices cut off LLM excuses across all critical engineering skills.
-   4. Static JSON AST/regex scanner (`/scan`) prevents known landmines before commit.
-   5. Matt Pocock-inspired 6-Phase Deterministic Debugging (`/bug`) with tagged probe instrumentation.
-   6. Action-First & State-Anchored communication with automatic debt harvesting (`/debt`).
+   4. Static JSON AST/regex scanner (`/harness-scan`) prevents known landmines before commit.
+   5. Matt Pocock-inspired 6-Phase Deterministic Debugging (`/harness-bug`) with tagged probe instrumentation.
+   6. Action-First & State-Anchored communication with automatic debt harvesting (`/harness-debt`).
 ```
 
 ---
@@ -125,12 +125,14 @@ harness init
 Most work starts with one of three intent-level workflows. Their private protocol bundles preserve the underlying engineering gates without exposing every primitive as a user command:
 
 ```text
-/implement <requirement>     Build or change behavior through spec-aware TDD, QA, and review.
-/fix <defect>                Reproduce, prove root cause, add a regression test, and apply a surgical fix.
-/investigate <question>      Gather evidence, compare options, recommend, and stop without editing.
+/harness-implement <requirement>     Build or change behavior through spec-aware TDD, QA, and review.
+/harness-fix <defect>                Reproduce, prove root cause, add a regression test, and apply a surgical fix.
+/harness-investigate <question>      Gather evidence, compare options, recommend, and stop without editing.
 ```
 
-`/implement` and `/fix` produce verified working-tree changes but never publish them without an explicit request. `/investigate` is read-only and cannot silently transition into implementation.
+The `harness-` namespace is used consistently in Gemini, Claude, Codex, and `.agents`, preventing collisions with generic or third-party skill names. CLI commands remain unchanged (`harness qa`, `harness scan`, and so on).
+
+`/harness-implement` and `/harness-fix` produce verified working-tree changes but never publish them without an explicit request. `/harness-investigate` is read-only and cannot silently transition into implementation.
 
 ### Local execution receipts
 
@@ -149,12 +151,12 @@ Receipts live under `.git/agent-harness/runs/`, are shared across the repository
 
 ## 🧠 Internal Engineering Protocols
 
-Default installations expose only `/implement`, `/fix`, and `/investigate`. The protocols below are bundled privately inside those workflows, so agents still apply TDD, debugging, specs, QA, and review without adding those primitives to the normal command surface.
+Default installations expose only `/harness-implement`, `/harness-fix`, and `/harness-investigate`. The protocols below are bundled privately inside those workflows, so agents still apply TDD, debugging, specs, QA, and review without adding those primitives to the normal command surface.
 
 Advanced users can expose the supported primitives as standalone skills with `./setup --global --expert` or `./setup --target <path> --expert`. This mode is optional; operational CLI commands such as `harness qa`, `harness commit`, and `harness pr` remain available in both modes.
 
 <details>
-<summary><b>1. 🐛 Deterministic Debugging (<code>/bug &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
+<summary><b>1. 🐛 Deterministic Debugging (<code>/harness-bug &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
 
 Enforces a 6-phase root-cause analysis cycle inspired by Matt Pocock and engineering superpowers:
 1. **Red Command**: Isolate single reproduction test or curl command.
@@ -166,7 +168,7 @@ Enforces a 6-phase root-cause analysis cycle inspired by Matt Pocock and enginee
 </details>
 
 <details>
-<summary><b>2. 🔴 Strict TDD Loop (<code>/tdd &lt;test_path&gt;</code>)</b></summary>
+<summary><b>2. 🔴 Strict TDD Loop (<code>/harness-tdd &lt;test_path&gt;</code>)</b></summary>
 
 Enforces the Red-Green-Refactor protocol:
 - **RED**: Write a failing unit/integration test capturing new requirements. Verify it fails for the right reason.
@@ -175,7 +177,7 @@ Enforces the Red-Green-Refactor protocol:
 </details>
 
 <details>
-<summary><b>3. 🛡️ Static Landmine Scanner (<code>/scan [--staged]</code>)</b></summary>
+<summary><b>3. 🛡️ Static Landmine Scanner (<code>/harness-scan [--staged]</code>)</b></summary>
 
 Scans code against custom JSON regex rules (`rules/landmines.json`):
 - Detects unindexed queries, raw SQL, client-side secret leaks, and unhandled promise rejections.
@@ -183,35 +185,35 @@ Scans code against custom JSON regex rules (`rules/landmines.json`):
 </details>
 
 <details>
-<summary><b>4. 📐 Living Delta Specs (<code>/spec &lt;create|status&gt;</code>)</b></summary>
+<summary><b>4. 📐 Living Delta Specs (<code>/harness-spec &lt;create|status&gt;</code>)</b></summary>
 
 Lightweight Spec-Driven Development (OpenSpec):
-- Creates living specifications (`specs/<issue>-<slug>/spec.md`).
+- Creates living specifications (`specs/<issue>-<slug>/harness-spec.md`).
 - Records architectural requirements, edge cases, and explicit non-goals.
 </details>
 
 <details>
-<summary><b>5. 🩺 Self-Healing Doctor (<code>/doctor [--fix]</code>)</b></summary>
+<summary><b>5. 🩺 Self-Healing Doctor (<code>/harness-doctor [--fix]</code>)</b></summary>
 
 Diagnoses environment health:
 - Verifies required executables, target repository health, and Git configuration.
 </details>
 
 <details>
-<summary><b>6. 🌳 Worktree Isolation (<code>/worktree &lt;create|list&gt;</code>)</b></summary>
+<summary><b>6. 🌳 Worktree Isolation (<code>/harness-worktree &lt;create|list&gt;</code>)</b></summary>
 
 Manages isolated `git worktree` directories per ticket:
 - Enables agents to work in parallel on separate features without dirtying your main workspace or switching active branches.
 </details>
 
 <details>
-<summary><b>7. 🧪 QA Orchestrator (<code>/qa &lt;test|tdd|all&gt;</code>)</b></summary>
+<summary><b>7. 🧪 QA Orchestrator (<code>/harness-qa &lt;test|tdd|all&gt;</code>)</b></summary>
 
 Unified interface for running test runners (`pytest`, `vitest`, `jest`, `cargo`, `go test`), linters, and type-checkers based on active project profiles.
 </details>
 
 <details>
-<summary><b>8. ⚖️ Two-Axis Code Review (<code>/review</code>)</b></summary>
+<summary><b>8. ⚖️ Two-Axis Code Review (<code>/harness-review</code>)</b></summary>
 
 Performs automated two-axis code reviews:
 - **Axis 1 (Engineering Standards)**: Invariants, landmines, error handling, performance regressions.
@@ -219,43 +221,43 @@ Performs automated two-axis code reviews:
 </details>
 
 <details>
-<summary><b>9. 🔀 Conflict Resolver (<code>/conflicts</code>)</b></summary>
+<summary><b>9. 🔀 Conflict Resolver (<code>/harness-conflicts</code>)</b></summary>
 
 Resolves git merge and rebase conflicts systematically by tracing the original commit intent from branch logs.
 </details>
 
 <details>
-<summary><b>10. 📋 Discovery Questionnaire (<code>/questionnaire</code>)</b></summary>
+<summary><b>10. 📋 Discovery Questionnaire (<code>/harness-questionnaire</code>)</b></summary>
 
 Transforms technical blockers or ambiguous domain decisions into structured discovery forms for external stakeholders.
 </details>
 
 <details>
-<summary><b>11. 🌾 Debt Harvester (<code>/debt [--json]</code>)</b></summary>
+<summary><b>11. 🌾 Debt Harvester (<code>/harness-debt [--json]</code>)</b></summary>
 
 Audits and indexes pragmatic technical debt markers (`# pragmatism:`, `# defer:`) across the codebase.
 </details>
 
 <details>
-<summary><b>12. ✍️ Conventional Commit (<code>/commit &lt;build|msg&gt;</code>)</b></summary>
+<summary><b>12. ✍️ Conventional Commit (<code>/harness-commit &lt;build|msg&gt;</code>)</b></summary>
 
 Formats semantic Conventional Commits (`feat:`, `fix:`, `refactor:`, `chore:`) automatically associated with ticket IDs.
 </details>
 
 <details>
-<summary><b>13. 🎯 Architectural Task Planner (<code>/task &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
+<summary><b>13. 🎯 Architectural Task Planner (<code>/harness-task &lt;issue&gt; &lt;slug&gt;</code>)</b></summary>
 
 Discovers requirements, identifies deep module seams, drafts delta specs, and sets up isolated branches.
 </details>
 
 <details>
-<summary><b>14. 🧹 Code Simplifier & Complexity Reducer (<code>/simplify [path]</code>)</b></summary>
+<summary><b>14. 🧹 Code Simplifier & Complexity Reducer (<code>/harness-simplify [path]</code>)</b></summary>
 
 Audits generated code to strip speculative abstractions, shallow wrappers, dead types, and over-engineering (YAGNI & Deep Modules) while maintaining GREEN tests.
 </details>
 
 <details>
-<summary><b>15. 💬 Socratic Requirement Interrogator (<code>/interview [topic]</code>)</b></summary>
+<summary><b>15. 💬 Socratic Requirement Interrogator (<code>/harness-interview [topic]</code>)</b></summary>
 
 Resolves architectural ambiguity by asking exactly **one structured multiple-choice question at a time** with a recommended option before drafting specs.
 </details>

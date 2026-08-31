@@ -46,7 +46,7 @@ if [ "$(readlink "${TEST_HOME}/.local/bin/harness")" != "${EXPECTED_INSTALL_ROOT
     echo "Global CLI link does not target the persistent installation" >&2
     exit 1
 fi
-if [ ! -f "${TEST_HOME}/.codex/skills/implement/SKILL.md" ]; then
+if [ ! -f "${TEST_HOME}/.codex/skills/harness-implement/SKILL.md" ]; then
     echo "Remote bootstrap did not install the global skill surface" >&2
     exit 1
 fi

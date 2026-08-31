@@ -1,10 +1,10 @@
 ---
-name: review
+name: harness-review
 description: Two-axis code review (Quality Floor & Landmines vs Spec Conformance) before submitting changes.
 argument-hint: "[Diff / Commit Range]"
 ---
 
-# /review: Two-Axis Code Review
+# /harness-review: Two-Axis Code Review
 
 Evaluates code quality along two independent, orthogonal axes:
 
@@ -33,5 +33,5 @@ Evaluates code quality along two independent, orthogonal axes:
 ---
 
 ## 📍 State Anchor Format
-When executing `/review`, report results using:
+When executing `/harness-review`, report results using:
 `[REVIEW: Axis 1 (Standards & Landmines) -> PASS/FAIL | Axis 2 (Spec Conformance) -> PASS/FAIL]`

@@ -1,12 +1,12 @@
 ---
-name: implement
+name: harness-implement
 description: Implements a new feature or behavior change by composing discovery, isolation, specification, TDD, simplification, QA, and review.
 argument-hint: "[Issue / requirement / acceptance criteria]"
 ---
 
-# /implement: Feature Delivery Workflow
+# /harness-implement: Feature Delivery Workflow
 
-Use this workflow for new behavior, enhancements, and intentional changes. If the request is primarily a defect with existing behavior, use `/fix`. If the requested outcome is analysis or options only, use `/investigate`.
+Use this workflow for new behavior, enhancements, and intentional changes. If the request is primarily a defect with existing behavior, use `/harness-fix`. If the requested outcome is analysis or options only, use `/harness-investigate`.
 
 ## Workflow Contract
 

@@ -1,10 +1,10 @@
 ---
-name: simplify
+name: harness-simplify
 description: Audits and simplifies recently written code, stripping speculative abstractions, dead code, and unnecessary complexity (YAGNI & Deep Modules).
 argument-hint: "[file_path | diff_range]"
 ---
 
-# /simplify: Code Simplification & Complexity Reducer
+# /harness-simplify: Code Simplification & Complexity Reducer
 
 Audits code for accidental complexity, speculative abstractions, and over-engineering introduced by AI agents. Follows John Ousterhout's *Philosophy of Software Design* (Deep Modules) and YAGNI (You Aren't Gonna Need It).
 
@@ -41,5 +41,5 @@ Audits code for accidental complexity, speculative abstractions, and over-engine
 ---
 
 ## 📍 State Anchor Format
-When executing `/simplify`, report progress using:
+When executing `/harness-simplify`, report progress using:
 `[SIMPLIFY: Auditing -> <file_or_diff> | Removed X lines of dead abstraction | Tests GREEN]`

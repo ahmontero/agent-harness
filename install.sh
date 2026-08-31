@@ -133,6 +133,7 @@ chmod +x "${HARNESS_ROOT}/install.sh" "${HARNESS_ROOT}/setup" 2>/dev/null || tru
 
 SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
 MANAGED_MARKER="agent-harness-skill-bundle-v1"
+SKILL_NAMESPACE=""
 
 require_skill_catalog() {
     local skill
@@ -145,6 +146,14 @@ require_skill_catalog() {
         log_error "Invalid or missing skill catalog: ${SKILL_CATALOG}"
         return 1
     fi
+
+    SKILL_NAMESPACE="$(jq -r '.namespace // empty' "${SKILL_CATALOG}")"
+    case "${SKILL_NAMESPACE}" in
+        ""|*[!a-z0-9_-]*)
+            log_error "Unsafe or missing skill namespace in catalog: ${SKILL_NAMESPACE}"
+            return 1
+            ;;
+    esac
 
     while IFS= read -r skill; do
         case "${skill}" in
@@ -190,7 +199,8 @@ install_workflow_bundle() {
     local destination="$1"
     local workflow="$2"
     local workflow_source="${HARNESS_ROOT}/core/skills/${workflow}/SKILL.md"
-    local workflow_destination="${destination}/${workflow}"
+    local published_workflow="${SKILL_NAMESPACE}-${workflow}"
+    local workflow_destination="${destination}/${published_workflow}"
 
     if [ -e "${workflow_destination}" ] || [ -L "${workflow_destination}" ]; then
         log_warn "Preserving unmanaged skill path: ${workflow_destination}"
@@ -218,6 +228,7 @@ install_skill_surface() {
 
     while IFS= read -r skill; do
         remove_managed_skill "${destination}/${skill}"
+        remove_managed_skill "${destination}/${SKILL_NAMESPACE}-${skill}"
     done < <(jq -r '(.public | keys[]), .internal[], .removed[]' "${SKILL_CATALOG}" | sort -u)
 
     while IFS= read -r workflow; do
@@ -226,7 +237,8 @@ install_skill_surface() {
 
     if [ "${SKILL_MODE}" = "expert" ]; then
         while IFS= read -r primitive; do
-            local primitive_destination="${destination}/${primitive}"
+            local published_primitive="${SKILL_NAMESPACE}-${primitive}"
+            local primitive_destination="${destination}/${published_primitive}"
             if [ -e "${primitive_destination}" ] || [ -L "${primitive_destination}" ]; then
                 log_warn "Preserving unmanaged skill path: ${primitive_destination}"
                 continue

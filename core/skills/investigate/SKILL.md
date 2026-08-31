@@ -1,10 +1,10 @@
 ---
-name: investigate
+name: harness-investigate
 description: Investigates a technical question read-only, gathering evidence and comparing options without implementing a solution.
 argument-hint: "[Question / decision / architecture problem]"
 ---
 
-# /investigate: Evidence-to-Decision Workflow
+# /harness-investigate: Evidence-to-Decision Workflow
 
 Use this workflow to understand behavior, compare solutions, evaluate architecture, or prepare a recommendation. It is deliberately read-only and terminates before implementation.
 
@@ -13,7 +13,7 @@ Use this workflow to understand behavior, compare solutions, evaluate architectu
 - Separate verified facts, source-backed inferences, assumptions, and unknowns.
 - Inspect the current implementation and constraints before proposing alternatives.
 - Compare materially distinct options against the same decision criteria.
-- Produce a recommendation strong enough for a human to choose `/implement`, `/fix`, further research, or STOP.
+- Produce a recommendation strong enough for a human to choose `/harness-implement`, `/harness-fix`, further research, or STOP.
 
 ### Execution Receipt
 
@@ -35,7 +35,7 @@ Omit `--issue` when unavailable. Record phase outcomes without free-form content
 ## Safety Boundary
 
 - Apart from its private execution receipt, this workflow is read-only: do not edit working-tree files, create specs or worktrees, install dependencies, mutate external systems, or run destructive commands.
-- Do not silently transition into `/implement` or `/fix` after finding an answer.
+- Do not silently transition into `/harness-implement` or `/harness-fix` after finding an answer.
 - Do not commit, push, or open a pull request.
 - If the user explicitly requests implementation during the investigation, finish the current evidence summary and start the appropriate workflow as a distinct phase of work.
 

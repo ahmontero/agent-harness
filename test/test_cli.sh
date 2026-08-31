@@ -18,10 +18,11 @@ done
 echo ""
 echo "=== 2. Testing Skills YAML Frontmatter ==="
 find "${HARNESS_ROOT}/core/skills" -name "SKILL.md" | while read -r skill; do
-    if grep -q "^---" "${skill}" && grep -q "^name:" "${skill}" && grep -q "^description:" "${skill}"; then
+    expected_name="harness-$(basename "$(dirname "${skill}")")"
+    if grep -q "^---" "${skill}" && grep -qx "name: ${expected_name}" "${skill}" && grep -q "^description:" "${skill}"; then
         echo "  [PASS] $(basename "$(dirname "${skill}")")"
     else
-        echo "  [FAIL] Missing valid frontmatter in ${skill}"
+        echo "  [FAIL] Missing namespaced frontmatter in ${skill}; expected ${expected_name}"
         exit 1
     fi
 done
@@ -31,6 +32,10 @@ echo "=== 2b. Testing Composite Workflow Contracts ==="
 SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
 if [ ! -f "${SKILL_CATALOG}" ]; then
     echo "  [FAIL] Missing canonical skill catalog"
+    exit 1
+fi
+if [ "$(jq -r '.namespace // empty' "${SKILL_CATALOG}")" != "harness" ]; then
+    echo "  [FAIL] Skill catalog must publish through the harness namespace"
     exit 1
 fi
 if [ "$(jq -r '.public | keys | sort | join(" ")' "${SKILL_CATALOG}")" != "fix implement investigate" ]; then
@@ -46,6 +51,10 @@ for workflow in implement fix investigate; do
     workflow_file="${HARNESS_ROOT}/core/skills/${workflow}/SKILL.md"
     if [ ! -f "${workflow_file}" ]; then
         echo "  [FAIL] Missing composite workflow: ${workflow}"
+        exit 1
+    fi
+    if ! grep -qx "name: harness-${workflow}" "${workflow_file}"; then
+        echo "  [FAIL] Composite workflow '${workflow}' is missing namespaced frontmatter"
         exit 1
     fi
     for contract_section in "## Workflow Contract" "## Phases" "## Safety Boundary" "## State Anchor"; do
@@ -160,18 +169,27 @@ for runtime_dir in .agents/skills .claude/skills .codex/skills .gemini/skills; d
         exit 1
     fi
     for workflow in implement fix investigate; do
-        if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${workflow}/SKILL.md" ]; then
-            echo "  [FAIL] Default initialization did not expose '${workflow}' in ${runtime_dir}"
+        published_workflow="harness-${workflow}"
+        if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md" ]; then
+            echo "  [FAIL] Default initialization did not expose '${published_workflow}' in ${runtime_dir}"
+            exit 1
+        fi
+        if ! grep -qx "name: ${published_workflow}" "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md"; then
+            echo "  [FAIL] Installed workflow metadata does not match '${published_workflow}' in ${runtime_dir}"
             exit 1
         fi
         while IFS= read -r primitive; do
-            if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${workflow}/references/${primitive}.md" ]; then
+            if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/references/${primitive}.md" ]; then
                 echo "  [FAIL] Workflow '${workflow}' omitted private protocol '${primitive}' in ${runtime_dir}"
                 exit 1
             fi
         done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
     done
-    if [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/tdd" ] || [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/ship" ]; then
+    if [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/implement" ] || \
+       [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/tdd" ] || \
+       [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/ship" ] || \
+       [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/harness-tdd" ] || \
+       [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/harness-ship" ]; then
         echo "  [FAIL] Curated installation exposed an internal or removed skill in ${runtime_dir}"
         exit 1
     fi
@@ -183,12 +201,18 @@ mkdir -p "${EXPERT_TARGET_DIR}"
 git -C "${EXPERT_TARGET_DIR}" init -q
 "${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" --expert >/dev/null
 while IFS= read -r skill; do
-    if [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/${skill}/SKILL.md" ]; then
-        echo "  [FAIL] Expert installation omitted skill: ${skill}"
+    published_skill="harness-${skill}"
+    if [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md" ]; then
+        echo "  [FAIL] Expert installation omitted skill: ${published_skill}"
+        exit 1
+    fi
+    if ! grep -qx "name: ${published_skill}" "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md"; then
+        echo "  [FAIL] Expert skill metadata does not match: ${published_skill}"
         exit 1
     fi
 done < <(jq -r '(.public | keys[]), .internal[]' "${SKILL_CATALOG}")
-if [ -e "${EXPERT_TARGET_DIR}/.codex/skills/ship" ]; then
+if find "${EXPERT_TARGET_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 ! -name 'harness-*' -print -quit | grep -q . || \
+   [ -e "${EXPERT_TARGET_DIR}/.codex/skills/harness-ship" ]; then
     echo "  [FAIL] Expert installation restored the removed ship skill"
     exit 1
 fi
@@ -200,6 +224,7 @@ ln -s "${HARNESS_ROOT}/core/skills/ship" "${EXPERT_TARGET_DIR}/.codex/skills/shi
 "${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" >/dev/null
 "${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" >/dev/null
 if [ -e "${EXPERT_TARGET_DIR}/.codex/skills/tdd" ] || \
+   [ -e "${EXPERT_TARGET_DIR}/.codex/skills/harness-tdd" ] || \
    [ -L "${EXPERT_TARGET_DIR}/.codex/skills/ship" ] || \
    [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/user-owned/SKILL.md" ]; then
     echo "  [FAIL] Curated migration did not safely remove managed primitives or preserve user skills"
@@ -210,6 +235,21 @@ if [ "$(find "${EXPERT_TARGET_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 \( -ty
     exit 1
 fi
 echo "  [PASS] Curated migration is safe and idempotent."
+
+FAILED_CLEANUP_TARGET="${TMP_TEST_DIR}/failed-cleanup-test"
+FAILED_CLEANUP_BIN="${TMP_TEST_DIR}/failed-cleanup-bin"
+mkdir -p "${FAILED_CLEANUP_TARGET}/.codex/skills" "${FAILED_CLEANUP_BIN}"
+ln -s "${HARNESS_ROOT}/core/skills/tdd" "${FAILED_CLEANUP_TARGET}/.codex/skills/tdd"
+cat > "${FAILED_CLEANUP_BIN}/rm" <<'FAILED_RM_EOF'
+#!/usr/bin/env bash
+exit 1
+FAILED_RM_EOF
+chmod +x "${FAILED_CLEANUP_BIN}/rm"
+if PATH="${FAILED_CLEANUP_BIN}:${PATH}" "${HARNESS_ROOT}/install.sh" --target "${FAILED_CLEANUP_TARGET}" >/dev/null 2>&1; then
+    echo "  [FAIL] Installer reported success after managed skill cleanup failed"
+    exit 1
+fi
+echo "  [PASS] Managed skill cleanup fails closed."
 
 echo ""
 echo "=== 7. Testing Fail-Closed QA Aggregation ==="
@@ -389,9 +429,9 @@ for documented_contract in \
     "## 🚦 Three Engineering Workflows" \
     "## 🧠 Internal Engineering Protocols" \
     "./setup --global --expert" \
-    '`/implement`' \
-    '`/fix`' \
-    '`/investigate`'; do
+    '`/harness-implement`' \
+    '`/harness-fix`' \
+    '`/harness-investigate`'; do
     if ! grep -Fq "${documented_contract}" "${HARNESS_ROOT}/README.md"; then
         echo "  [FAIL] README is missing public contract: ${documented_contract}"
         exit 1

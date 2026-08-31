@@ -1,10 +1,10 @@
 ---
-name: spec
+name: harness-spec
 description: Manages Spec-Driven Development (OpenSpec / Living Delta Specs) lifecycle for features and modules.
 argument-hint: "status | create <issue_key> <slug> | verify [path]"
 ---
 
-# /spec: Spec-Driven Development & Living Delta Specs
+# /harness-spec: Spec-Driven Development & Living Delta Specs
 
 Manages the lifecycle of specifications before, during, and after code changes.
 
@@ -32,6 +32,6 @@ harness spec verify specs/delta-<issue_key>-<slug>.md
 ---
 
 ## 📍 State Anchor Format
-When executing `/spec`, report progress using:
+When executing `/harness-spec`, report progress using:
 `[SPEC: Status -> Drafting delta spec specs/delta-<key>-<slug>.md]`
 `[SPEC: Verified -> All acceptance criteria mapped to tests]`

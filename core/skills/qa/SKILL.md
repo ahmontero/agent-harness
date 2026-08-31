@@ -1,10 +1,10 @@
 ---
-name: qa
+name: harness-qa
 description: Runs test suites, TDD test loops, linters, type checkers, and static scans for the active project profile.
 argument-hint: "test | tdd <path> | lint | types | scan | all"
 ---
 
-# /qa: Test Suite & Quality Assurance
+# /harness-qa: Test Suite & Quality Assurance
 
 Executes configured test runners (pytest, vitest, jest, cargo, go) and static linters:
 

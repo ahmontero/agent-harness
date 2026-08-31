@@ -1,10 +1,10 @@
 ---
-name: bug
+name: harness-bug
 description: Investigates, analyzes root causes, and fixes bugs using a disciplined 6-phase red-capable feedback loop without regressions.
 argument-hint: "[Issue Key / ID] [Error / Trace / Sentry Issue]"
 ---
 
-# /bug: Systematic 6-Phase Debugging Protocol
+# /harness-bug: Systematic 6-Phase Debugging Protocol
 
 Combines the rigor of **Superpowers** and the disciplined feedback-loop protocol of **Matt Pocock**. Jumping straight to editing code without an automated failing signal is strictly forbidden.
 
@@ -59,5 +59,5 @@ flowchart TD
 ---
 
 ## 📍 State Anchor Format
-When executing `/bug`, report progress on every turn:
+When executing `/harness-bug`, report progress on every turn:
 `[DEBUG: Phase X/6 - <Phase Name> | Active: <Target File/Command> | Next: <Next Phase>]`

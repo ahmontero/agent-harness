@@ -1,10 +1,10 @@
 ---
-name: interview
+name: harness-interview
 description: Interrogates requirements and resolves design ambiguity by asking exactly one structured, multiple-choice question at a time before drafting specs or code.
 argument-hint: "[Feature Idea / Ticket / Ambiguity Area]"
 ---
 
-# /interview: Socratic Requirement Interrogator
+# /harness-interview: Socratic Requirement Interrogator
 
 Extracts exact user requirements and resolves architectural ambiguity by asking **one clear, structured question at a time** before drafting specs or touching source code.
 
@@ -43,5 +43,5 @@ Extracts exact user requirements and resolves architectural ambiguity by asking 
 ---
 
 ## 📍 State Anchor Format
-When executing `/interview`, report state using:
+When executing `/harness-interview`, report state using:
 `[INTERVIEW: Question X/Y | Topic: <Boundary/Data Model> | Next: Draft Spec]`

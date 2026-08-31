@@ -99,24 +99,32 @@ verify_skill_surface() {
     local destination="$1"
     local mode="$2"
     local allow_user_skill="$3"
-    local workflow primitive removed installed_count expected_count
+    local namespace workflow published_workflow primitive published_primitive removed installed_count expected_count
+    namespace="$(jq -r '.namespace // empty' "${SKILL_CATALOG}")"
+    [ "${namespace}" = "harness" ] || { echo "Unexpected skill namespace: ${namespace}" >&2; return 1; }
 
     while IFS= read -r workflow; do
-        assert_file "${destination}/${workflow}/SKILL.md" || return 1
+        published_workflow="${namespace}-${workflow}"
+        assert_file "${destination}/${published_workflow}/SKILL.md" || return 1
+        grep -qx "name: ${published_workflow}" "${destination}/${published_workflow}/SKILL.md" || return 1
     done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
 
     if [ "${mode}" = "expert" ]; then
         while IFS= read -r primitive; do
-            assert_file "${destination}/${primitive}/SKILL.md" || return 1
+            published_primitive="${namespace}-${primitive}"
+            assert_file "${destination}/${published_primitive}/SKILL.md" || return 1
+            grep -qx "name: ${published_primitive}" "${destination}/${published_primitive}/SKILL.md" || return 1
         done < <(jq -r '.internal[]' "${SKILL_CATALOG}")
     else
         while IFS= read -r primitive; do
             assert_absent "${destination}/${primitive}" || return 1
+            assert_absent "${destination}/${namespace}-${primitive}" || return 1
         done < <(jq -r '.internal[]' "${SKILL_CATALOG}")
     fi
 
     while IFS= read -r removed; do
         assert_absent "${destination}/${removed}" || return 1
+        assert_absent "${destination}/${namespace}-${removed}" || return 1
     done < <(jq -r '.removed[]' "${SKILL_CATALOG}")
 
     expected_count="$(jq -r '.public | length' "${SKILL_CATALOG}")"

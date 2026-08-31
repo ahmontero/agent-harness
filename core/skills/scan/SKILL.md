@@ -1,10 +1,10 @@
 ---
-name: scan
+name: harness-scan
 description: Runs static Landmine & Security scanner against staged files or working diff using JSON regex rules.
 argument-hint: "[--staged|--diff|--all] [--install-hook]"
 ---
 
-# /scan: Static Landmine & Security Scanner
+# /harness-scan: Static Landmine & Security Scanner
 
 Scans staged code against domain landmines defined in `rules/landmines.json`.
 

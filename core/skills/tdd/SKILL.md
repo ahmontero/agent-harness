@@ -1,10 +1,10 @@
 ---
-name: tdd
+name: harness-tdd
 description: Executes a strict Test-Driven Development (TDD) cycle (Red-Green-Refactor) before writing production implementation.
 argument-hint: "<test_file_path>"
 ---
 
-# /tdd: Strict Red-Green-Refactor Loop
+# /harness-tdd: Strict Red-Green-Refactor Loop
 
 Enforces the classic Kent Beck / Martin Fowler TDD discipline. Never write production code without a failing test first.
 
@@ -41,7 +41,7 @@ Enforces the classic Kent Beck / Martin Fowler TDD discipline. Never write produ
 ---
 
 ## 📍 State Anchor Format
-When executing `/tdd`, report progress using:
+When executing `/harness-tdd`, report progress using:
 `[TDD: RED -> Failing test verified at <path>]`
 `[TDD: GREEN -> Minimal implementation passing (<duration>)]`
 `[TDD: REFACTOR -> Lint & Types verified cleanly]`

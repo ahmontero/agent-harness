@@ -1,12 +1,12 @@
 ---
-name: fix
+name: harness-fix
 description: Fixes a defect through deterministic reproduction, confirmed root cause, regression TDD, fail-closed QA, and review.
 argument-hint: "[Issue / failing behavior / error / trace]"
 ---
 
-# /fix: Root-Cause Bug-Fix Workflow
+# /harness-fix: Root-Cause Bug-Fix Workflow
 
-Use this workflow when observed behavior violates an existing expectation. If the request introduces intentional new behavior, use `/implement`. If the user wants diagnosis without a code change, use `/investigate`.
+Use this workflow when observed behavior violates an existing expectation. If the request introduces intentional new behavior, use `/harness-implement`. If the user wants diagnosis without a code change, use `/harness-investigate`.
 
 ## Workflow Contract
 

@@ -1,10 +1,10 @@
 ---
-name: worktree
+name: harness-worktree
 description: Manages isolated git worktree directories for tickets/features without dirtying the main working tree.
 argument-hint: "create <type> <issue_key> <slug> | list | remove <issue_key>"
 ---
 
-# /worktree: Workspace Isolation
+# /harness-worktree: Workspace Isolation
 
 Allows parallel development on multiple branches simultaneously using git worktree.
 

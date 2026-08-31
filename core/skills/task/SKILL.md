@@ -1,10 +1,10 @@
 ---
-name: task
+name: harness-task
 description: Plans, designs, and creates branches/worktrees for a new task or feature with clear architectural seams.
 argument-hint: "[Issue Key / ID] [Task Slug]"
 ---
 
-# /task: Architectural Planning & Task Discovery
+# /harness-task: Architectural Planning & Task Discovery
 
 This skill acts as the **Lead Architect**, guiding the planning, design, and worktree creation for new features or refactors.
 
