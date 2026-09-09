@@ -498,12 +498,13 @@ echo "  [PASS] repository provides its canonical floor and landmine documentatio
 echo ""
 echo "=== 10. Testing Public Workflow Documentation ==="
 for documented_contract in \
-    "## 🚦 Three Engineering Workflows" \
+    "## 🚦 Engineering Workflows" \
     "## 🧠 Internal Engineering Protocols" \
     "./setup --global --expert" \
     '`/harness-implement`' \
     '`/harness-fix`' \
-    '`/harness-investigate`'; do
+    '`/harness-investigate`' \
+    '`/harness-orchestrate`'; do
     if ! grep -Fq "${documented_contract}" "${HARNESS_ROOT}/README.md"; then
         echo "  [FAIL] README is missing public contract: ${documented_contract}"
         exit 1

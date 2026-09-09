@@ -31,7 +31,7 @@
 - [⚖️ Why agent-harness? (The Agent Quality Gap)](#️-why-agent-harness-the-agent-quality-gap)
 - [🌐 Universal Multi-Harness Compatibility](#-universal-multi-harness-compatibility)
 - [⚡ 10-Second Quickstart](#-10-second-quickstart)
-- [🚦 Three Engineering Workflows](#-three-engineering-workflows)
+- [🚦 Engineering Workflows](#-engineering-workflows)
 - [🧠 Internal Engineering Protocols](#-internal-engineering-protocols)
 - [🛡️ Injecting Domain Rules & Landmines](#️-injecting-domain-rules--landmines)
 - [💻 Multi-Call CLI Dispatcher (`harness`)](#-multi-call-cli-dispatcher-harness)
@@ -128,7 +128,7 @@ harness init
 
 ---
 
-## 🚦 Three Engineering Workflows
+## 🚦 Engineering Workflows
 
 Most work starts with one of three intent-level workflows. Their private protocol bundles preserve the underlying engineering gates without exposing every primitive as a user command:
 
@@ -141,6 +141,24 @@ Most work starts with one of three intent-level workflows. Their private protoco
 The `harness-` namespace is used consistently in Gemini, Claude, Codex, and `.agents`, preventing collisions with generic or third-party skill names. CLI commands remain unchanged (`harness qa`, `harness scan`, and so on).
 
 `/harness-implement` and `/harness-fix` produce verified working-tree changes but never publish them without an explicit request. `/harness-investigate` is read-only and cannot silently transition into implementation.
+
+### A fourth workflow, on Claude Code only
+
+```text
+/harness-orchestrate <delta-spec>    Execute an approved plan item by item, dispatching one implementer
+                                     and one reviewer subagent per item, with a model chosen per role.
+```
+
+`/harness-orchestrate` requires subagent dispatch, which is not a capability every runtime exposes, so the installer places it in Claude Code and nowhere else. It has no degraded single-context mode on purpose: where dispatch is unavailable, `/harness-implement` applies the same engineering gates inside one context, and the workflow tells you so instead of pretending to orchestrate.
+
+| Workflow | Antigravity | Claude Code | Codex | Cursor | `.agents` |
+| :--- | :---: | :---: | :---: | :---: | :---: |
+| `/harness-implement` | yes | yes | yes | yes | yes |
+| `/harness-fix` | yes | yes | yes | yes | yes |
+| `/harness-investigate` | yes | yes | yes | yes | yes |
+| `/harness-orchestrate` | no | yes | no | no | no |
+
+Its value is role separation rather than speed: each plan item gets an implementer with a fresh context, and a reviewer that receives the diff and never the implementer's reasoning. Dispatch is strictly serial, because two subagents editing one working tree is a race, not a speedup. Models per role are configured under `profiles.<profile>.orchestrate.models` and default to `sonnet` for the implementer and `opus` for the reviewer.
 
 ### Local execution receipts
 

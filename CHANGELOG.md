@@ -6,6 +6,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.1.0] - 2026-09-09
+
+### Added
+- `/harness-orchestrate`, a fourth public workflow that executes an approved delta spec's implementation plan one item at a time, dispatching an implementer subagent and then a separate reviewer subagent that sees the diff but never the implementer's reasoning. It requires subagent dispatch and has no degraded single-context mode; where dispatch is unavailable, `/harness-implement` is the equivalent.
+- Per-runtime skill gating. `core/skills/catalog.json` carries a `runtimes` map, and `install.sh` installs a gated public workflow only into the runtimes it names. A workflow absent from the map still reaches every runtime. Removal stays unconditional, so a newly gated workflow leaves the disallowed runtimes without a migration step.
+- Per-role model selection under `profiles.<profile>.orchestrate.models`, surfaced by `harness context --json` as `orchestrateModels` and defaulting to `sonnet` for the implementer and `opus` for the reviewer.
+- `orchestrate` is a valid execution receipt workflow, with the phase tokens `admit`, `dispatch`, `review`, `resolve`, and `close`.
+
+### Changed
+- The compatibility matrix verifies the surface each runtime is declared to receive rather than an identical surface everywhere, and asserts that a gated workflow is absent from every other runtime. Its evidence artifact moves to `schemaVersion: 2` and gains a `runtimeGating` boolean.
+
 ## [2.0.0] - 2026-09-09
 
 ### Added

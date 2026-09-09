@@ -52,5 +52,13 @@ flowchart TD
 - The catalog's `harness` namespace is applied to every published directory and `SKILL.md` name; `--expert` exposes primitives through the same namespace.
 - Each workflow bundle carries its required private protocol references, while the canonical catalog remains the single source of truth for public, internal, and removed skills.
 
-### 3. Sub-Second Context Extraction
+### 3. Per-Runtime Skill Gating
+
+Most skills are identical in every runtime, but a workflow may depend on a primitive only one runtime exposes. `core/skills/catalog.json` carries a `runtimes` map for that case: a public workflow listed there reaches only the runtimes it names, and a workflow absent from the map reaches all of them. `install.sh` resolves a runtime label for each destination directory and filters workflow installation by it.
+
+Removal stays unconditional while installation is filtered. The installer clears every managed skill path in the catalog before installing the permitted set, so a workflow that becomes gated after a previous installation disappears from the disallowed runtimes on the next run, with no migration step. The compatibility matrix asserts both halves: presence where a workflow is declared, and absence everywhere else.
+
+Internal primitives are never gated. Expert mode continues to expose all of them in every runtime.
+
+### 4. Sub-Second Context Extraction
 - `harness context --json` extracts the active profile, repository, branch/trunk, dirty state, configured test runner and issue provider, plus active-spec and debt counts in a compact JSON signal.
