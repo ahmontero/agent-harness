@@ -241,7 +241,7 @@ write_report() {
         --arg mode "${mode}" \
         --arg status "${status}" \
         --argjson verifiedContracts "${contracts}" \
-        '{schemaVersion: 1, os: $os, scope: $scope, mode: $mode, status: $status, installerRuns: 2, idempotent: ($status == "passed"), userContentPreserved: ($status == "passed"), verifiedContracts: $verifiedContracts}' \
+        '{schemaVersion: 2, os: $os, scope: $scope, mode: $mode, status: $status, installerRuns: 2, idempotent: ($status == "passed"), userContentPreserved: ($status == "passed"), runtimeGating: ($status == "passed"), verifiedContracts: $verifiedContracts}' \
         > "${path}"
 }
 

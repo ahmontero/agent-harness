@@ -536,10 +536,11 @@ if [ ! -x "${COMPAT_RUNNER}" ]; then
 fi
 "${COMPAT_RUNNER}" --scope target --mode default --report "${COMPAT_REPORT}" >/dev/null
 if ! jq -e '
-    .schemaVersion == 1 and
+    .schemaVersion == 2 and
     .scope == "target" and
     .mode == "default" and
     .status == "passed" and
+    .runtimeGating == true and
     (.os | type == "string" and length > 0) and
     (.verifiedContracts | sort == ["agents", "claude", "codex", "cursor", "gemini"])
 ' "${COMPAT_REPORT}" >/dev/null; then

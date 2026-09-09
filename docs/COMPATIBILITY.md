@@ -17,9 +17,10 @@ Each cell uploads a versioned JSON evidence artifact. A matrix failure identifie
 
 ### Target-repository installation
 
-The runner verifies:
+The runner verifies the surface each runtime is declared to receive, which is not the same surface everywhere: a workflow may be gated to one runtime in the skill catalog. It verifies:
 
-- `.gemini/skills`, `.claude/skills`, `.codex/skills`, and `.agents/skills` expose the expected skill surface;
+- `.gemini/skills`, `.claude/skills`, `.codex/skills`, and `.agents/skills` expose the surface declared for that runtime;
+- a workflow gated to one runtime in the catalog reaches only that runtime, and is absent everywhere else;
 - runtime rule directories exist for Gemini, Claude, Codex, Cursor, and `.agents`;
 - `AGENTS.md` and its `CLAUDE.md` and `GEMINI.md` links are present;
 - default mode exposes exactly the three public workflows;
@@ -47,7 +48,7 @@ Artifacts use this stable, machine-readable shape:
 
 ```json
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "os": "Linux",
   "scope": "target",
   "mode": "default",
@@ -55,9 +56,12 @@ Artifacts use this stable, machine-readable shape:
   "installerRuns": 2,
   "idempotent": true,
   "userContentPreserved": true,
+  "runtimeGating": true,
   "verifiedContracts": ["agents", "claude", "codex", "cursor", "gemini"]
 }
 ```
+
+`schemaVersion` moved from `1` to `2` when `runtimeGating` was added. A consumer pinned to version 1 should expect the field to be absent there.
 
 Failed assertions return a non-zero status and, when a report path is supplied, record `status: "failed"` instead of emitting a false success.
 
