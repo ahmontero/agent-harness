@@ -5,7 +5,7 @@
 # Compatible with Google Antigravity, Claude Code, OpenAI Codex, Cursor & .agents
 # ==============================================================================
 
-set -eo pipefail
+set -Eeo pipefail
 
 SOURCE="${BASH_SOURCE[0]:-}"
 
@@ -52,6 +52,7 @@ SCRIPTS_DIR="${HARNESS_ROOT}/core/scripts"
 
 source "${SCRIPTS_DIR}/lib/utils.sh"
 source "${SCRIPTS_DIR}/lib/config.sh"
+source "${SCRIPTS_DIR}/lib/transaction.sh"
 
 usage() {
     print_banner
@@ -67,6 +68,7 @@ ${BOLD}Usage:${RESET}
   ./setup --cli-only          # Install only CLI binaries to ~/.local/bin
   ./setup --verify            # Verify installation health, script syntax & skill frontmatter
   ./setup --sync-only         # Re-sync skills and rules across harnesses
+  ./setup --rollback          # Undo the last committed installation
 
 ${BOLD}Examples:${RESET}
   ./setup --target ~/projects/my-saas
@@ -82,6 +84,7 @@ CLI_ONLY=false
 VERIFY_MODE=false
 SYNC_ONLY=false
 GUIDED_MODE=false
+ROLLBACK_MODE=false
 SKILL_MODE="curated"
 
 if [ $# -eq 0 ]; then
@@ -97,11 +100,25 @@ while [[ $# -gt 0 ]]; do
         --cli-only) CLI_ONLY=true; shift ;;
         --verify) VERIFY_MODE=true; shift ;;
         --sync-only) SYNC_ONLY=true; shift ;;
+        --rollback) ROLLBACK_MODE=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
+
+# Rollback Mode
+if [ "${ROLLBACK_MODE}" = true ]; then
+    if [ -n "${TARGET_REPO}" ] || [ "${INSTALL_GLOBAL}" = true ] || [ "${CLI_ONLY}" = true ] || \
+       [ "${SYNC_ONLY}" = true ] || [ "${VERIFY_MODE}" = true ] || [ -n "${RECIPE_NAME}" ] || \
+       [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ]; then
+        log_error "--rollback cannot be combined with installation options."
+        exit 1
+    fi
+    transaction_rollback_last
+    log_success "Last installation transaction rolled back."
+    exit 0
+fi
 
 # Verification Mode
 if [ "${VERIFY_MODE}" = true ]; then
@@ -187,11 +204,11 @@ remove_managed_skill() {
 
     if [ -L "${skill_path}" ]; then
         case "$(readlink "${skill_path}")" in
-            "${HARNESS_ROOT}/core/skills/"*) rm -f "${skill_path}" ;;
+            "${HARNESS_ROOT}/core/skills/"*) transaction_unlink "${skill_path}" ;;
         esac
     elif [ -d "${skill_path}" ] && [ -f "${skill_path}/.agent-harness-managed" ] && \
          grep -qx "${MANAGED_MARKER}" "${skill_path}/.agent-harness-managed"; then
-        rm -rf "${skill_path}"
+        transaction_remove_tree "${skill_path}"
     fi
 }
 
@@ -207,9 +224,10 @@ install_workflow_bundle() {
         return
     fi
 
-    mkdir -p "${workflow_destination}/references"
-    cp "${workflow_source}" "${workflow_destination}/SKILL.md"
-    printf '%s\n' "${MANAGED_MARKER}" > "${workflow_destination}/.agent-harness-managed"
+    transaction_ensure_directory "${workflow_destination}/references"
+    transaction_copy "${workflow_source}" "${workflow_destination}/SKILL.md"
+    transaction_write_command "${workflow_destination}/.agent-harness-managed" 644 \
+        printf '%s\n' "${MANAGED_MARKER}"
 
     while IFS= read -r primitive; do
         local primitive_source="${HARNESS_ROOT}/core/skills/${primitive}/SKILL.md"
@@ -217,13 +235,13 @@ install_workflow_bundle() {
             log_error "Workflow '${workflow}' references missing primitive '${primitive}'."
             return 1
         fi
-        cp "${primitive_source}" "${workflow_destination}/references/${primitive}.md"
+        transaction_copy "${primitive_source}" "${workflow_destination}/references/${primitive}.md"
     done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
 }
 
 install_skill_surface() {
     local destination="$1"
-    mkdir -p "${destination}"
+    transaction_ensure_directory "${destination}"
     require_skill_catalog
 
     while IFS= read -r skill; do
@@ -243,7 +261,7 @@ install_skill_surface() {
                 log_warn "Preserving unmanaged skill path: ${primitive_destination}"
                 continue
             fi
-            ln -s "${HARNESS_ROOT}/core/skills/${primitive}" "${primitive_destination}"
+            transaction_symlink "${HARNESS_ROOT}/core/skills/${primitive}" "${primitive_destination}"
         done < <(jq -r '.internal[]' "${SKILL_CATALOG}")
     fi
 }
@@ -251,12 +269,12 @@ install_skill_surface() {
 # 1. Install CLI binary into ~/.local/bin
 install_cli() {
     local bin_dest="${HOME}/.local/bin"
-    mkdir -p "${bin_dest}"
-    
+    transaction_ensure_directory "${bin_dest}"
+
     log_info "Linking CLI binaries (harness, agh, agent-harness) to ${bin_dest}..."
-    ln -sf "${HARNESS_ROOT}/bin/harness" "${bin_dest}/harness"
-    ln -sf "${HARNESS_ROOT}/bin/harness" "${bin_dest}/agh"
-    ln -sf "${HARNESS_ROOT}/bin/harness" "${bin_dest}/agent-harness"
+    transaction_symlink "${HARNESS_ROOT}/bin/harness" "${bin_dest}/harness"
+    transaction_symlink "${HARNESS_ROOT}/bin/harness" "${bin_dest}/agh"
+    transaction_symlink "${HARNESS_ROOT}/bin/harness" "${bin_dest}/agent-harness"
     
     # Link profile aliases if defined in config
     local config_file
@@ -267,7 +285,7 @@ install_cli() {
             aliases=$(jq -r ".profiles[\"${profile}\"].cliAlias // empty" "${config_file}" 2>/dev/null)
             for alias_name in ${aliases}; do
                 if [ -n "${alias_name}" ] && [ "${alias_name}" != "harness" ] && [ "${alias_name}" != "agh" ] && [ "${alias_name}" != "agent-harness" ]; then
-                    ln -sf "${HARNESS_ROOT}/bin/harness" "${bin_dest}/${alias_name}"
+                    transaction_symlink "${HARNESS_ROOT}/bin/harness" "${bin_dest}/${alias_name}"
                     log_success "Linked CLI alias: ${bin_dest}/${alias_name} -> harness"
                 fi
             done
@@ -281,16 +299,22 @@ install_cli() {
 install_target_repo() {
     local target="$1"
     local recipe="$2"
-    mkdir -p "${target}"
+    transaction_ensure_directory "${target}"
 
     log_info "Installing agent-harness into target repository: ${BOLD}${target}${RESET}..."
 
     # Apply recipe if specified
     if [ -n "${recipe}" ] && [ -d "${HARNESS_ROOT}/recipes/${recipe}" ]; then
         log_info "Applying recipe: ${BOLD}${recipe}${RESET}..."
-        [ ! -f "${target}/stack.config.json" ] && cp "${HARNESS_ROOT}/recipes/${recipe}/stack.config.json" "${target}/stack.config.json"
-        mkdir -p "${target}/rules"
-        cp -r "${HARNESS_ROOT}/recipes/${recipe}/rules/"* "${target}/rules/" 2>/dev/null || true
+        if [ ! -f "${target}/stack.config.json" ]; then
+            transaction_copy "${HARNESS_ROOT}/recipes/${recipe}/stack.config.json" "${target}/stack.config.json"
+        fi
+        transaction_ensure_directory "${target}/rules"
+        local recipe_rule
+        for recipe_rule in "${HARNESS_ROOT}/recipes/${recipe}/rules/"*; do
+            [ -f "${recipe_rule}" ] || continue
+            transaction_copy "${recipe_rule}" "${target}/rules/$(basename "${recipe_rule}")"
+        done
     fi
 
     # Create target directories
@@ -305,8 +329,11 @@ install_target_repo() {
     local cursor_rules="${target}/.cursor/rules"
     local agents_rules="${target}/.agents/rules"
 
-    mkdir -p "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}" \
-             "${gemini_rules}" "${claude_rules}" "${codex_rules}" "${cursor_rules}" "${agents_rules}"
+    local target_directory
+    for target_directory in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}" \
+                            "${gemini_rules}" "${claude_rules}" "${codex_rules}" "${cursor_rules}" "${agents_rules}"; do
+        transaction_ensure_directory "${target_directory}"
+    done
 
     local skills_destination
     for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
@@ -315,28 +342,28 @@ install_target_repo() {
 
     # Create AGENTS.md and symlinks
     if [ ! -f "${target}/AGENTS.md" ]; then
-        cp "${HARNESS_ROOT}/core/templates/AGENTS-template.md" "${target}/AGENTS.md"
+        transaction_copy "${HARNESS_ROOT}/core/templates/AGENTS-template.md" "${target}/AGENTS.md"
         log_success "Created canonical AGENTS.md in ${target}"
     fi
 
-    ln -sf "AGENTS.md" "${target}/CLAUDE.md"
-    ln -sf "AGENTS.md" "${target}/GEMINI.md"
+    transaction_symlink "AGENTS.md" "${target}/CLAUDE.md"
+    transaction_symlink "AGENTS.md" "${target}/GEMINI.md"
 
     # Default rules & config if missing
     if [ ! -f "${target}/stack.config.json" ]; then
-        cp "${HARNESS_ROOT}/core/templates/stack-config-template.json" "${target}/stack.config.json"
+        transaction_copy "${HARNESS_ROOT}/core/templates/stack-config-template.json" "${target}/stack.config.json"
         log_success "Created default stack.config.json in ${target}"
     fi
 
-    mkdir -p "${target}/rules"
+    transaction_ensure_directory "${target}/rules"
     if [ ! -f "${target}/rules/floor.md" ]; then
-        cp "${HARNESS_ROOT}/core/templates/floor-template.md" "${target}/rules/floor.md"
+        transaction_copy "${HARNESS_ROOT}/core/templates/floor-template.md" "${target}/rules/floor.md"
     fi
     if [ ! -f "${target}/rules/landmines.md" ]; then
-        cp "${HARNESS_ROOT}/core/templates/landmines-template.md" "${target}/rules/landmines.md"
+        transaction_copy "${HARNESS_ROOT}/core/templates/landmines-template.md" "${target}/rules/landmines.md"
     fi
     if [ ! -f "${target}/rules/landmines.json" ]; then
-        cp "${HARNESS_ROOT}/core/templates/landmines-template.json" "${target}/rules/landmines.json"
+        transaction_copy "${HARNESS_ROOT}/core/templates/landmines-template.json" "${target}/rules/landmines.json"
     fi
 
     log_success "agent-harness initialized in ${target}"
@@ -346,14 +373,19 @@ install_target_repo() {
 install_global() {
     log_info "Installing ${SKILL_MODE} skill surface globally to ~/.gemini, ~/.claude, ~/.codex, ~/.agents..."
     local gemini_skills="${HOME}/.gemini/antigravity/skills"
+    local gemini_config_skills="${HOME}/.gemini/config/skills"
     local claude_skills="${HOME}/.claude/skills"
     local codex_skills="${HOME}/.codex/skills"
     local agents_skills="${HOME}/.agents/skills"
 
-    mkdir -p "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"
+    local global_directory
+    for global_directory in "${gemini_skills}" "${gemini_config_skills}" "${claude_skills}" \
+                            "${codex_skills}" "${agents_skills}"; do
+        transaction_ensure_directory "${global_directory}"
+    done
 
     local skills_destination
-    for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
+    for skills_destination in "${gemini_skills}" "${gemini_config_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
         install_skill_surface "${skills_destination}"
     done
 
@@ -361,11 +393,14 @@ install_global() {
 }
 
 # Execution
+transaction_begin install
+
 if [ "${INSTALL_GLOBAL}" = true ] || [ "${CLI_ONLY}" = true ] || [ "${GUIDED_MODE}" = true ]; then
-    install_cli || log_warn "Could not link CLI to ~/.local/bin (check permissions)."
+    install_cli
 fi
 
 if [ "${CLI_ONLY}" = true ]; then
+    transaction_commit
     exit 0
 fi
 
@@ -381,4 +416,7 @@ elif [ "${GUIDED_MODE}" = true ]; then
     install_target_repo "$(pwd)" "${RECIPE_NAME}"
 fi
 
+transaction_commit
+
 log_success "Setup complete! Run 'harness doctor' to verify."
+log_info "Undo this installation with './setup --rollback'."

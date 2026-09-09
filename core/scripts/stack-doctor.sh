@@ -23,6 +23,8 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --check-auth)
+            # defer: --check-auth is advertised but inert; no check reads CHECK_AUTH yet.
+            # shellcheck disable=SC2034 # kept until the deferred auth check above is implemented
             CHECK_AUTH=true
             shift
             ;;
@@ -87,7 +89,7 @@ if [ -d "${REPO_DIR}" ]; then
         log_warn "Missing AGENTS.md in ${REPO_DIR}"
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
         if [ "${FIX_MODE}" = true ]; then
-            local template="$(get_harness_root)/core/templates/AGENTS-template.md"
+            template="$(get_harness_root)/core/templates/AGENTS-template.md"
             if [ -f "${template}" ]; then
                 cp "${template}" "${REPO_DIR}/AGENTS.md"
                 log_success "Self-healed: Created AGENTS.md from template."

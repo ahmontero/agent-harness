@@ -9,7 +9,10 @@
     "agent-harness": "bin/agent-harness"
   },
   "scripts": {
-    "test": "bash test/test_cli.sh",
+    "test": "bash test/test_cli.sh && bash test/test_transaction_lib.sh && bash test/test_install_transaction.sh",
+    "test:cli": "bash test/test_cli.sh",
+    "test:transaction": "bash test/test_transaction_lib.sh && bash test/test_install_transaction.sh",
+    "lint": "find bin core/scripts test -type f \\( -name '*.sh' -o -name 'harness' -o -name 'agh' -o -name 'agent-harness' \\) -print0 | xargs -0 shellcheck -S warning install.sh setup",
     "verify": "bash setup --verify"
   },
   "repository": {

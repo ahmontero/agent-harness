@@ -159,7 +159,10 @@ install_once() {
         args+=(--expert)
     fi
 
-    HOME="${cell_home}" "${HARNESS_ROOT}/install.sh" "${args[@]}" >> "${log_path}" 2>&1
+    # Keep the installer's transaction journal outside the snapshotted home, so
+    # idempotency is asserted over the installed surface rather than over install history.
+    HOME="${cell_home}" HARNESS_STATE_DIR="${cell_home}.state" \
+        "${HARNESS_ROOT}/install.sh" "${args[@]}" >> "${log_path}" 2>&1
 }
 
 verify_target_contracts() {

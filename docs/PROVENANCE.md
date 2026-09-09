@@ -21,6 +21,38 @@ The commit links below are provenance snapshots, not dependency pins. The listed
 | [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) | Inspired by; adapted method | Spec-Driven Development, living specifications, delta requirements, verification, and archival lifecycle. | [`spec/SKILL.md`](../core/skills/spec/SKILL.md), [`task/SKILL.md`](../core/skills/task/SKILL.md) | [`a0ddb60`](https://github.com/Fission-AI/OpenSpec/tree/a0ddb60d040c61f4907436a9d91310934b1dda63) | MIT |
 | [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) | Inspired by; adapted method | Action-first communication, concise state anchors, bounded cognitive load, and tangent control. | [`AGENTS-template.md`](../core/templates/AGENTS-template.md) | [`cbe69fb`](https://github.com/ayghri/i-have-adhd/tree/cbe69fb83c08a37cf54d5ec9ec6bb88c8bc9973c) | MIT |
 
+## Upstream Drift Audit
+
+The snapshots above record the upstream state from which each influence was drawn; they are deliberately not bumped when upstream moves. This section records the most recent verification of upstream drift so that a future contributor knows what has changed since the influence was taken, and whether re-derivation is warranted.
+
+**Last verified: 2026-09-09**
+
+| Upstream project | Snapshot in table | Upstream head at verification | Drift | Method delta relevant to `agent-harness` |
+| :--- | :--- | :--- | :--- | :--- |
+| addyosmani/agent-skills | `f63ec56` | [`6ca0cd7`](https://github.com/addyosmani/agent-skills/tree/6ca0cd7db39b41b1c37e26d335c507ee92382c6d) (`v0.6.9`) | 48 commits ahead | Yes — new `constraint-driven-development` skill (written quality bar, suppression/skipped-test drift detection); `context-engineering` substantially expanded; `planning-and-task-breakdown` extended. Candidate for re-derivation into `rules/floor.md` and `scan`. |
+| obra/superpowers | `b36e082` | [`b36e082`](https://github.com/obra/superpowers/tree/b36e0829c6d0140e93cfef2ca599b1b07d4a7797) (`v6.3.0`) | None — identical | No. Snapshot is current upstream head. |
+| mattpocock/skills | `6654f6b` | [`3cca18b`](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015) | 2 commits ahead | No. `CLAUDE.md` and `scripts/link-skills.sh` only; `diagnosing-bugs/SKILL.md` is unchanged. |
+| Fission-AI/OpenSpec | `a0ddb60` | [`e062b95`](https://github.com/Fission-AI/OpenSpec/tree/e062b9572be933564ba3899d059377dfa1393e32) (`v1.12.0`) | 20 commits ahead | Yes — `validate --report findings`, `show --diff` for delta requirements, and explore/propose guidance that inspects code before drafting. Candidate for re-derivation into `spec/SKILL.md`. |
+| ayghri/i-have-adhd | `cbe69fb` | [`24d22f7`](https://github.com/ayghri/i-have-adhd/tree/24d22f783e57cb73c957848b588c6f651b6f9cd8) | 25 commits ahead | No. README translations, install docs, and eval harness only; the communication rules themselves are unchanged. |
+
+Re-verification command (requires `gh`):
+
+```bash
+gh api "repos/<owner>/<repo>/compare/<snapshot-sha>...main" --jq '"ahead_by=\(.ahead_by) status=\(.status)"'
+```
+
+A re-derived influence updates the snapshot column in the table above **and** the local evidence links, because the snapshot must always name the upstream state that the local implementation was actually derived from.
+
+## First-Party Lineage
+
+Some mechanisms are carried over from the author's own private `easys-stack` toolkit rather than from an external project. These are recorded here because the licensing policy below requires provenance language to match the actual reuse, and because a reader comparing the two codebases should not have to guess.
+
+| Origin | Relationship | Reuse in `agent-harness` | Local evidence |
+| :--- | :--- | :--- | :--- |
+| `easys-stack` (private, same author) | Ported and renamed | Reversible installer transactions: the journal layout, the `ERR`-trap rollback, and the mutation primitives were ported with the environment prefix renamed to `HARNESS_*`. `transaction_remove_tree` is new here, because this installer removes managed skill directories, and the primitives were hardened to fail closed instead of writing through a path they could not remove. | [`transaction.sh`](../core/scripts/lib/transaction.sh), [`test_transaction_lib.sh`](../test/test_transaction_lib.sh), [`test_install_transaction.sh`](../test/test_install_transaction.sh) |
+
+`easys-stack` is not public, is not a dependency, and shares this project's authorship, so the port creates no third-party license obligation and adds no entry to `THIRD_PARTY_NOTICES.md`. The two test suites were rewritten against this installer's own flags rather than ported line for line; the upstream cases for `--plan`, `--check`, collision fail-closed semantics, and completion blocks describe an installer contract `agent-harness` does not have.
+
 ## Standards and Conceptual Foundations
 
 These references shape repository conventions but are not software dependencies:
