@@ -28,6 +28,7 @@ _harness() {
         'commit:Build conventional commit message'
         'debt:Harvest technical debt markers'
         'receipt:Record private local workflow lifecycle events'
+        'ledger:Keep a durable append-only record of a workflow run'
         'ship:Run pre-flight checks and open Pull Request'
         'sync:Re-synchronize skills and rules across harnesses'
         'init:Initialize harness in repository'

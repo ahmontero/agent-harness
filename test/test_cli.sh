@@ -629,5 +629,82 @@ if ! bash "${HARNESS_ROOT}/test/test_remote_install.sh" >/dev/null; then
 fi
 echo "  [PASS] stdin bootstrap installs globally from a persistent checkout."
 
+
+echo ""
+echo "=== 14. Testing Bounded Review Ledger ==="
+LEDGER_TEST_DIR="${TMP_TEST_DIR}/ledger-test"
+mkdir -p "${LEDGER_TEST_DIR}"
+git -C "${LEDGER_TEST_DIR}" init -q
+git -C "${LEDGER_TEST_DIR}" config user.email "tests@agent-harness.local"
+git -C "${LEDGER_TEST_DIR}" config user.name "Agent Harness Tests"
+echo "fixture" > "${LEDGER_TEST_DIR}/fixture.txt"
+git -C "${LEDGER_TEST_DIR}" add fixture.txt
+git -C "${LEDGER_TEST_DIR}" commit -qm "ledger fixture"
+
+LEDGER_RUN_ID="$(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt start implement --issue AH-4)"
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "${LEDGER_RUN_ID}" >/dev/null)
+LEDGER_FILE="${LEDGER_TEST_DIR}/.git/agent-harness/ledgers/${LEDGER_RUN_ID}.md"
+if [ ! -f "${LEDGER_FILE}" ] || [ -e "${LEDGER_TEST_DIR}/.agent-harness" ]; then
+    echo "  [FAIL] ledger was not stored exclusively under Git metadata"
+    exit 1
+fi
+if [ "$(head -n 1 "${LEDGER_FILE}")" != "# Harness ledger — run: ${LEDGER_RUN_ID}" ]; then
+    echo "  [FAIL] ledger does not carry its run identity on the first line"
+    exit 1
+fi
+
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "${LEDGER_RUN_ID}" >/dev/null)
+if [ "$(wc -l < "${LEDGER_FILE}" | tr -d ' ')" -ne 1 ]; then
+    echo "  [FAIL] repeating ledger start was not idempotent"
+    exit 1
+fi
+
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" phase "tdd passed" >/dev/null)
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" ruling "first ruling" >/dev/null)
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" deferred "a minor finding" >/dev/null)
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" parked "second ruling" >/dev/null)
+(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" complete "third ruling is not one" >/dev/null)
+
+if ! grep -Eq '^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z +phase +tdd passed$' "${LEDGER_FILE}"; then
+    echo "  [FAIL] ledger append did not record a UTC-timestamped kinded line"
+    exit 1
+fi
+
+LEDGER_SHOW="$(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger show "${LEDGER_RUN_ID}")"
+if [ "$(printf '%s\n' "${LEDGER_SHOW}" | grep -c .)" -ne 6 ]; then
+    echo "  [FAIL] ledger show did not print the header and every appended line"
+    exit 1
+fi
+
+LEDGER_RULINGS="$(cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger rulings "${LEDGER_RUN_ID}")"
+if [ "$(printf '%s\n' "${LEDGER_RULINGS}" | grep -c .)" -ne 2 ] || \
+   printf '%s\n' "${LEDGER_RULINGS}" | grep -q "a minor finding" || \
+   [ "$(printf '%s\n' "${LEDGER_RULINGS}" | grep -n "first ruling" | cut -d: -f1)" != "1" ] || \
+   [ "$(printf '%s\n' "${LEDGER_RULINGS}" | grep -n "second ruling" | cut -d: -f1)" != "2" ]; then
+    echo "  [FAIL] ledger rulings did not return only ruling and parked lines in recorded order"
+    exit 1
+fi
+
+LEDGER_OVERSIZED="$(head -c 513 < /dev/zero | tr '\0' 'a')"
+if (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" note "unsupported kind" >/dev/null 2>&1) || \
+   (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${LEDGER_RUN_ID}" ruling "${LEDGER_OVERSIZED}" >/dev/null 2>&1) || \
+   (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "../escape" >/dev/null 2>&1) || \
+   (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "unsafe run id" >/dev/null 2>&1) || \
+   (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append missing ruling "no ledger here" >/dev/null 2>&1) || \
+   (cd "${LEDGER_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger show missing >/dev/null 2>&1); then
+    echo "  [FAIL] ledger accepted an unsupported kind, oversized text, unsafe run ID, or missing ledger"
+    exit 1
+fi
+
+LINKED_LEDGER_DIR="${TMP_TEST_DIR}/ledger-linked"
+git -C "${LEDGER_TEST_DIR}" worktree add -q -b ledger-linked "${LINKED_LEDGER_DIR}"
+LINKED_LEDGER_RUN_ID="$(cd "${LINKED_LEDGER_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt start investigate)"
+(cd "${LINKED_LEDGER_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "${LINKED_LEDGER_RUN_ID}" >/dev/null)
+if [ ! -f "${LEDGER_TEST_DIR}/.git/agent-harness/ledgers/${LINKED_LEDGER_RUN_ID}.md" ] || \
+   [ -d "${LINKED_LEDGER_DIR}/.git/agent-harness" ]; then
+    echo "  [FAIL] linked worktree did not use the repository's shared ledger store"
+    exit 1
+fi
+echo "  [PASS] ledgers are private, validated, append-only, ruling-filtered, and worktree-shared."
 echo ""
 echo "All automated tests passed successfully! [100%]"
