@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-1.0.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -154,6 +154,21 @@ harness receipt finish "${run_id}" completed
 ```
 
 Receipts live under `.git/agent-harness/runs/`, are shared across the repository's worktrees, and provide the input contract for future local statistics.
+
+### Progress ledger and the bounded review loop
+
+A receipt is a closed schema, so anything that needs words goes to the run's ledger instead. `/harness-implement` opens one at start, keyed by the same run ID, and uses it to survive a compacted context and to record every decision it took on your behalf.
+
+```bash
+harness ledger start "${run_id}"
+harness ledger append "${run_id}" phase "round 2/3 (3 addressed, 1 open)"
+harness ledger append "${run_id}" parked "reviewer disputed the awk filter — Ruling: the code stands"
+harness ledger rulings "${run_id}"
+```
+
+The ledger makes the review gate terminate. Minor findings never enter the fix loop; Critical and Important ones do, for at most three rounds. At the cap the agent must adjudicate every finding still open, either parking it with a recorded ruling or declaring it load-bearing, in which case the run ends `blocked` rather than reporting success over a known defect. Discarding a finding without a ledger line is forbidden, and `harness ledger rulings` is reproduced in full in the agent's final message.
+
+Ledgers live under `.git/agent-harness/ledgers/`, are readable only by their owner, and never leave the repository.
 
 ---
 

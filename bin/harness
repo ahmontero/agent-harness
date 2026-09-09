@@ -100,6 +100,12 @@ ${BOLD}Core Commands:${RESET}
                 harness receipt phase <run_id> <phase> <status>
                 harness receipt finish <run_id> <outcome>
 
+  ${GREEN}ledger${RESET}        Keep a durable append-only record of a workflow run
+                harness ledger start <run_id>
+                harness ledger append <run_id> <kind> <text>
+                harness ledger show <run_id>
+                harness ledger rulings <run_id>
+
   ${GREEN}ship${RESET}          Run pre-flight checks, build commit, and open Pull Request
                 harness ship [target_branch]
 
@@ -151,6 +157,9 @@ case "${COMMAND}" in
         ;;
     receipt)
         exec "${SCRIPTS_DIR}/stack-receipt.sh" "$@"
+        ;;
+    ledger)
+        exec "${SCRIPTS_DIR}/stack-ledger.sh" "$@"
         ;;
     ship|pr)
         exec "${SCRIPTS_DIR}/stack-pr.sh" "$@"
