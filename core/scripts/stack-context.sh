@@ -35,6 +35,8 @@ BRANCH="$(get_current_branch "${REPO_DIR}")"
 TRUNK="$(get_trunk_branch "${REPO_DIR}")"
 TEST_RUNNER="$(get_profile_value "qa.testRunner" "unknown")"
 ISSUE_PROVIDER="$(get_profile_value "issueTracker.provider" "standalone")"
+ORCHESTRATE_IMPLEMENTER="$(get_profile_value "orchestrate.models.implementer" "sonnet")"
+ORCHESTRATE_REVIEWER="$(get_profile_value "orchestrate.models.reviewer" "opus")"
 DIRTY="false"
 is_working_tree_dirty "${REPO_DIR}" && DIRTY="true"
 
@@ -60,6 +62,10 @@ if [ "${JSON_OUTPUT}" = true ]; then
   "dirty": ${DIRTY},
   "testRunner": "${TEST_RUNNER}",
   "issueProvider": "${ISSUE_PROVIDER}",
+  "orchestrateModels": {
+    "implementer": "${ORCHESTRATE_IMPLEMENTER}",
+    "reviewer": "${ORCHESTRATE_REVIEWER}"
+  },
   "activeDeltaSpecs": ${SPECS_COUNT},
   "technicalDebtMarkers": ${DEBT_COUNT}
 }
@@ -73,6 +79,7 @@ Current Branch:       ${BOLD}${GREEN}${BRANCH}${RESET} (Trunk: ${TRUNK})
 Working Tree Dirty:   $([ "${DIRTY}" = "true" ] && echo "${YELLOW}Yes${RESET}" || echo "${GREEN}Clean${RESET}")
 Test Runner:          ${TEST_RUNNER}
 Issue Provider:       ${ISSUE_PROVIDER}
+Orchestrate Models:   implementer=${ORCHESTRATE_IMPLEMENTER} reviewer=${ORCHESTRATE_REVIEWER}
 Active Delta Specs:   ${SPECS_COUNT}
 Technical Debt Items: ${DEBT_COUNT}
 TEXT_EOF

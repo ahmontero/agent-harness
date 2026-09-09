@@ -113,6 +113,9 @@ echo "  [PASS] agent-harness --help executed successfully."
 
 echo ""
 echo "=== 4. Testing Context Extraction ==="
+TMP_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
+
 CONTEXT_JSON=$("${HARNESS_ROOT}/bin/harness" context --json)
 if echo "${CONTEXT_JSON}" | grep -q "branch"; then
     echo "  [PASS] harness context --json produced valid JSON."
@@ -121,6 +124,33 @@ else
     exit 1
 fi
 
+CONTEXT_IMPLEMENTER=$(echo "${CONTEXT_JSON}" | jq -r '.orchestrateModels.implementer')
+CONTEXT_REVIEWER=$(echo "${CONTEXT_JSON}" | jq -r '.orchestrateModels.reviewer')
+if [ -z "${CONTEXT_IMPLEMENTER}" ] || [ "${CONTEXT_IMPLEMENTER}" = "null" ] || \
+   [ -z "${CONTEXT_REVIEWER}" ] || [ "${CONTEXT_REVIEWER}" = "null" ] || \
+   [ "${CONTEXT_IMPLEMENTER}" = "${CONTEXT_REVIEWER}" ]; then
+    echo "  [FAIL] harness context --json must expose distinct orchestrate models: ${CONTEXT_JSON}"
+    exit 1
+fi
+echo "  [PASS] harness context --json exposes per-role orchestrate models."
+
+CONTEXT_DEFAULT_DIR="${TMP_TEST_DIR}/context-defaults"
+mkdir -p "${CONTEXT_DEFAULT_DIR}"
+git -C "${CONTEXT_DEFAULT_DIR}" init -q
+cat > "${CONTEXT_DEFAULT_DIR}/harness.config.json" <<'CONTEXT_CONFIG_EOF'
+{
+  "project": { "name": "context-defaults", "defaultProfile": "plain" },
+  "profiles": { "plain": { "displayName": "Plain" } }
+}
+CONTEXT_CONFIG_EOF
+DEFAULT_CONTEXT_JSON=$(cd "${CONTEXT_DEFAULT_DIR}" && STACK_PROFILE=plain "${HARNESS_ROOT}/bin/harness" context --json)
+if [ "$(echo "${DEFAULT_CONTEXT_JSON}" | jq -r '.orchestrateModels.implementer')" != "sonnet" ] || \
+   [ "$(echo "${DEFAULT_CONTEXT_JSON}" | jq -r '.orchestrateModels.reviewer')" != "opus" ]; then
+    echo "  [FAIL] A profile without an orchestrate block must fall back to sonnet and opus: ${DEFAULT_CONTEXT_JSON}"
+    exit 1
+fi
+echo "  [PASS] Orchestrate model defaults apply to a profile with no orchestrate block."
+
 echo ""
 echo "=== 5. Testing Static Landmine Scanner ==="
 "${HARNESS_ROOT}/bin/harness" scan --rules "${HARNESS_ROOT}/core/templates/landmines-template.json" --all >/dev/null
@@ -128,9 +158,6 @@ echo "  [PASS] harness scan executed successfully."
 
 echo ""
 echo "=== 6. Testing Recipe Presets Initialization ==="
-TMP_TEST_DIR=$(mktemp -d)
-trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
-
 RECIPES=("python-fastapi" "typescript-fullstack" "go-microservices")
 for recipe in "${RECIPES[@]}"; do
     TARGET_DIR="${TMP_TEST_DIR}/${recipe}-test"

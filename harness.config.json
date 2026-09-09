@@ -8,7 +8,9 @@
     "harness": {
       "displayName": "Agent Harness",
       "detect": {
-        "files": ["package.json"]
+        "files": [
+          "package.json"
+        ]
       },
       "git": {
         "trunkBranch": "main",
@@ -22,6 +24,12 @@
       },
       "ci": {
         "provider": "github"
+      },
+      "orchestrate": {
+        "models": {
+          "implementer": "sonnet",
+          "reviewer": "opus"
+        }
       },
       "rules": {
         "invariants": "./rules/floor.md",
