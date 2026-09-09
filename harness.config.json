@@ -8,9 +8,7 @@
     "harness": {
       "displayName": "Agent Harness",
       "detect": {
-        "files": [
-          "package.json"
-        ]
+        "files": ["package.json"]
       },
       "git": {
         "trunkBranch": "main",

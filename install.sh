@@ -269,6 +269,15 @@ install_workflow_bundle() {
 install_skill_surface() {
     local destination="$1"
     local runtime="$2"
+
+    case "${runtime}" in
+        agents|claude|codex|gemini) ;;
+        *)
+            log_error "install_skill_surface requires a known runtime label, got: '${runtime}'"
+            return 1
+            ;;
+    esac
+
     transaction_ensure_directory "${destination}"
     require_skill_catalog
 

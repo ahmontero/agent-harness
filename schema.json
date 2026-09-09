@@ -22,9 +22,7 @@
           "description": "Default active profile when not specified"
         }
       },
-      "required": [
-        "name"
-      ]
+      "required": ["name"]
     },
     "profiles": {
       "type": "object",
@@ -50,16 +48,12 @@
             "properties": {
               "files": {
                 "type": "array",
-                "items": {
-                  "type": "string"
-                },
+                "items": { "type": "string" },
                 "description": "Files that indicate this profile is active"
               },
               "directories": {
                 "type": "array",
-                "items": {
-                  "type": "string"
-                },
+                "items": { "type": "string" },
                 "description": "Directories that indicate this profile is active"
               }
             }
@@ -86,12 +80,7 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": [
-                  "github",
-                  "gitlab",
-                  "jira",
-                  "linear"
-                ],
+                "enum": ["github", "gitlab", "jira", "linear"],
                 "description": "Issue tracker provider"
               },
               "defaultPrefix": {
@@ -132,11 +121,7 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": [
-                  "github",
-                  "gitlab",
-                  "azure"
-                ],
+                "enum": ["github", "gitlab", "azure"],
                 "description": "CI provider"
               }
             }
@@ -149,14 +134,8 @@
                 "type": "object",
                 "description": "Model identifier per dispatched role",
                 "properties": {
-                  "implementer": {
-                    "type": "string",
-                    "description": "Model for the implementer dispatch"
-                  },
-                  "reviewer": {
-                    "type": "string",
-                    "description": "Model for the reviewer dispatch"
-                  }
+                  "implementer": { "type": "string", "description": "Model for the implementer dispatch" },
+                  "reviewer": { "type": "string", "description": "Model for the reviewer dispatch" }
                 }
               }
             }
@@ -186,18 +165,10 @@
       "type": "object",
       "description": "Local AI provider settings (Ollama / LocalAI)",
       "properties": {
-        "enabled": {
-          "type": "boolean"
-        },
-        "baseUrl": {
-          "type": "string"
-        },
-        "model": {
-          "type": "string"
-        },
-        "temperature": {
-          "type": "number"
-        }
+        "enabled": { "type": "boolean" },
+        "baseUrl": { "type": "string" },
+        "model": { "type": "string" },
+        "temperature": { "type": "number" }
       }
     }
   }
