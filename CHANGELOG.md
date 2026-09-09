@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Upstream Drift Audit in `docs/PROVENANCE.md`, recording the verified upstream head, drift, and method delta for every acknowledged influence, plus the re-verification command.
+
 ### Changed
 - Namespaced all published agent workflows and expert skills as `harness-*` across Gemini, Claude, Codex, and `.agents`, with safe cleanup of legacy managed aliases.
 

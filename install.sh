@@ -346,14 +346,15 @@ install_target_repo() {
 install_global() {
     log_info "Installing ${SKILL_MODE} skill surface globally to ~/.gemini, ~/.claude, ~/.codex, ~/.agents..."
     local gemini_skills="${HOME}/.gemini/antigravity/skills"
+    local gemini_config_skills="${HOME}/.gemini/config/skills"
     local claude_skills="${HOME}/.claude/skills"
     local codex_skills="${HOME}/.codex/skills"
     local agents_skills="${HOME}/.agents/skills"
 
-    mkdir -p "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"
+    mkdir -p "${gemini_skills}" "${gemini_config_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"
 
     local skills_destination
-    for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
+    for skills_destination in "${gemini_skills}" "${gemini_config_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
         install_skill_surface "${skills_destination}"
     done
 
