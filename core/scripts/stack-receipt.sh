@@ -48,9 +48,9 @@ validate_token() {
 
 validate_workflow() {
     case "$1" in
-        implement|fix|investigate) ;;
+        implement|fix|investigate|orchestrate) ;;
         *)
-            log_error "Unsupported workflow '$1'. Use implement, fix, or investigate."
+            log_error "Unsupported workflow '$1'. Use implement, fix, investigate, or orchestrate."
             return 1
             ;;
     esac
@@ -62,7 +62,8 @@ validate_phase() {
     case "${workflow}:${phase}" in
         implement:understand|implement:scope|implement:tdd|implement:simplify|implement:qa|implement:review|\
         fix:reproduce|fix:diagnose|fix:root-cause|fix:regression|fix:fix|fix:qa|fix:review|\
-        investigate:frame|investigate:evidence|investigate:constraints|investigate:options|investigate:tradeoffs|investigate:recommendation)
+        investigate:frame|investigate:evidence|investigate:constraints|investigate:options|investigate:tradeoffs|investigate:recommendation|\
+        orchestrate:admit|orchestrate:dispatch|orchestrate:review|orchestrate:resolve|orchestrate:close)
             ;;
         *)
             log_error "Unsupported phase '${phase}' for workflow '${workflow}'."
@@ -110,7 +111,7 @@ load_active_receipt() {
         .[0].schemaVersion == 1 and
         .[0].runId == $run_id and
         .[0].event == "workflow_started" and
-        (.[0].workflow == "implement" or .[0].workflow == "fix" or .[0].workflow == "investigate") and
+        (.[0].workflow as $w | ["implement", "fix", "investigate", "orchestrate"] | index($w)) != null and
         (.[0].workflow as $workflow | all(.[];
             .schemaVersion == 1 and
             .runId == $run_id and

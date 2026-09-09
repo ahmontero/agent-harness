@@ -99,14 +99,23 @@ verify_skill_surface() {
     local destination="$1"
     local mode="$2"
     local allow_user_skill="$3"
+    local runtime="$4"
     local namespace workflow published_workflow primitive published_primitive removed installed_count expected_count
     namespace="$(jq -r '.namespace // empty' "${SKILL_CATALOG}")"
     [ "${namespace}" = "harness" ] || { echo "Unexpected skill namespace: ${namespace}" >&2; return 1; }
 
+    expected_count=0
     while IFS= read -r workflow; do
         published_workflow="${namespace}-${workflow}"
-        assert_file "${destination}/${published_workflow}/SKILL.md" || return 1
-        grep -qx "name: ${published_workflow}" "${destination}/${published_workflow}/SKILL.md" || return 1
+        if jq -e --arg workflow "${workflow}" --arg runtime "${runtime}" \
+            'if (.runtimes // {}) | has($workflow) then (.runtimes[$workflow] | index($runtime)) != null else true end' \
+            "${SKILL_CATALOG}" >/dev/null; then
+            expected_count=$((expected_count + 1))
+            assert_file "${destination}/${published_workflow}/SKILL.md" || return 1
+            grep -qx "name: ${published_workflow}" "${destination}/${published_workflow}/SKILL.md" || return 1
+        else
+            assert_absent "${destination}/${published_workflow}" || return 1
+        fi
     done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
 
     if [ "${mode}" = "expert" ]; then
@@ -127,7 +136,6 @@ verify_skill_surface() {
         assert_absent "${destination}/${namespace}-${removed}" || return 1
     done < <(jq -r '.removed[]' "${SKILL_CATALOG}")
 
-    expected_count="$(jq -r '.public | length' "${SKILL_CATALOG}")"
     if [ "${mode}" = "expert" ]; then
         expected_count=$((expected_count + $(jq -r '.internal | length' "${SKILL_CATALOG}")))
     fi
@@ -174,7 +182,7 @@ verify_target_contracts() {
         path="${target}/.${runtime}/skills"
         allow_user="false"
         [ "${runtime}" = "codex" ] && allow_user="true"
-        verify_skill_surface "${path}" "${mode}" "${allow_user}" || return 1
+        verify_skill_surface "${path}" "${mode}" "${allow_user}" "${runtime}" || return 1
     done
 
     for path in \
@@ -202,7 +210,7 @@ verify_global_contracts() {
         esac
         allow_user="false"
         [ "${runtime}" = "codex" ] && allow_user="true"
-        verify_skill_surface "${path}" "${mode}" "${allow_user}" || return 1
+        verify_skill_surface "${path}" "${mode}" "${allow_user}" "${runtime}" || return 1
     done
 
     for path in harness agh agent-harness; do

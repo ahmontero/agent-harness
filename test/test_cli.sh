@@ -38,16 +38,26 @@ if [ "$(jq -r '.namespace // empty' "${SKILL_CATALOG}")" != "harness" ]; then
     echo "  [FAIL] Skill catalog must publish through the harness namespace"
     exit 1
 fi
-if [ "$(jq -r '.public | keys | sort | join(" ")' "${SKILL_CATALOG}")" != "fix implement investigate" ]; then
-    echo "  [FAIL] Public skill catalog must expose exactly fix, implement, and investigate"
+if [ "$(jq -r '.public | keys | sort | join(" ")' "${SKILL_CATALOG}")" != "fix implement investigate orchestrate" ]; then
+    echo "  [FAIL] Public skill catalog must expose exactly fix, implement, investigate, and orchestrate"
     exit 1
 fi
+if [ "$(jq -r '.runtimes.orchestrate | join(" ")' "${SKILL_CATALOG}")" != "claude" ]; then
+    echo "  [FAIL] orchestrate must be gated to the claude runtime"
+    exit 1
+fi
+while IFS= read -r gated_workflow; do
+    if ! jq -e --arg workflow "${gated_workflow}" '.public | has($workflow)' "${SKILL_CATALOG}" >/dev/null; then
+        echo "  [FAIL] runtimes names a workflow absent from public: ${gated_workflow}"
+        exit 1
+    fi
+done < <(jq -r '.runtimes // {} | keys[]' "${SKILL_CATALOG}")
 if jq -e '(.public | has("ship")) or (.internal | index("ship") != null)' "${SKILL_CATALOG}" >/dev/null || \
    [ "$(jq -r '.removed | index("ship") != null' "${SKILL_CATALOG}")" != "true" ]; then
     echo "  [FAIL] ship must be removed rather than public or internal"
     exit 1
 fi
-for workflow in implement fix investigate; do
+for workflow in implement fix investigate orchestrate; do
     workflow_file="${HARNESS_ROOT}/core/skills/${workflow}/SKILL.md"
     if [ ! -f "${workflow_file}" ]; then
         echo "  [FAIL] Missing composite workflow: ${workflow}"
@@ -162,29 +172,40 @@ while IFS= read -r doc_link; do
     fi
 done < <(jq -r '.[].docLink // empty' "${DEFAULT_TARGET_DIR}/rules/landmines.json" | sort -u)
 echo "  [PASS] Default initialization includes its complete quality floor."
-for runtime_dir in .agents/skills .claude/skills .codex/skills .gemini/skills; do
-    installed_count=$(find "${DEFAULT_TARGET_DIR}/${runtime_dir}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')
-    if [ "${installed_count}" -ne 3 ]; then
-        echo "  [FAIL] Curated installation exposed ${installed_count} skills in ${runtime_dir}; expected 3"
-        exit 1
-    fi
-    for workflow in implement fix investigate; do
+for runtime in agents claude codex gemini; do
+    runtime_dir=".${runtime}/skills"
+    expected_count=0
+    while IFS= read -r workflow; do
         published_workflow="harness-${workflow}"
-        if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md" ]; then
-            echo "  [FAIL] Default initialization did not expose '${published_workflow}' in ${runtime_dir}"
-            exit 1
-        fi
-        if ! grep -qx "name: ${published_workflow}" "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md"; then
-            echo "  [FAIL] Installed workflow metadata does not match '${published_workflow}' in ${runtime_dir}"
-            exit 1
-        fi
-        while IFS= read -r primitive; do
-            if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/references/${primitive}.md" ]; then
-                echo "  [FAIL] Workflow '${workflow}' omitted private protocol '${primitive}' in ${runtime_dir}"
+        if jq -e --arg workflow "${workflow}" --arg runtime "${runtime}" \
+            'if (.runtimes // {}) | has($workflow) then (.runtimes[$workflow] | index($runtime)) != null else true end' \
+            "${SKILL_CATALOG}" >/dev/null; then
+            expected_count=$((expected_count + 1))
+            if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md" ]; then
+                echo "  [FAIL] Default initialization did not expose '${published_workflow}' in ${runtime_dir}"
                 exit 1
             fi
-        done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
-    done
+            if ! grep -qx "name: ${published_workflow}" "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/SKILL.md"; then
+                echo "  [FAIL] Installed workflow metadata does not match '${published_workflow}' in ${runtime_dir}"
+                exit 1
+            fi
+            while IFS= read -r primitive; do
+                if [ ! -f "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}/references/${primitive}.md" ]; then
+                    echo "  [FAIL] Workflow '${workflow}' omitted private protocol '${primitive}' in ${runtime_dir}"
+                    exit 1
+                fi
+            done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
+        elif [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/${published_workflow}" ]; then
+            echo "  [FAIL] Gated workflow '${published_workflow}' leaked into ${runtime_dir}"
+            exit 1
+        fi
+    done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
+
+    installed_count=$(find "${DEFAULT_TARGET_DIR}/${runtime_dir}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')
+    if [ "${installed_count}" -ne "${expected_count}" ]; then
+        echo "  [FAIL] Curated installation exposed ${installed_count} skills in ${runtime_dir}; expected ${expected_count}"
+        exit 1
+    fi
     if [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/implement" ] || \
        [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/tdd" ] || \
        [ -e "${DEFAULT_TARGET_DIR}/${runtime_dir}/ship" ] || \
@@ -202,12 +223,19 @@ git -C "${EXPERT_TARGET_DIR}" init -q
 "${HARNESS_ROOT}/install.sh" --target "${EXPERT_TARGET_DIR}" --expert >/dev/null
 while IFS= read -r skill; do
     published_skill="harness-${skill}"
-    if [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md" ]; then
-        echo "  [FAIL] Expert installation omitted skill: ${published_skill}"
-        exit 1
-    fi
-    if ! grep -qx "name: ${published_skill}" "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md"; then
-        echo "  [FAIL] Expert skill metadata does not match: ${published_skill}"
+    if jq -e --arg workflow "${skill}" \
+        'if (.runtimes // {}) | has($workflow) then (.runtimes[$workflow] | index("codex")) != null else true end' \
+        "${SKILL_CATALOG}" >/dev/null; then
+        if [ ! -f "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md" ]; then
+            echo "  [FAIL] Expert installation omitted skill: ${published_skill}"
+            exit 1
+        fi
+        if ! grep -qx "name: ${published_skill}" "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}/SKILL.md"; then
+            echo "  [FAIL] Expert skill metadata does not match: ${published_skill}"
+            exit 1
+        fi
+    elif [ -e "${EXPERT_TARGET_DIR}/.codex/skills/${published_skill}" ]; then
+        echo "  [FAIL] Gated workflow leaked into expert codex surface: ${published_skill}"
         exit 1
     fi
 done < <(jq -r '(.public | keys[]), .internal[]' "${SKILL_CATALOG}")
@@ -586,6 +614,16 @@ if (cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt phase "${V
     exit 1
 fi
 (cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt finish "${VALIDATION_RUN_ID}" cancelled >/dev/null)
+
+ORCHESTRATE_RUN_ID="$(cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt start orchestrate --issue AH-7)"
+(cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt phase "${ORCHESTRATE_RUN_ID}" dispatch passed >/dev/null)
+(cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt phase "${ORCHESTRATE_RUN_ID}" review passed >/dev/null)
+if (cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt phase "${ORCHESTRATE_RUN_ID}" tdd passed >/dev/null 2>&1); then
+    echo "  [FAIL] receipt accepted an implement phase token for orchestrate"
+    exit 1
+fi
+(cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt finish "${ORCHESTRATE_RUN_ID}" completed >/dev/null)
+echo "  [PASS] orchestrate receipts accept their own phase tokens and reject foreign ones."
 
 RACE_RUN_ID="$(cd "${RECEIPT_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" receipt start fix)"
 for i in 1 2; do

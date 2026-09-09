@@ -20,6 +20,17 @@
     ],
     "investigate": [
       "interview"
+    ],
+    "orchestrate": [
+      "spec",
+      "tdd",
+      "qa",
+      "review"
+    ]
+  },
+  "runtimes": {
+    "orchestrate": [
+      "claude"
     ]
   },
   "internal": [

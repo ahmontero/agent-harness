@@ -197,6 +197,24 @@ require_skill_catalog() {
             return 1
         fi
     done < <(jq -r '.removed[]' "${SKILL_CATALOG}")
+
+    local gated_workflow gated_runtime
+    while IFS= read -r gated_workflow; do
+        if ! jq -e --arg workflow "${gated_workflow}" '.public | has($workflow)' "${SKILL_CATALOG}" >/dev/null; then
+            log_error "Catalog gates a workflow that is not public: ${gated_workflow}"
+            return 1
+        fi
+    done < <(jq -r '(.runtimes // {}) | keys[]' "${SKILL_CATALOG}")
+
+    while IFS= read -r gated_runtime; do
+        case "${gated_runtime}" in
+            agents|claude|codex|gemini) ;;
+            *)
+                log_error "Unknown runtime label in catalog: ${gated_runtime}"
+                return 1
+                ;;
+        esac
+    done < <(jq -r '(.runtimes // {}) | to_entries[] | .value[]' "${SKILL_CATALOG}")
 }
 
 remove_managed_skill() {
@@ -210,6 +228,15 @@ remove_managed_skill() {
          grep -qx "${MANAGED_MARKER}" "${skill_path}/.agent-harness-managed"; then
         transaction_remove_tree "${skill_path}"
     fi
+}
+
+workflow_allowed_for_runtime() {
+    local workflow="$1"
+    local runtime="$2"
+
+    jq -e --arg workflow "${workflow}" --arg runtime "${runtime}" \
+        'if (.runtimes // {}) | has($workflow) then (.runtimes[$workflow] | index($runtime)) != null else true end' \
+        "${SKILL_CATALOG}" >/dev/null
 }
 
 install_workflow_bundle() {
@@ -241,6 +268,7 @@ install_workflow_bundle() {
 
 install_skill_surface() {
     local destination="$1"
+    local runtime="$2"
     transaction_ensure_directory "${destination}"
     require_skill_catalog
 
@@ -250,7 +278,9 @@ install_skill_surface() {
     done < <(jq -r '(.public | keys[]), .internal[], .removed[]' "${SKILL_CATALOG}" | sort -u)
 
     while IFS= read -r workflow; do
-        install_workflow_bundle "${destination}" "${workflow}"
+        if workflow_allowed_for_runtime "${workflow}" "${runtime}"; then
+            install_workflow_bundle "${destination}" "${workflow}"
+        fi
     done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
 
     if [ "${SKILL_MODE}" = "expert" ]; then
@@ -335,10 +365,10 @@ install_target_repo() {
         transaction_ensure_directory "${target_directory}"
     done
 
-    local skills_destination
-    for skills_destination in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
-        install_skill_surface "${skills_destination}"
-    done
+    install_skill_surface "${gemini_skills}" gemini
+    install_skill_surface "${claude_skills}" claude
+    install_skill_surface "${codex_skills}" codex
+    install_skill_surface "${agents_skills}" agents
 
     # Create AGENTS.md and symlinks
     if [ ! -f "${target}/AGENTS.md" ]; then
@@ -384,10 +414,11 @@ install_global() {
         transaction_ensure_directory "${global_directory}"
     done
 
-    local skills_destination
-    for skills_destination in "${gemini_skills}" "${gemini_config_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
-        install_skill_surface "${skills_destination}"
-    done
+    install_skill_surface "${gemini_skills}" gemini
+    install_skill_surface "${gemini_config_skills}" gemini
+    install_skill_surface "${claude_skills}" claude
+    install_skill_surface "${codex_skills}" codex
+    install_skill_surface "${agents_skills}" agents
 
     log_success "Global agent skill surface installed."
 }
