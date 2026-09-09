@@ -240,11 +240,11 @@ FAILED_CLEANUP_TARGET="${TMP_TEST_DIR}/failed-cleanup-test"
 FAILED_CLEANUP_BIN="${TMP_TEST_DIR}/failed-cleanup-bin"
 mkdir -p "${FAILED_CLEANUP_TARGET}/.codex/skills" "${FAILED_CLEANUP_BIN}"
 ln -s "${HARNESS_ROOT}/core/skills/tdd" "${FAILED_CLEANUP_TARGET}/.codex/skills/tdd"
-cat > "${FAILED_CLEANUP_BIN}/rm" <<'FAILED_RM_EOF'
+cat > "${FAILED_CLEANUP_BIN}/unlink" <<'FAILED_UNLINK_EOF'
 #!/usr/bin/env bash
 exit 1
-FAILED_RM_EOF
-chmod +x "${FAILED_CLEANUP_BIN}/rm"
+FAILED_UNLINK_EOF
+chmod +x "${FAILED_CLEANUP_BIN}/unlink"
 if PATH="${FAILED_CLEANUP_BIN}:${PATH}" "${HARNESS_ROOT}/install.sh" --target "${FAILED_CLEANUP_TARGET}" >/dev/null 2>&1; then
     echo "  [FAIL] Installer reported success after managed skill cleanup failed"
     exit 1

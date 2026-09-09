@@ -43,6 +43,16 @@ gh api "repos/<owner>/<repo>/compare/<snapshot-sha>...main" --jq '"ahead_by=\(.a
 
 A re-derived influence updates the snapshot column in the table above **and** the local evidence links, because the snapshot must always name the upstream state that the local implementation was actually derived from.
 
+## First-Party Lineage
+
+Some mechanisms are carried over from the author's own private `easys-stack` toolkit rather than from an external project. These are recorded here because the licensing policy below requires provenance language to match the actual reuse, and because a reader comparing the two codebases should not have to guess.
+
+| Origin | Relationship | Reuse in `agent-harness` | Local evidence |
+| :--- | :--- | :--- | :--- |
+| `easys-stack` (private, same author) | Ported and renamed | Reversible installer transactions: the journal layout, the `ERR`-trap rollback, and the mutation primitives were ported with the environment prefix renamed to `HARNESS_*`. `transaction_remove_tree` is new here, because this installer removes managed skill directories, and the primitives were hardened to fail closed instead of writing through a path they could not remove. | [`transaction.sh`](../core/scripts/lib/transaction.sh), [`test_transaction_lib.sh`](../test/test_transaction_lib.sh), [`test_install_transaction.sh`](../test/test_install_transaction.sh) |
+
+`easys-stack` is not public, is not a dependency, and shares this project's authorship, so the port creates no third-party license obligation and adds no entry to `THIRD_PARTY_NOTICES.md`. The two test suites were rewritten against this installer's own flags rather than ported line for line; the upstream cases for `--plan`, `--check`, collision fail-closed semantics, and completion blocks describe an installer contract `agent-harness` does not have.
+
 ## Standards and Conceptual Foundations
 
 These references shape repository conventions but are not software dependencies:

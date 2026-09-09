@@ -104,6 +104,14 @@ cd agent-harness
 ./setup --global --expert
 ```
 
+Every installation is transactional. Each mutation is journaled before it is applied, a failure part-way through restores the previous filesystem state automatically, and a completed installation can be undone:
+
+```bash
+./setup --rollback
+```
+
+Journals live under `$XDG_STATE_HOME/agent-harness` (or `~/.local/state/agent-harness`) and are created with `umask 077`. Set `HARNESS_STATE_DIR` to relocate them.
+
 ### 2. Initialize in Any Existing Project
 
 ```bash
@@ -354,8 +362,11 @@ Contributions are welcome! Please see [CONTRIBUTING.md](CONTRIBUTING.md) for gui
 # Verify all scripts and skill frontmatter
 ./setup --verify
 
-# Run test suite
-bash test/test_cli.sh
+# Lint every shell entry point
+npm run lint
+
+# Run the full test suite (CLI, transaction library, transactional installer)
+npm test
 ```
 
 ---
