@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **BREAKING.** A default installation exposes only `/harness-implement`, `/harness-fix`, and `/harness-investigate` instead of the fourteen standard skills announced in `1.0.0`. The primitives are bundled privately inside those workflows and can still be exposed as standalone skills with `--expert`.
 
 ### Fixed
+- `harness spec status` listed archived specs as active. Its `find` recursed into `specs/archive/` and matched directories, unlike `resolve_spec_path`, which was already scoped with `-maxdepth 1 -type f`. Archiving a spec now removes it from the active listing.
 - `harness doctor --fix` aborted with a Bash `local` error instead of restoring a missing `AGENTS.md`.
 
 ## [1.0.0] - 2026-08-26

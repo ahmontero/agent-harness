@@ -398,6 +398,23 @@ if (cd "${SPEC_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" spec archive payments
 fi
 echo "  [PASS] spec archive moves verified specs and rejects unsafe destinations."
 
+mkdir -p "${SPEC_TEST_DIR}/specs/delta-not-a-file.md"
+SPEC_STATUS_OUTPUT="$(cd "${SPEC_TEST_DIR}" && "${HARNESS_ROOT}/bin/harness" spec status 2>/dev/null)"
+if printf '%s\n' "${SPEC_STATUS_OUTPUT}" | grep -q "specs/archive/"; then
+    echo "  [FAIL] spec status listed an archived spec as active"
+    exit 1
+fi
+if printf '%s\n' "${SPEC_STATUS_OUTPUT}" | grep -q "delta-not-a-file.md"; then
+    echo "  [FAIL] spec status listed a directory as an active spec"
+    exit 1
+fi
+if ! printf '%s\n' "${SPEC_STATUS_OUTPUT}" | grep -q "delta-incomplete.md"; then
+    echo "  [FAIL] spec status did not list an active spec"
+    exit 1
+fi
+rmdir "${SPEC_TEST_DIR}/specs/delta-not-a-file.md"
+echo "  [PASS] spec status lists active specs and excludes archived specs and directories."
+
 echo ""
 echo "=== 9. Testing Repository Dogfooding Rules ==="
 for rule_doc in rules/floor.md rules/landmines.md; do

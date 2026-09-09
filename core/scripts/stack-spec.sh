@@ -92,7 +92,7 @@ case "${ACTION}" in
             log_info "No specs directory found. Run 'harness spec create <issue> <slug>' to create one."
             exit 0
         fi
-        find "${SPECS_DIR}" -name "delta-*.md" 2>/dev/null | sort || log_info "No active delta specs."
+        find "${SPECS_DIR}" -maxdepth 1 -type f -name "delta-*.md" 2>/dev/null | sort || log_info "No active delta specs."
         ;;
     create)
         RAW_KEY="${1:-}"
