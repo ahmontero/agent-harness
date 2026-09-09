@@ -50,6 +50,7 @@ stack.config.local.json
 .claude/
 .codex/
 .cursor/
+.serena/
 CLAUDE.md
 GEMINI.md
 stack.config.json
