@@ -121,25 +121,43 @@ if [ "${ROLLBACK_MODE}" = true ]; then
 fi
 
 # Verification Mode
+#
+# Both checks run to completion and accumulate into one counter, so a single invocation
+# reports every problem rather than turning the gate into a per-run bisection. Neither
+# loop may run in a pipeline: a `find | while` body increments the counter in a subshell,
+# which is how the frontmatter check previously lost every error it printed.
 if [ "${VERIFY_MODE}" = true ]; then
     log_info "Verifying agent-harness scripts and skills..."
-    
+    VERIFY_FAILURES=0
+
     # 1. Check syntax of all shell scripts
     log_info "Checking shell script syntax..."
-    find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" "${HARNESS_ROOT}" -maxdepth 2 -type f \( -name "*.sh" -o -name "harness" -o -name "setup" \) -exec bash -n {} \;
-    log_success "All shell scripts passed syntax checks."
+    while IFS= read -r script_file; do
+        if ! bash -n "${script_file}"; then
+            log_error "Shell syntax error: ${script_file}"
+            VERIFY_FAILURES=$((VERIFY_FAILURES + 1))
+        fi
+    done < <(find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" "${HARNESS_ROOT}" -maxdepth 2 -type f \( -name "*.sh" -o -name "harness" -o -name "setup" \))
+    if [ "${VERIFY_FAILURES}" -eq 0 ]; then
+        log_success "All shell scripts passed syntax checks."
+    fi
 
     # 2. Check skill frontmatter
     log_info "Verifying skills formatting..."
-    find "${HARNESS_ROOT}/core/skills" -name "SKILL.md" | while read -r skill_file; do
+    while IFS= read -r skill_file; do
         if grep -q "^---" "${skill_file}" && grep -q "^name:" "${skill_file}"; then
             skill_name=$(grep "^name:" "${skill_file}" | head -n 1 | awk '{print $2}')
             log_success "Skill valid: ${skill_name} ($(basename "$(dirname "${skill_file}")"))"
         else
             log_error "Skill missing YAML frontmatter: ${skill_file}"
+            VERIFY_FAILURES=$((VERIFY_FAILURES + 1))
         fi
-    done
+    done < <(find "${HARNESS_ROOT}/core/skills" -name "SKILL.md")
 
+    if [ "${VERIFY_FAILURES}" -ne 0 ]; then
+        log_error "Verification failed with ${VERIFY_FAILURES} problem(s)."
+        exit 1
+    fi
     log_success "Verification completed successfully!"
     exit 0
 fi
