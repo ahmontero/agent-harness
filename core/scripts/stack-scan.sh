@@ -118,13 +118,31 @@ fi
 log_info "Running Landmine Scanner [${SCAN_MODE}] using rules: ${RULES_FILE}..."
 
 # grep -E exits 2 on a pattern it cannot compile, and the scan loop discards stderr, so an
-# unusable rule is indistinguishable from a clean file. Compiling every pattern once against
-# empty input turns that silence into a refusal, before any file is read.
+# unusable rule is indistinguishable from a clean file. Two checks close that gap, and both
+# are needed because they catch different things on different platforms.
+#
+# The '(?' check is first and is the portable one. '(?' opens a PCRE group construct --
+# lookahead, lookbehind, non-capturing group -- and ERE defines none of them. BSD grep
+# rejects such a pattern outright, but GNU grep compiles it, treating the '?' as a literal
+# inside an ordinary group, and then quietly matches something nobody wrote. Relying on the
+# compile check alone would therefore catch the shipped PERF-001 lookahead on macOS and miss
+# it on Linux, which is the platform most of this runs on. A rule must be refused for the
+# same reason on both.
+#
+# The compile check stays for everything else -- an unbalanced group, a bad character class,
+# a malformed interval -- which every grep rejects.
 validate_rule_patterns() {
     local invalid=0 rule_id rule_pattern compile_status
     command -v jq >/dev/null 2>&1 || return 0
     while IFS=$'\t' read -r rule_id rule_pattern; do
         [ -n "${rule_id}" ] || continue
+        case "${rule_pattern}" in
+            *'(?'*)
+                log_error "[${rule_id}] Unusable pattern in ${RULES_FILE}: '(?' is a PCRE construct and grep -E has no lookaround."
+                invalid=$((invalid + 1))
+                continue
+                ;;
+        esac
         compile_status=0
         printf '' | grep -Eq -- "${rule_pattern}" >/dev/null 2>&1 || compile_status=$?
         if [ "${compile_status}" -ge 2 ]; then

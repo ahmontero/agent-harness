@@ -1217,6 +1217,11 @@ echo ""
 echo "=== 19. Testing Scanner Rule Validation ==="
 # grep -E exits 2 on a pattern it cannot compile. With stderr suppressed that is
 # indistinguishable from "no match", so an unusable rule reads as a clean file forever.
+# The two fixtures below are deliberately different: BAD-002 is malformed for every grep,
+# while BAD-001 is a PCRE lookahead that BSD grep rejects and GNU grep happily compiles.
+# Asserting the *reason* for BAD-001, not just its ID, is what stops the guard from silently
+# becoming a macOS-only check again -- which is how the first attempt passed here and failed
+# on the Ubuntu runner.
 BAD_RULES="${TMP_TEST_DIR}/bad-rules.json"
 cat > "${BAD_RULES}" <<'BAD_RULES_EOF'
 [
@@ -1242,9 +1247,12 @@ BAD_RULES_EOF
 RULE_STATUS=0
 RULE_OUTPUT="$(cd "${SCAN_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --all --rules "${BAD_RULES}" 2>&1)" || RULE_STATUS=$?
 if [ "${RULE_STATUS}" -eq 0 ] || \
-   ! printf '%s' "${RULE_OUTPUT}" | grep -q "BAD-001" || \
    ! printf '%s' "${RULE_OUTPUT}" | grep -q "BAD-002"; then
-    echo "  [FAIL] scan accepted rule patterns that grep -E cannot compile"
+    echo "  [FAIL] scan accepted a rule pattern that grep -E cannot compile"
+    exit 1
+fi
+if ! printf '%s' "${RULE_OUTPUT}" | grep -q "BAD-001.*PCRE construct"; then
+    echo "  [FAIL] scan did not reject a PCRE lookahead on the grep-independent path"
     exit 1
 fi
 
