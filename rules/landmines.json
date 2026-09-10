@@ -11,7 +11,7 @@
   {
     "id": "PERF-001",
     "name": "Unbounded Query / Missing Limit",
-    "pattern": "\\.objects\\.all\\(\\)(?!\\.iterator|\\.values|\\[)",
+    "pattern": "\\.objects\\.all\\(\\)[[:space:]]*($|[),])",
     "fileExtensions": [".py"],
     "level": "warning",
     "message": "Unbounded all() query in memory without pagination or iterator.",

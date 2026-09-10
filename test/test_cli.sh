@@ -980,5 +980,314 @@ if [ "$(printf '%s\n' "${STAGNATION_RULINGS}" | grep -c .)" -ne 1 ] || \
 fi
 echo "  [PASS] failure signatures are normalized, deterministic, evidence-free, and breaker-bounded."
 
+
+echo ""
+echo "=== 16. Testing Fail-Closed Verification ==="
+# A verification gate that prints a failure and exits 0 is the exact shape rules/floor.md
+# invariant 1 forbids, so the sandbox is dirtied deliberately and the exit status is the
+# assertion. The harness is copied rather than mutated in place: --verify walks its own
+# checkout, so injecting a syntax error into the real tree would corrupt the suite running it.
+VERIFY_SANDBOX_ROOT="${TMP_TEST_DIR}/verify"
+mkdir -p "${VERIFY_SANDBOX_ROOT}"
+
+new_verify_sandbox() {
+    local sandbox="${VERIFY_SANDBOX_ROOT}/$1"
+    rm -rf "${sandbox}"
+    mkdir -p "${sandbox}"
+    cp -R "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core" "${HARNESS_ROOT}/install.sh" \
+          "${HARNESS_ROOT}/setup" "${sandbox}/"
+    printf '%s' "${sandbox}"
+}
+
+# Sets VERIFY_STATUS and VERIFY_OUTPUT. Both are globals rather than a printed status,
+# because a command substitution would run the body in a subshell and discard the output.
+run_verify() {
+    local sandbox="$1"
+    VERIFY_STATUS=0
+    VERIFY_OUTPUT="$(bash "${sandbox}/setup" --verify 2>&1)" || VERIFY_STATUS=$?
+}
+
+VERIFY_CLEAN="$(new_verify_sandbox clean)"
+run_verify "${VERIFY_CLEAN}"
+VERIFY_CLEAN_STATUS="${VERIFY_STATUS}"
+if [ "${VERIFY_CLEAN_STATUS}" -ne 0 ] || ! printf '%s' "${VERIFY_OUTPUT}" | grep -q "Verification completed successfully"; then
+    echo "  [FAIL] setup --verify did not succeed on an unmodified checkout"
+    exit 1
+fi
+
+VERIFY_SYNTAX="$(new_verify_sandbox syntax)"
+printf '\nif [ unterminated\n' >> "${VERIFY_SYNTAX}/core/scripts/stack-debt.sh"
+run_verify "${VERIFY_SYNTAX}"
+VERIFY_SYNTAX_STATUS="${VERIFY_STATUS}"
+if [ "${VERIFY_SYNTAX_STATUS}" -eq 0 ] || \
+   ! printf '%s' "${VERIFY_OUTPUT}" | grep -q "stack-debt.sh" || \
+   printf '%s' "${VERIFY_OUTPUT}" | grep -q "Verification completed successfully"; then
+    echo "  [FAIL] setup --verify reported success over a shell syntax error"
+    exit 1
+fi
+
+VERIFY_FRONTMATTER="$(new_verify_sandbox frontmatter)"
+mkdir -p "${VERIFY_FRONTMATTER}/core/skills/malformed"
+printf 'no frontmatter at all\n' > "${VERIFY_FRONTMATTER}/core/skills/malformed/SKILL.md"
+run_verify "${VERIFY_FRONTMATTER}"
+VERIFY_FRONTMATTER_STATUS="${VERIFY_STATUS}"
+if [ "${VERIFY_FRONTMATTER_STATUS}" -eq 0 ] || \
+   printf '%s' "${VERIFY_OUTPUT}" | grep -q "Verification completed successfully"; then
+    echo "  [FAIL] setup --verify reported success over a skill missing its frontmatter"
+    exit 1
+fi
+
+# One invocation must surface every problem; stopping at the first would make the gate
+# a per-run bisection instead of a report.
+VERIFY_BOTH="$(new_verify_sandbox both)"
+printf '\nif [ unterminated\n' >> "${VERIFY_BOTH}/core/scripts/stack-debt.sh"
+mkdir -p "${VERIFY_BOTH}/core/skills/malformed"
+printf 'no frontmatter at all\n' > "${VERIFY_BOTH}/core/skills/malformed/SKILL.md"
+run_verify "${VERIFY_BOTH}"
+VERIFY_BOTH_STATUS="${VERIFY_STATUS}"
+if [ "${VERIFY_BOTH_STATUS}" -eq 0 ] || \
+   ! printf '%s' "${VERIFY_OUTPUT}" | grep -q "stack-debt.sh" || \
+   ! printf '%s' "${VERIFY_OUTPUT}" | grep -q "malformed/SKILL.md"; then
+    echo "  [FAIL] setup --verify did not report both a syntax error and a malformed skill in one run"
+    exit 1
+fi
+echo "  [PASS] setup --verify fails closed on syntax errors and malformed skills."
+
+echo ""
+echo "=== 17. Testing Scanner Index Fidelity ==="
+# The pre-commit hook runs --staged, so --staged must describe the commit. Reading the
+# working tree instead makes the gate answer a question nobody asked: it clears a staged
+# violation that was reverted on disk, and blocks a violation that is not being committed.
+SCAN_RULES="${TMP_TEST_DIR}/scan-rules.json"
+cat > "${SCAN_RULES}" <<'SCAN_RULES_EOF'
+[
+  {
+    "id": "TEST-001",
+    "name": "Forbidden marker",
+    "pattern": "FORBIDDEN_MARKER",
+    "fileExtensions": [".py"],
+    "level": "error",
+    "message": "Remove the forbidden marker."
+  }
+]
+SCAN_RULES_EOF
+
+SCAN_REPO="${TMP_TEST_DIR}/scan-index"
+mkdir -p "${SCAN_REPO}"
+git -C "${SCAN_REPO}" init -q
+git -C "${SCAN_REPO}" config user.email harness@example.com
+git -C "${SCAN_REPO}" config user.name "Harness Test"
+printf 'print("clean")\n' > "${SCAN_REPO}/app.py"
+git -C "${SCAN_REPO}" add app.py
+git -C "${SCAN_REPO}" commit -qm "baseline"
+
+# Sets SCAN_STATUS and SCAN_OUTPUT, for the same reason run_verify does.
+run_scan() {
+    local mode="$1"
+    SCAN_STATUS=0
+    SCAN_OUTPUT="$(cd "${SCAN_REPO}" && "${HARNESS_ROOT}/bin/harness" scan "${mode}" --rules "${SCAN_RULES}" 2>&1)" || SCAN_STATUS=$?
+}
+
+# Staged violation, reverted on disk. This is the bypass: git commit would record the
+# marker, and a working-tree read sees a clean file.
+printf 'print("clean")\nFORBIDDEN_MARKER = 1\n' > "${SCAN_REPO}/app.py"
+git -C "${SCAN_REPO}" add app.py
+printf 'print("clean")\n' > "${SCAN_REPO}/app.py"
+run_scan --staged
+if [ "${SCAN_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --staged passed a violation that is staged for commit"
+    exit 1
+fi
+
+# The mirror image: present on disk, absent from the index. --staged must clear it and
+# --diff must not, because they answer different questions.
+git -C "${SCAN_REPO}" reset -q --hard
+printf 'print("clean")\nFORBIDDEN_MARKER = 1\n' > "${SCAN_REPO}/app.py"
+run_scan --staged
+if [ "${SCAN_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] scan --staged blocked a violation that is not staged for commit"
+    exit 1
+fi
+run_scan --diff
+if [ "${SCAN_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --diff passed a working-tree violation"
+    exit 1
+fi
+
+# A path staged as an addition and then deleted from disk is still in the commit.
+git -C "${SCAN_REPO}" reset -q --hard
+printf 'FORBIDDEN_MARKER = 1\n' > "${SCAN_REPO}/ghost.py"
+git -C "${SCAN_REPO}" add ghost.py
+rm "${SCAN_REPO}/ghost.py"
+run_scan --staged
+if [ "${SCAN_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --staged skipped a staged addition that was deleted from disk"
+    exit 1
+fi
+
+# Findings must cite the staged path and the line number inside the staged content,
+# not whatever line the working-tree copy happens to have.
+git -C "${SCAN_REPO}" reset -q --hard
+rm -f "${SCAN_REPO}/ghost.py"
+printf 'a = 1\nb = 2\nFORBIDDEN_MARKER = 3\n' > "${SCAN_REPO}/app.py"
+git -C "${SCAN_REPO}" add app.py
+printf 'a = 1\n' > "${SCAN_REPO}/app.py"
+run_scan --staged
+if ! printf '%s' "${SCAN_OUTPUT}" | grep -q "app.py" || \
+   ! printf '%s' "${SCAN_OUTPUT}" | grep -qE '(^|[^0-9])3:FORBIDDEN_MARKER'; then
+    echo "  [FAIL] scan --staged did not report the staged path and staged line number"
+    exit 1
+fi
+
+# Materialized index content is scratch, not output. A private TMPDIR makes the leak
+# assertion deterministic instead of a guess about the shared temporary directory.
+SCAN_TMPDIR="${TMP_TEST_DIR}/scan-tmp"
+rm -rf "${SCAN_TMPDIR}"
+mkdir -p "${SCAN_TMPDIR}"
+(cd "${SCAN_REPO}" && TMPDIR="${SCAN_TMPDIR}" "${HARNESS_ROOT}/bin/harness" scan --staged --rules "${SCAN_RULES}" >/dev/null 2>&1) || true
+if [ -n "$(ls -A "${SCAN_TMPDIR}")" ]; then
+    echo "  [FAIL] scan --staged left materialized index content behind"
+    exit 1
+fi
+git -C "${SCAN_REPO}" reset -q --hard
+echo "  [PASS] scan --staged reads the index, cites staged lines, and leaves no scratch."
+
+echo ""
+echo "=== 18. Testing Pre-Commit Hook Preservation ==="
+# Overwriting a hook the user already relies on is silent data loss, and reporting success
+# while doing it is the same fail-open shape as the gates above.
+HOOK_REPO="${TMP_TEST_DIR}/hook-repo"
+mkdir -p "${HOOK_REPO}"
+git -C "${HOOK_REPO}" init -q
+HOOK_PATH="${HOOK_REPO}/.git/hooks/pre-commit"
+HOOK_BACKUP="${HOOK_REPO}/.git/hooks/pre-commit.harness-backup"
+# No trailing newline: the assertions compare against "$(cat ...)", which strips one.
+FOREIGN_HOOK=$'#!/bin/sh\necho "existing project hook"'
+
+# Sets HOOK_STATUS and HOOK_OUTPUT, for the same reason run_verify does.
+install_hook() {
+    HOOK_STATUS=0
+    HOOK_OUTPUT="$(cd "${HOOK_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --install-hook "$@" 2>&1)" || HOOK_STATUS=$?
+}
+
+rm -f "${HOOK_PATH}" "${HOOK_BACKUP}"
+install_hook
+if [ "${HOOK_STATUS}" -ne 0 ] || [ ! -x "${HOOK_PATH}" ]; then
+    echo "  [FAIL] --install-hook did not install into a repository without a pre-commit hook"
+    exit 1
+fi
+HOOK_FIRST="$(cat "${HOOK_PATH}")"
+install_hook
+if [ "${HOOK_STATUS}" -ne 0 ] || [ "$(cat "${HOOK_PATH}")" != "${HOOK_FIRST}" ]; then
+    echo "  [FAIL] --install-hook was not idempotent over its own hook"
+    exit 1
+fi
+
+printf '%s' "${FOREIGN_HOOK}" > "${HOOK_PATH}"
+chmod 755 "${HOOK_PATH}"
+install_hook
+if [ "${HOOK_STATUS}" -eq 0 ] || [ "$(cat "${HOOK_PATH}")" != "${FOREIGN_HOOK}" ]; then
+    echo "  [FAIL] --install-hook overwrote or accepted a hook agent-harness did not write"
+    exit 1
+fi
+if ! printf '%s' "${HOOK_OUTPUT}" | grep -q "harness scan --staged"; then
+    echo "  [FAIL] --install-hook refused a foreign hook without printing the line to add manually"
+    exit 1
+fi
+
+rm -f "${HOOK_BACKUP}"
+install_hook --force
+if [ "${HOOK_STATUS}" -ne 0 ] || [ ! -f "${HOOK_BACKUP}" ] || \
+   [ "$(cat "${HOOK_BACKUP}")" != "${FOREIGN_HOOK}" ] || [ ! -x "${HOOK_BACKUP}" ] || \
+   [ "$(cat "${HOOK_PATH}")" = "${FOREIGN_HOOK}" ]; then
+    echo "  [FAIL] --install-hook --force did not back the foreign hook up before replacing it"
+    exit 1
+fi
+
+# A second --force must not turn the backup into a copy of our own hook.
+printf '%s' "${FOREIGN_HOOK}" > "${HOOK_PATH}"
+install_hook --force
+if [ "${HOOK_STATUS}" -eq 0 ] || [ "$(cat "${HOOK_BACKUP}")" != "${FOREIGN_HOOK}" ]; then
+    echo "  [FAIL] --install-hook --force destroyed an existing backup"
+    exit 1
+fi
+echo "  [PASS] --install-hook preserves foreign hooks, is idempotent, and backs up under --force."
+
+echo ""
+echo "=== 19. Testing Scanner Rule Validation ==="
+# grep -E exits 2 on a pattern it cannot compile. With stderr suppressed that is
+# indistinguishable from "no match", so an unusable rule reads as a clean file forever.
+BAD_RULES="${TMP_TEST_DIR}/bad-rules.json"
+cat > "${BAD_RULES}" <<'BAD_RULES_EOF'
+[
+  {
+    "id": "BAD-001",
+    "name": "PCRE lookahead",
+    "pattern": "\\.objects\\.all\\(\\)(?!\\.iterator)",
+    "fileExtensions": [".py"],
+    "level": "error",
+    "message": "unreachable"
+  },
+  {
+    "id": "BAD-002",
+    "name": "Unbalanced group",
+    "pattern": "(unclosed",
+    "fileExtensions": [".py"],
+    "level": "error",
+    "message": "unreachable"
+  }
+]
+BAD_RULES_EOF
+
+RULE_STATUS=0
+RULE_OUTPUT="$(cd "${SCAN_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --all --rules "${BAD_RULES}" 2>&1)" || RULE_STATUS=$?
+if [ "${RULE_STATUS}" -eq 0 ] || \
+   ! printf '%s' "${RULE_OUTPUT}" | grep -q "BAD-001" || \
+   ! printf '%s' "${RULE_OUTPUT}" | grep -q "BAD-002"; then
+    echo "  [FAIL] scan accepted rule patterns that grep -E cannot compile"
+    exit 1
+fi
+
+# A pattern that compiles and matches nothing is valid, not unusable.
+QUIET_RULES="${TMP_TEST_DIR}/quiet-rules.json"
+cat > "${QUIET_RULES}" <<'QUIET_RULES_EOF'
+[
+  {
+    "id": "QUIET-001",
+    "name": "Never present",
+    "pattern": "THIS_STRING_IS_NOT_IN_THE_FIXTURE",
+    "fileExtensions": [".py"],
+    "level": "error",
+    "message": "unreachable"
+  }
+]
+QUIET_RULES_EOF
+if ! (cd "${SCAN_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --all --rules "${QUIET_RULES}" >/dev/null 2>&1); then
+    echo "  [FAIL] scan rejected a valid pattern that simply matches nothing"
+    exit 1
+fi
+
+# The shipped PERF-001 must actually fire, and must still spare the bounded forms its
+# documentation says it spares.
+PERF_REPO="${TMP_TEST_DIR}/perf-fixture"
+mkdir -p "${PERF_REPO}"
+git -C "${PERF_REPO}" init -q
+printf 'rows = Model.objects.all()\n' > "${PERF_REPO}/unbounded.py"
+printf 'a = Model.objects.all().iterator()\nb = Model.objects.all().values("id")\nc = Model.objects.all()[:10]\n' > "${PERF_REPO}/bounded.py"
+git -C "${PERF_REPO}" add -A
+for shipped_rules in "${HARNESS_ROOT}/rules/landmines.json" "${HARNESS_ROOT}/core/templates/landmines-template.json"; do
+    PERF_OUTPUT="$(cd "${PERF_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --all --rules "${shipped_rules}" 2>&1)" || true
+    if ! printf '%s' "${PERF_OUTPUT}" | grep -q "PERF-001.*unbounded.py"; then
+        echo "  [FAIL] PERF-001 in ${shipped_rules} did not flag an unbounded objects.all()"
+        exit 1
+    fi
+    # Anchored on a non-alphanumeric boundary: a bare "bounded.py" is also a substring
+    # of "unbounded.py", which would make this assertion pass for the wrong reason.
+    if printf '%s' "${PERF_OUTPUT}" | grep -qE '(^|[^[:alnum:]])bounded\.py'; then
+        echo "  [FAIL] PERF-001 in ${shipped_rules} flagged an iterator, values, or sliced query"
+        exit 1
+    fi
+done
+echo "  [PASS] unusable rule patterns abort the scan and PERF-001 discriminates correctly."
 echo ""
 echo "All automated tests passed successfully! [100%]"

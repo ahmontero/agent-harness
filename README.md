@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.0.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.3.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -234,6 +234,8 @@ Enforces the Red-Green-Refactor protocol:
 
 Scans code against custom JSON regex rules (`rules/landmines.json`):
 - Detects unindexed queries, raw SQL, client-side secret leaks, and unhandled promise rejections.
+- `--staged` reads staged content from the Git index, so it judges the commit rather than the working tree.
+- A rule whose pattern `grep -E` cannot compile aborts the scan instead of silently never matching.
 - Install as a pre-commit hook via `harness scan --install-hook`.
 </details>
 
@@ -347,6 +349,16 @@ Install as pre-commit guard:
 ```bash
 harness scan --install-hook
 ```
+
+The installed hook runs `harness scan --staged`, which reads the blobs in the Git index. A violation that is staged and then reverted in the working tree still blocks the commit, and a violation that exists only on disk does not.
+
+If a `pre-commit` hook agent-harness did not write is already in place, installation refuses rather than replacing it, and prints the one line to add to your own hook instead:
+
+```bash
+harness scan --install-hook --force
+```
+
+`--force` replaces the existing hook after copying it to `pre-commit.harness-backup`. It refuses if that backup already exists.
 
 ---
 
