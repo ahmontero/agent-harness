@@ -45,6 +45,8 @@ Phase 7 never loops without a bound, and never ends by quietly dropping a findin
 - **Minor findings never enter the loop.** Record each one with `harness ledger append "$RUN_ID" deferred "<one-liner>"` and report them at hand-off.
 - **Critical and Important findings enter the loop.** One round is one fix plus one re-review scoped to the amended code. After each round, record `harness ledger append "$RUN_ID" phase "round <R>/3 (<X> addressed, <Y> open)"`.
 - **Three rounds is the cap.** Do not open a fourth. A loop that survives three rounds has a structural problem that another round will not solve.
+- **Every failed round is signed before the next one opens.** Pipe the round's verification output through `harness ledger failure "$RUN_ID" "round <R>/3"`. It records the failure's signature — never the output itself — and answers `continue` on exit `0` or `stagnant` on exit `3`.
+- **A `stagnant` answer ends the loop now.** Go straight to adjudication with the rounds you have, even when rounds remain under the cap. Two rounds that fail equivalently have already told you the loop is not converging; a third would only cost the budget you need for adjudication.
 - **At the cap, adjudicate every open finding individually.** Either park it — `harness ledger append "$RUN_ID" parked "<finding> — Ruling: <why the code stands>"` — or classify it as load-bearing, meaning later work would build on the defect.
 - **A load-bearing finding at the cap ends the workflow as blocked.** Record `harness ledger append "$RUN_ID" ruling "<finding> — blocked: <what the user must decide>"`, call `harness receipt finish "$RUN_ID" blocked`, and hand the decision to the user.
 
@@ -57,6 +59,7 @@ Before the final response, run `harness ledger rulings "$RUN_ID"` and reproduce 
 | *"One more round and the review will converge."* | **BANNED.** Past three rounds the failure is structural, not incremental. Adjudicate every open finding instead. |
 | *"This finding is clearly wrong, I'll drop it."* | **BANNED.** Adjudication happens only at the cap, and every adjudication is a ledger line. Silent discards are forbidden. |
 | *"The ledger is bookkeeping overhead."* | **BANNED.** The ledger is what survives compaction. Without it, a resumed run repeats phases that already passed. |
+| *"The signature matched, but this failure is really different."* | **BANNED.** The signature already discarded timestamps, paths, line numbers, and IDs. What is left is the failure. If you believe two signed failures differ materially, the normalization is wrong and that is a defect to report, not a licence to open another round. |
 
 ## Safety Boundary
 
@@ -74,7 +77,7 @@ Report progress on every turn as:
 
 Inside the bounded review loop:
 
-`[IMPLEMENT: Phase 7/7 — review | Round <R>/3 | Open: <C> Critical, <I> Important | Next: <next action>]`
+`[IMPLEMENT: Phase 7/7 — review | Round <R>/3 | Sig: <signature or none> | Open: <C> Critical, <I> Important | Next: <next action>]`
 
 Completion requires:
 

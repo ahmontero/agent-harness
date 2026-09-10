@@ -20,6 +20,7 @@ The commit links below are provenance snapshots, not dependency pins. The listed
 | [mattpocock/skills](https://github.com/mattpocock/skills) | Adapted method | Tight red-capable feedback loops, minimized reproductions, ranked falsifiable hypotheses, and tagged temporary probes. | [`bug/SKILL.md`](../core/skills/bug/SKILL.md), [`fix/SKILL.md`](../core/skills/fix/SKILL.md) | [`diagnosing-bugs` at `6654f6b`](https://github.com/mattpocock/skills/blob/6654f6b60cd9d5be8b54c6fafe44346dabeb3b76/skills/engineering/diagnosing-bugs/SKILL.md) | MIT |
 | [Fission-AI/OpenSpec](https://github.com/Fission-AI/OpenSpec) | Inspired by; adapted method | Spec-Driven Development, living specifications, delta requirements, verification, and archival lifecycle. | [`spec/SKILL.md`](../core/skills/spec/SKILL.md), [`task/SKILL.md`](../core/skills/task/SKILL.md) | [`a0ddb60`](https://github.com/Fission-AI/OpenSpec/tree/a0ddb60d040c61f4907436a9d91310934b1dda63) | MIT |
 | [ayghri/i-have-adhd](https://github.com/ayghri/i-have-adhd) | Inspired by; adapted method | Action-first communication, concise state anchors, bounded cognitive load, and tangent control. | [`AGENTS-template.md`](../core/templates/AGENTS-template.md) | [`cbe69fb`](https://github.com/ayghri/i-have-adhd/tree/cbe69fb83c08a37cf54d5ec9ec6bb88c8bc9973c) | MIT |
+| [codejunkie99/agentic-stack-desktop](https://github.com/codejunkie99/agentic-stack-desktop) | Adapted method | Normalize-then-compare failure signatures, and a breaker that ends a bounded loop when consecutive attempts fail equivalently. Adapted from the `normalize_failure` and `evaluate_breaker` pair in [`harness_manager/loops/policy.py`](https://github.com/codejunkie99/agentic-stack-desktop/blob/210a199ce006ccbd76cae0e663c6ebf99381efb9/harness_manager/loops/policy.py). Its surrounding loop design — the Python runner, the `L1`/`L2`/`L3` autonomy levels, the capability envelope, the approval gates, the `deny_paths` and `max_changed_files` constraints, the worktree ownership model, and the declarative adapter manifests — was not adapted. | [`stack-ledger.sh`](../core/scripts/stack-ledger.sh), [`implement/SKILL.md`](../core/skills/implement/SKILL.md) | [`210a199`](https://github.com/codejunkie99/agentic-stack-desktop/tree/210a199ce006ccbd76cae0e663c6ebf99381efb9) | Apache-2.0 |
 
 ## Upstream Drift Audit
 
@@ -34,6 +35,7 @@ The snapshots above record the upstream state from which each influence was draw
 | mattpocock/skills | `6654f6b` | [`3cca18b`](https://github.com/mattpocock/skills/tree/3cca18b368ae95cdbdebbff572ccafa662551015) | 2 commits ahead | No. `CLAUDE.md` and `scripts/link-skills.sh` only; `diagnosing-bugs/SKILL.md` is unchanged. |
 | Fission-AI/OpenSpec | `a0ddb60` | [`e062b95`](https://github.com/Fission-AI/OpenSpec/tree/e062b9572be933564ba3899d059377dfa1393e32) (`v1.12.0`) | 20 commits ahead | Yes — `validate --report findings`, `show --diff` for delta requirements, and explore/propose guidance that inspects code before drafting. Candidate for re-derivation into `spec/SKILL.md`. |
 | ayghri/i-have-adhd | `cbe69fb` | [`24d22f7`](https://github.com/ayghri/i-have-adhd/tree/24d22f783e57cb73c957848b588c6f651b6f9cd8) | 25 commits ahead | No. README translations, install docs, and eval harness only; the communication rules themselves are unchanged. |
+| codejunkie99/agentic-stack-desktop | `210a199` | [`210a199`](https://github.com/codejunkie99/agentic-stack-desktop/tree/210a199ce006ccbd76cae0e663c6ebf99381efb9) | None — identical | No. Snapshot is the upstream head at the time the influence was taken. |
 
 Re-verification command (requires `gh`):
 
@@ -42,6 +44,8 @@ gh api "repos/<owner>/<repo>/compare/<snapshot-sha>...main" --jq '"ahead_by=\(.a
 ```
 
 A re-derived influence updates the snapshot column in the table above **and** the local evidence links, because the snapshot must always name the upstream state that the local implementation was actually derived from.
+
+The `codejunkie99/agentic-stack-desktop` row was added on 2026-09-09 for AH-8. Upstream is Apache-2.0, which would impose notice obligations on copied source; none was copied. The adapted method is normalization-then-comparison and the breaker decision it enables, reimplemented in Bash against this repository's own append-only ledger, with a different digest (`git hash-object`, which reuses an existing hard dependency), a different storage model, and a different set of normalization rules. No upstream Python, test, or documentation text is present in this repository, so the reuse creates no `THIRD_PARTY_NOTICES.md` entry.
 
 The `obra/superpowers` row was re-derived on 2026-09-09 for AH-4. Its snapshot was already the upstream head, so the column is unchanged; the influence column and the evidence links were extended instead. No upstream text, prompt template, or script was copied, so the reuse remains an adapted method and creates no `THIRD_PARTY_NOTICES.md` entry.
 
