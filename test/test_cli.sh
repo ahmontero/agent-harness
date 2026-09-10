@@ -791,4 +791,194 @@ if [ ! -f "${LEDGER_TEST_DIR}/.git/agent-harness/ledgers/${LINKED_LEDGER_RUN_ID}
 fi
 echo "  [PASS] ledgers are private, validated, append-only, ruling-filtered, and worktree-shared."
 echo ""
+echo "=== 15. Testing Loop Stagnation Breaker ==="
+STAGNATION_DIR="${TMP_TEST_DIR}/stagnation-test"
+mkdir -p "${STAGNATION_DIR}"
+git -C "${STAGNATION_DIR}" init -q
+git -C "${STAGNATION_DIR}" config user.email "tests@agent-harness.local"
+git -C "${STAGNATION_DIR}" config user.name "Agent Harness Tests"
+echo "fixture" > "${STAGNATION_DIR}/fixture.txt"
+git -C "${STAGNATION_DIR}" add fixture.txt
+git -C "${STAGNATION_DIR}" commit -qm "stagnation fixture"
+
+cat > "${STAGNATION_DIR}/harness.config.json" <<'STAGNATION_CONFIG_EOF'
+{
+  "project": { "name": "stagnation-fixture", "defaultProfile": "loose" },
+  "profiles": {
+    "loose": { "displayName": "Default threshold" },
+    "patient": { "displayName": "Raised threshold", "loop": { "stagnationThreshold": 3 } },
+    "impatient": { "displayName": "Rejected threshold", "loop": { "stagnationThreshold": 1 } },
+    "bogus": { "displayName": "Non-integer threshold", "loop": { "stagnationThreshold": "soon" } }
+  }
+}
+STAGNATION_CONFIG_EOF
+
+# Two failures differing only in timestamp, absolute path, line and column, and long numeric ID.
+STAGNATION_FAIL_A="$(printf 'FAIL test_widget at 2026-09-09T10:11:12Z\n  /Users/someone/repo/src/widget.py:42:7: AssertionError\n  request id 1234567890')"
+STAGNATION_FAIL_B="$(printf 'FAIL test_widget at 2026-01-02T03:04:05Z\n  /home/other/checkout/src/widget.py:99:2: AssertionError\n  request id 9876543210')"
+STAGNATION_FAIL_C='FAIL test_gadget: TypeError on None'
+
+stagnation_signature() {
+    printf '%s' "$1" | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger signature)
+}
+
+# Signs from inside <dir>, so the caller controls which repository the normalizer resolves.
+stagnation_signature_in() {
+    printf '%s' "$2" | (cd "$1" && "${HARNESS_ROOT}/bin/harness" ledger signature)
+}
+
+# stagnation_failure <profile> <run_id> <text> [label] -> prints "<exit code> <stdout>"
+stagnation_failure() {
+    local profile="$1" run_id="$2" text="$3" out code
+    set +e
+    if [ "$#" -ge 4 ]; then
+        out="$(printf '%s' "${text}" | (cd "${STAGNATION_DIR}" && STACK_PROFILE="${profile}" "${HARNESS_ROOT}/bin/harness" ledger failure "${run_id}" "$4" 2>/dev/null))"
+    else
+        out="$(printf '%s' "${text}" | (cd "${STAGNATION_DIR}" && STACK_PROFILE="${profile}" "${HARNESS_ROOT}/bin/harness" ledger failure "${run_id}" 2>/dev/null))"
+    fi
+    code=$?
+    set -e
+    printf '%s %s' "${code}" "${out}"
+}
+
+stagnation_open_run() {
+    local run_id
+    run_id="$(cd "${STAGNATION_DIR}" && STACK_PROFILE="$1" "${HARNESS_ROOT}/bin/harness" receipt start implement --issue AH-8)"
+    (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "${run_id}" >/dev/null)
+    printf '%s' "${run_id}"
+}
+
+SIG_A="$(stagnation_signature "${STAGNATION_FAIL_A}")"
+if ! printf '%s' "${SIG_A}" | grep -Eq '^[0-9a-f]{12}$'; then
+    echo "  [FAIL] ledger signature did not print a 12-character lowercase hex digest"
+    exit 1
+fi
+if [ "${SIG_A}" != "$(stagnation_signature "${STAGNATION_FAIL_A}")" ]; then
+    echo "  [FAIL] ledger signature was not deterministic for one input"
+    exit 1
+fi
+
+# The normalization ruleset is asserted independently: the expected normalized form is
+# written by hand here, so a drifting pipeline changes the digest and fails this case on
+# either CI runner rather than agreeing with itself.
+STAGNATION_EXPECTED_NORMAL='FAIL test_widget at <timestamp> <path>/widget.py:<line>: AssertionError request id <id>'
+STAGNATION_EXPECTED_SIG="$(printf '%s' "${STAGNATION_EXPECTED_NORMAL}" | git hash-object --stdin | cut -c1-12)"
+if [ "${SIG_A}" != "${STAGNATION_EXPECTED_SIG}" ]; then
+    echo "  [FAIL] signature does not match the documented normalization of the fixed corpus"
+    exit 1
+fi
+
+if [ "${SIG_A}" != "$(stagnation_signature "${STAGNATION_FAIL_B}")" ]; then
+    echo "  [FAIL] signature did not scrub timestamps, absolute paths, line numbers, and long IDs"
+    exit 1
+fi
+if [ "${SIG_A}" = "$(stagnation_signature "${STAGNATION_FAIL_C}")" ]; then
+    echo "  [FAIL] signature collapsed two materially different failures"
+    exit 1
+fi
+
+if (printf '' | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger signature) >/dev/null 2>&1) || \
+   (printf '   \n\t\n' | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger signature) >/dev/null 2>&1); then
+    echo "  [FAIL] ledger signature accepted empty or whitespace-only input"
+    exit 1
+fi
+
+# One failure in one file must sign identically regardless of which checkout produced the
+# capture: this worktree, a colleague's clone, a CI runner's temp directory. A rule that
+# gave the signing repository's own root a distinct token would break exactly this, and it
+# is the reason no such rule exists. Neither root below contains a space, which is the
+# documented limit of a whitespace-delimited path rule.
+STAGNATION_OTHER_DIR="${TMP_TEST_DIR}/other-checkout"
+mkdir -p "${STAGNATION_OTHER_DIR}"
+git -C "${STAGNATION_OTHER_DIR}" init -q
+git -C "${STAGNATION_OTHER_DIR}" config user.email "tests@agent-harness.local"
+git -C "${STAGNATION_OTHER_DIR}" config user.name "Agent Harness Tests"
+echo "fixture" > "${STAGNATION_OTHER_DIR}/fixture.txt"
+git -C "${STAGNATION_OTHER_DIR}" add fixture.txt
+git -C "${STAGNATION_OTHER_DIR}" commit -qm "second checkout fixture"
+STAGNATION_HERE="$(printf 'FAIL test_total at 2026-09-09T21:04:11Z\n  %s/src/widget.py:118:9: AssertionError: 41 != 42\n  trace 1739284410' "${STAGNATION_OTHER_DIR}")"
+STAGNATION_THERE="$(printf 'FAIL test_total at 2026-09-10T02:57:03Z\n  /tmp/ci-runner/checkout/src/widget.py:120:4: AssertionError: 41 != 42\n  trace 9902244188')"
+if [ "$(stagnation_signature_in "${STAGNATION_OTHER_DIR}" "${STAGNATION_HERE}")" != \
+     "$(stagnation_signature_in "${STAGNATION_OTHER_DIR}" "${STAGNATION_THERE}")" ]; then
+    echo "  [FAIL] one failure signed two ways depending on which checkout captured it"
+    exit 1
+fi
+
+STAGNATION_RUN="$(stagnation_open_run loose)"
+STAGNATION_LEDGER="${STAGNATION_DIR}/.git/agent-harness/ledgers/${STAGNATION_RUN}.md"
+if [ "$(stagnation_failure loose "${STAGNATION_RUN}" "${STAGNATION_FAIL_A}")" != "0 continue" ]; then
+    echo "  [FAIL] the first failure of a run did not report continue on exit 0"
+    exit 1
+fi
+if ! grep -Eq "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}Z +failure +sig:${SIG_A}$" "${STAGNATION_LEDGER}"; then
+    echo "  [FAIL] ledger failure did not append a signature-only kinded line"
+    exit 1
+fi
+if grep -q "AssertionError\|widget.py\|someone" "${STAGNATION_LEDGER}"; then
+    echo "  [FAIL] verifier output leaked into the ledger"
+    exit 1
+fi
+
+if [ "$(stagnation_failure loose "${STAGNATION_RUN}" "${STAGNATION_FAIL_C}" "round 2/3 — different failure")" != "0 continue" ]; then
+    echo "  [FAIL] a differing failure did not report continue"
+    exit 1
+fi
+if ! grep -Eq "failure +sig:$(stagnation_signature "${STAGNATION_FAIL_C}") — round 2/3 — different failure$" "${STAGNATION_LEDGER}"; then
+    echo "  [FAIL] ledger failure did not record its optional label"
+    exit 1
+fi
+
+# An intervening phase line must not reset the failure history.
+STAGNATION_REPEAT_RUN="$(stagnation_open_run loose)"
+if [ "$(stagnation_failure loose "${STAGNATION_REPEAT_RUN}" "${STAGNATION_FAIL_A}")" != "0 continue" ]; then
+    echo "  [FAIL] the first failure of the repeat run did not report continue"
+    exit 1
+fi
+(cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${STAGNATION_REPEAT_RUN}" phase "round 1/3 (0 addressed, 2 open)" >/dev/null)
+if [ "$(stagnation_failure loose "${STAGNATION_REPEAT_RUN}" "${STAGNATION_FAIL_B}")" != "3 stagnant" ]; then
+    echo "  [FAIL] two equivalent failures across a phase line did not report stagnant on exit 3"
+    exit 1
+fi
+
+# A raised threshold must delay the decision by exactly one more equivalent failure.
+STAGNATION_PATIENT_RUN="$(cd "${STAGNATION_DIR}" && STACK_PROFILE=patient "${HARNESS_ROOT}/bin/harness" receipt start implement --issue AH-8)"
+(cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger start "${STAGNATION_PATIENT_RUN}" >/dev/null)
+# Evaluated in sequence and up front: each call appends to the same ledger, so the
+# assertion must not short-circuit past a call the next one depends on.
+PATIENT_FIRST="$(stagnation_failure patient "${STAGNATION_PATIENT_RUN}" "${STAGNATION_FAIL_A}")"
+PATIENT_SECOND="$(stagnation_failure patient "${STAGNATION_PATIENT_RUN}" "${STAGNATION_FAIL_B}")"
+PATIENT_THIRD="$(stagnation_failure patient "${STAGNATION_PATIENT_RUN}" "${STAGNATION_FAIL_A}")"
+if [ "${PATIENT_FIRST}" != "0 continue" ] || [ "${PATIENT_SECOND}" != "0 continue" ] || [ "${PATIENT_THIRD}" != "3 stagnant" ]; then
+    echo "  [FAIL] profiles.<profile>.loop.stagnationThreshold did not raise the breaker threshold"
+    exit 1
+fi
+
+STAGNATION_REJECT_RUN="$(stagnation_open_run loose)"
+STAGNATION_LONG_LABEL="$(head -c 201 < /dev/zero | tr '\0' 'a')"
+IMPATIENT_CODE="$(stagnation_failure impatient "${STAGNATION_REJECT_RUN}" "${STAGNATION_FAIL_A}" | cut -d' ' -f1)"
+BOGUS_CODE="$(stagnation_failure bogus "${STAGNATION_REJECT_RUN}" "${STAGNATION_FAIL_A}" | cut -d' ' -f1)"
+case "${IMPATIENT_CODE}:${BOGUS_CODE}" in
+    0:*|*:0|3:*|*:3)
+        echo "  [FAIL] a threshold below two or a non-integer threshold produced a decision instead of an error"
+        exit 1
+        ;;
+esac
+if (printf '%s' "${STAGNATION_FAIL_A}" | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger failure "${STAGNATION_REJECT_RUN}" "${STAGNATION_LONG_LABEL}") >/dev/null 2>&1) || \
+   (printf '%s' "${STAGNATION_FAIL_A}" | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger failure "${STAGNATION_REJECT_RUN}" "$(printf 'two\nlines')") >/dev/null 2>&1) || \
+   (printf '' | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger failure "${STAGNATION_REJECT_RUN}") >/dev/null 2>&1) || \
+   (printf '%s' "${STAGNATION_FAIL_A}" | (cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger failure missing) >/dev/null 2>&1); then
+    echo "  [FAIL] ledger failure accepted an oversized label, a multi-line label, empty input, or a missing ledger"
+    exit 1
+fi
+
+(cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger append "${STAGNATION_RUN}" ruling "the only ruling" >/dev/null)
+STAGNATION_RULINGS="$(cd "${STAGNATION_DIR}" && "${HARNESS_ROOT}/bin/harness" ledger rulings "${STAGNATION_RUN}")"
+if [ "$(printf '%s\n' "${STAGNATION_RULINGS}" | grep -c .)" -ne 1 ] || \
+   printf '%s\n' "${STAGNATION_RULINGS}" | grep -q "sig:"; then
+    echo "  [FAIL] failure lines contaminated ledger rulings output"
+    exit 1
+fi
+echo "  [PASS] failure signatures are normalized, deterministic, evidence-free, and breaker-bounded."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

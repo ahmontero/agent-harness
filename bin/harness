@@ -105,6 +105,8 @@ ${BOLD}Core Commands:${RESET}
                 harness ledger append <run_id> <kind> <text>
                 harness ledger show <run_id>
                 harness ledger rulings <run_id>
+                harness ledger signature                (failure text on stdin)
+                harness ledger failure <run_id> [label] (failure text on stdin)
 
   ${GREEN}ship${RESET}          Run pre-flight checks, build commit, and open Pull Request
                 harness ship [target_branch]

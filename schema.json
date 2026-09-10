@@ -58,6 +58,19 @@
               }
             }
           },
+          "loop": {
+            "type": "object",
+            "description": "Bounded review loop configuration",
+            "properties": {
+              "stagnationThreshold": {
+                "type": "integer",
+                "minimum": 2,
+                "default": 2,
+                "description": "Consecutive equivalent verification failures that end the bounded review loop early. Must be at least 2; a value equal to the three-round cap could never fire before the cap."
+              }
+            },
+            "additionalProperties": false
+          },
           "git": {
             "type": "object",
             "description": "Git branch configuration",

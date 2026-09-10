@@ -6,6 +6,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-09-09
+
+### Added
+- Deterministic failure signatures and a stagnation breaker for the bounded review loop. `harness ledger failure <run_id> [label]` reads a verification capture on stdin, records only its 12-character signature, and answers `continue` on exit `0` or `stagnant` on exit `3`; `harness ledger signature` exposes the same normalization on its own. Normalization scrubs ISO-8601 timestamps, absolute directory prefixes, line and column suffixes, and runs of six or more digits, so two failures differing only in that noise sign identically — including two captures of one failure taken from different checkouts.
+- `failure` as a ledger kind, and `profiles.<profile>.loop.stagnationThreshold` (default `2`, minimum `2`) in `schema.json`.
+
+### Changed
+- Phase 7 of `/harness-implement` now has a second exit. Previously the three-round cap was the only way out, so a loop that failed the same way three times spent its whole budget re-deriving one failure before it could adjudicate. It now signs every failed round and adjudicates as soon as consecutive rounds sign alike. The cap itself is unchanged, and stagnation can only end the loop earlier than the cap, never later.
+
 ## [2.1.0] - 2026-09-09
 
 ### Added

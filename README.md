@@ -186,6 +186,18 @@ harness ledger rulings "${run_id}"
 
 The ledger makes the review gate terminate. Minor findings never enter the fix loop; Critical and Important ones do, for at most three rounds. At the cap the agent must adjudicate every finding still open, either parking it with a recorded ruling or declaring it load-bearing, in which case the run ends `blocked` rather than reporting success over a known defect. Discarding a finding without a ledger line is forbidden, and `harness ledger rulings` is reproduced in full in the agent's final message.
 
+The cap is not the only exit. A loop whose verification keeps failing the same way stops early:
+
+```bash
+harness qa test 2>&1 | harness ledger failure "${run_id}" "round 2/3"
+# -> continue   (exit 0)
+# -> stagnant   (exit 3)
+```
+
+`harness ledger failure` reduces the verifier output to a 12-character signature, scrubbing the detail that changes between runs — timestamps, absolute paths, line and column numbers, and long numeric IDs — so that two failures which differ only in noise sign identically. When the run's last two signatures match, the loop is not converging and the agent goes straight to adjudication instead of spending its third round re-deriving one failure. `profiles.<profile>.loop.stagnationThreshold` raises that count; it cannot be lowered below two. `harness ledger signature` exposes the same normalization on its own, reading a capture on stdin.
+
+Only the signature is recorded. The verifier output never reaches the ledger, so the run keeps the evidence-free property that lets receipts and ledgers stay local and private.
+
 Ledgers live under `.git/agent-harness/ledgers/`, are readable only by their owner, and never leave the repository.
 
 ---
