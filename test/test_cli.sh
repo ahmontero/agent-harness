@@ -3180,4 +3180,39 @@ fi
 echo "  [PASS] worktree seed refuses a path this repository does not own."
 
 echo ""
+echo "=== 36. Testing Workflow Trigger Coverage ==="
+# Both workflows filtered pull_request to branches: [main], so a pull request targeting a
+# release branch or sitting on top of another one ran no job at all -- and GitHub renders
+# zero checks as an absence, not a failure. `gh pr checks` exits 0 on such a pull request
+# with "no checks reported", so the absence read as a pass to tooling too.
+
+# Prints the keys nested directly under one trigger in a workflow's `on:` block.
+trigger_keys() {
+    awk -v trigger="$2" '
+        /^on:/ { in_on = 1; next }
+        in_on && /^[^[:space:]]/ { in_on = 0 }
+        in_on && $0 ~ "^[[:space:]]+" trigger ":" { in_trigger = 1; next }
+        in_trigger && /^[[:space:]]{0,2}[^[:space:]]/ { in_trigger = 0 }
+        in_trigger { print }
+    ' "$1"
+}
+
+for workflow in ci compatibility; do
+    workflow_file="${HARNESS_ROOT}/.github/workflows/${workflow}.yml"
+    if [ ! -f "${workflow_file}" ]; then
+        echo "  [FAIL] Missing workflow: ${workflow_file}"
+        exit 1
+    fi
+    if trigger_keys "${workflow_file}" "pull_request" | grep -q "branches:"; then
+        echo "  [FAIL] ${workflow}.yml filters pull_request by base branch, so a pull request targeting anything else runs no check at all"
+        exit 1
+    fi
+    if ! trigger_keys "${workflow_file}" "push" | grep -q "branches:"; then
+        echo "  [FAIL] ${workflow}.yml runs on every push to every branch; only pull requests need universal coverage"
+        exit 1
+    fi
+done
+echo "  [PASS] every pull request is verified whatever it targets, and push stays scoped to the trunk."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
