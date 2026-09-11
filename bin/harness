@@ -24,7 +24,7 @@ INVOKED_NAME="$(basename "$0")"
 
 # 1. Multi-call profile resolution
 case "${INVOKED_NAME}" in
-    harness|agh|agent-harness|forge)
+    harness|agh|agent-harness)
         # Default harness binary names - do not treat as a profile alias
         ;;
     *)
@@ -127,6 +127,7 @@ ${BOLD}Core Commands:${RESET}
 
   ${GREEN}ship${RESET}          Run pre-flight checks, push the branch, and open a Pull Request
                 harness ship [target_branch] [--yes] [--dry-run]
+                ${DIM}(alias: pr)${RESET}
 
   ${GREEN}sync${RESET}          Report or repair drift in installed skill surfaces
                 harness sync [--target <path>] [--global] [--expert]
@@ -134,6 +135,15 @@ ${BOLD}Core Commands:${RESET}
 
   ${GREEN}init${RESET}          Initialize agent harness in current repository
                 harness init [--recipe <name>]
+
+  ${GREEN}completion${RESET}    Install shell autocompletion for Zsh and Bash
+                harness completion install
+
+  ${GREEN}version${RESET}       Report the installed version, checkout and revision
+                harness version
+
+  ${GREEN}upgrade${RESET}       Update the checkout and re-sync every managed surface
+                harness upgrade [--check]
 USAGE_EOF
 }
 
@@ -192,6 +202,12 @@ case "${COMMAND}" in
         ;;
     sync)
         exec "${SCRIPTS_DIR}/stack-sync.sh" "$@"
+        ;;
+    version)
+        exec "${SCRIPTS_DIR}/stack-version.sh" "$@"
+        ;;
+    upgrade)
+        exec "${SCRIPTS_DIR}/stack-upgrade.sh" "$@"
         ;;
     init)
         exec "${HARNESS_ROOT}/install.sh" --target "$(pwd)" "$@"

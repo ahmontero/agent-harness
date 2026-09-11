@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.9.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.10.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -476,6 +476,25 @@ It asks before pushing, and refuses where there is no terminal to ask on; `--yes
 human confirms in advance. An agent must not pass it on its own initiative. `ship` creates
 no commits. If the push succeeds but no pull request is opened, it exits non-zero and says
 which half happened rather than reporting a completed ship.
+
+### 📌 Which version is installed, and upgrading
+
+```bash
+harness version          # the version, the checkout it runs from, and that checkout's revision
+harness upgrade --check  # report currency and surface drift; changes nothing
+harness upgrade          # fast-forward the checkout, then re-sync every managed surface
+```
+
+Every surface manifest records a version and `harness sync` compares against it, so being
+able to ask which version is actually installed is part of that model rather than a
+convenience. `harness version` also names the checkout, because a CLI symlink can point
+anywhere, and its revision, because a released version and a working checkout on the same
+version number are not the same thing.
+
+`harness upgrade` refuses a checkout that is not a Git clone, one with a detached `HEAD`,
+one tracking no upstream, and one with uncommitted changes to tracked files. It
+fast-forwards only. `--check` is a report rather than a gate: it names whatever it could
+not determine and still exits `0`. The gate for surface currency is `harness sync --check`.
 
 ### 🐚 Shell Autocompletion (Zsh & Bash)
 
