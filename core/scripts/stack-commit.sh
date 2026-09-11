@@ -30,6 +30,12 @@ case "${ACTION}" in
             exit 1
         fi
 
+        if git diff --cached --quiet 2>/dev/null; then
+            log_error "Nothing is staged, so there is no commit to build."
+            log_info "Stage the change with 'git add' first."
+            exit 1
+        fi
+
         BRANCH="$(get_current_branch "${REPO_DIR}")"
         # Extract issue key from branch if present (e.g. feat/PROJ-123-slug -> PROJ-123).
         # A key is an uppercase prefix, a hyphen, then digits not followed by a dot, so a
@@ -57,7 +63,9 @@ case "${ACTION}" in
         if echo "${RAW_MSG}" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_-]+\))?: .+'; then
             log_success "Commit message conforms to Conventional Commits standard."
         else
-            log_warn "Commit message does not strictly conform to Conventional Commits."
+            log_error "Commit message does not conform to Conventional Commits: ${RAW_MSG}"
+            log_info "Expected '<type>(<scope>): <description>' with type one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert."
+            exit 1
         fi
         ;;
     *)

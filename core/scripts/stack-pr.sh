@@ -25,8 +25,14 @@ CURRENT_BRANCH="$(get_current_branch "${REPO_DIR}")"
 log_info "Running pre-flight QA checks before opening PR..."
 "${SCRIPT_DIR}/stack-qa.sh" all
 
+# A failed push used to degrade to a warning, and the pull request was opened anyway --
+# for a branch that was never pushed. A rejected non-fast-forward, a missing remote, and an
+# expired credential all arrive here, and none of them is a branch that is up to date.
 log_info "Pushing branch ${BOLD}${CURRENT_BRANCH}${RESET} to origin..."
-git push -u origin "${CURRENT_BRANCH}" 2>/dev/null || log_warn "Push skipped or branch already up to date."
+if ! git push -u origin "${CURRENT_BRANCH}"; then
+    log_error "Push failed, so no pull request was opened. Resolve the push and re-run 'harness ship'."
+    exit 1
+fi
 
 case "${CI_PROVIDER}" in
     github|github-actions)

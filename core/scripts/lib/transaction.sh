@@ -15,6 +15,10 @@ INSTALL_TRANSACTION_ACTIVE=false
 INSTALL_TRANSACTION_DIR=""
 INSTALL_TRANSACTION_SEQUENCE=0
 INSTALL_TRANSACTION_PREVIOUS_ERR_TRAP=""
+# Each journal holds a full backup of every file its installation replaced, and nothing
+# removed one, so a long-lived machine accumulated every installation it had ever run.
+# Only the newest is reachable by --rollback; the rest are history with a disk cost.
+INSTALL_TRANSACTION_RETAIN=10
 
 transaction_state_root() {
     if [ -n "${HARNESS_STATE_DIR:-}" ]; then
@@ -179,6 +183,35 @@ transaction_remove_tree() {
     transaction_maybe_inject_failure
 }
 
+# Keeps the newest INSTALL_TRANSACTION_RETAIN journals. The directory names begin with a
+# UTC timestamp, so a lexical sort is a chronological one. The journal the latest pointer
+# names is never pruned, whatever its age: it is the one --rollback can still undo.
+transaction_prune() {
+    local state_root latest_target journal
+    local journals=()
+    local total excess index=0
+    state_root="$(transaction_state_root)"
+    [ -d "${state_root}/transactions" ] || return 0
+
+    latest_target=""
+    [ -f "${state_root}/latest" ] && latest_target="$(<"${state_root}/latest")"
+
+    while IFS= read -r journal; do
+        [ -n "${journal}" ] && journals+=("${journal}")
+    done < <(find "${state_root}/transactions" -mindepth 1 -maxdepth 1 -type d | LC_ALL=C sort)
+
+    total=${#journals[@]}
+    excess=$(( total - INSTALL_TRANSACTION_RETAIN ))
+    [ "${excess}" -gt 0 ] || return 0
+
+    while [ "${index}" -lt "${excess}" ]; do
+        if [ "${journals[${index}]}" != "${latest_target}" ]; then
+            rm -rf "${journals[${index}]}"
+        fi
+        index=$((index + 1))
+    done
+}
+
 transaction_restore_operation() {
     local operation_dir="$1"
     local path=""
@@ -282,6 +315,7 @@ transaction_commit() {
         printf '%s\n' no-op > "${INSTALL_TRANSACTION_DIR}/status"
         INSTALL_TRANSACTION_ACTIVE=false
         transaction_restore_previous_err_trap
+        transaction_prune
         return 0
     fi
     printf '%s\n' committed > "${INSTALL_TRANSACTION_DIR}/status"
@@ -291,6 +325,7 @@ transaction_commit() {
     mv "${latest_tmp}" "${state_root}/latest"
     INSTALL_TRANSACTION_ACTIVE=false
     transaction_restore_previous_err_trap
+    transaction_prune
 }
 
 transaction_rollback_last() {

@@ -23,13 +23,14 @@ cd "${REPO_DIR}"
 
 case "${ACTION}" in
     create)
-        TYPE="${1:-feat}"
-        RAW_KEY="${2:-}"
-        SLUG="${3:-}"
-        BASE_BRANCH="${4:-$(get_trunk_branch "${REPO_DIR}")}"
+        parse_create_arguments "$@"
+        TYPE="${CREATE_TYPE:-feat}"
+        RAW_KEY="${CREATE_KEY}"
+        SLUG="${CREATE_SLUG}"
+        BASE_BRANCH="${CREATE_BASE:-$(get_trunk_branch "${REPO_DIR}")}"
 
         if [ -z "${RAW_KEY}" ] || [ -z "${SLUG}" ]; then
-            log_error "Usage: harness branch create <feat|fix|chore|spike> <issue_key> <slug> [base_branch]"
+            log_error "Usage: harness branch create <feat|fix|chore|spike> <issue_key> <slug> [--base <branch>]"
             exit 1
         fi
 

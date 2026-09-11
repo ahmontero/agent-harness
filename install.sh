@@ -70,6 +70,7 @@ ${BOLD}Usage:${RESET}
   ./setup --verify            # Verify installation health, script syntax & skill frontmatter
   ./setup --sync-only         # Re-sync skills and rules across harnesses
   ./setup --rollback          # Undo the last committed installation
+  ./setup --yes               # Confirm the guided installation without a prompt
 
 ${BOLD}Examples:${RESET}
   ./setup --target ~/projects/my-saas
@@ -88,10 +89,7 @@ SYNC_TARGET=""
 GUIDED_MODE=false
 ROLLBACK_MODE=false
 SKILL_MODE="curated"
-
-if [ $# -eq 0 ]; then
-    GUIDED_MODE=true
-fi
+ASSUME_YES=false
 
 while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -105,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --sync-target) SYNC_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
+        --yes|-y) ASSUME_YES=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
@@ -115,7 +114,8 @@ if [ "${ROLLBACK_MODE}" = true ]; then
     if [ -n "${TARGET_REPO}" ] || [ "${INSTALL_GLOBAL}" = true ] || [ "${CLI_ONLY}" = true ] || \
        [ "${SYNC_ONLY}" = true ] || [ "${VERIFY_MODE}" = true ] || [ -n "${RECIPE_NAME}" ] || \
        [ -n "${SYNC_TARGET}" ] || \
-       [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ]; then
+       [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ] || \
+       [ "${ASSUME_YES}" = true ]; then
         log_error "--rollback cannot be combined with installation options."
         exit 1
     fi
@@ -166,12 +166,62 @@ if [ "${VERIFY_MODE}" = true ]; then
     exit 0
 fi
 
+# Guided is the default scope, as the usage text says: a run that named no scope -- no
+# arguments at all, or only modifiers such as --yes, --expert, or --recipe -- is a guided
+# installation. Keying it on `$# -eq 0` instead meant `./setup --yes` selected no action
+# and still printed "Setup complete!", which is the failure shape this delta exists to remove.
+if [ "${GUIDED_MODE}" = false ] && [ -z "${TARGET_REPO}" ] && [ -z "${SYNC_TARGET}" ] && \
+   [ "${INSTALL_GLOBAL}" = false ] && [ "${CLI_ONLY}" = false ] && [ "${SYNC_ONLY}" = false ]; then
+    GUIDED_MODE=true
+fi
+
+# ./setup is advertised as a guided interactive installer and asked nothing, so running it
+# from $HOME installed AGENTS.md, a CLAUDE.md and GEMINI.md symlink, stack.config.json,
+# rules/, and four skill surfaces into the home directory. It now names both destinations
+# and waits. With no terminal it refuses rather than hanging or assuming consent, so a
+# scripted or agent invocation has to choose a scope explicitly.
+require_guided_confirmation() {
+    local answer=""
+
+    if ! git -C "$(pwd)" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        log_error "$(pwd) is not a Git repository, and every workflow the installed surface describes needs one."
+        log_info "Run 'git init' first, or install elsewhere with --target <path>, or install only the global surfaces with --global."
+        return 1
+    fi
+
+    log_info "Guided installation will write to:"
+    log_info "  the global skill surfaces under ${HOME}"
+    log_info "  this repository: $(pwd)"
+
+    [ "${ASSUME_YES}" = true ] && return 0
+
+    if [ ! -t 0 ]; then
+        log_error "Guided installation needs a confirmation and there is no terminal to ask on; nothing was written."
+        log_info "Re-run with --yes to confirm, or choose a scope explicitly: --global for the surfaces alone, --target <path> for one repository."
+        return 1
+    fi
+
+    printf 'Proceed? [y/N] '
+    read -r answer
+    case "${answer}" in
+        [yY]|[yY][eE][sS]) return 0 ;;
+    esac
+    log_error "Guided installation cancelled; nothing was written."
+    return 1
+}
+
+if [ "${GUIDED_MODE}" = true ]; then
+    print_banner
+    echo ""
+    require_guided_confirmation || exit 1
+fi
+
 # Ensure executable permissions
 find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" -type f \( -name "*.sh" -o -name "harness" \) -exec chmod +x {} + 2>/dev/null || true
 chmod +x "${HARNESS_ROOT}/install.sh" "${HARNESS_ROOT}/setup" 2>/dev/null || true
 
 SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
-MANAGED_MARKER="agent-harness-skill-bundle-v1"
+MANAGED_MARKER="${SURFACE_MANAGED_MARKER}"
 SKILL_NAMESPACE=""
 
 # Manifest name, schema, and the digest functions live in lib/surface.sh, shared with the
@@ -249,17 +299,42 @@ require_skill_catalog() {
     done < <(jq -r '(.runtimes // {}) | to_entries[] | .value[]' "${SKILL_CATALOG}")
 }
 
+# Removes an entry only if agent-harness installed it. The symlink test is shared with the
+# drift check in lib/surface.sh and matches any checkout's core/skills, not just this one:
+# pinning it to ${HARNESS_ROOT} meant a surface installed from a second checkout could
+# never be repaired from anywhere else.
 remove_managed_skill() {
     local skill_path="$1"
 
+    surface_entry_is_managed "${skill_path}" || return 0
+
     if [ -L "${skill_path}" ]; then
-        case "$(readlink "${skill_path}")" in
-            "${HARNESS_ROOT}/core/skills/"*) transaction_unlink "${skill_path}" ;;
-        esac
-    elif [ -d "${skill_path}" ] && [ -f "${skill_path}/.agent-harness-managed" ] && \
-         grep -qx "${MANAGED_MARKER}" "${skill_path}/.agent-harness-managed"; then
+        transaction_unlink "${skill_path}"
+    else
         transaction_remove_tree "${skill_path}"
     fi
+}
+
+# Removes every managed skill this runtime and mode no longer publishes, by name. Repair
+# means the surface ends up as the catalog describes it; a stale skill left competing with
+# its namespaced replacement in an agent's skill list is the failure the manifest exists
+# to prevent.
+prune_unpublished_managed_skills() {
+    local destination="$1"
+    local runtime="$2"
+    local expected entry name
+    expected="$(surface_expected_entries "${runtime}" "${SKILL_MODE}" | cut -f1 | LC_ALL=C sort)"
+
+    for entry in "${destination}"/*; do
+        [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+        name="$(basename "${entry}")"
+        [ "${name}" = "${SURFACE_MANIFEST_NAME}" ] && continue
+        surface_entry_is_managed "${entry}" || continue
+        if ! printf '%s\n' "${expected}" | grep -qxF "${name}"; then
+            log_warn "Removing ${name}: a managed skill this surface no longer publishes."
+            remove_managed_skill "${entry}"
+        fi
+    done
 }
 
 workflow_allowed_for_runtime() {
@@ -315,6 +390,10 @@ install_skill_surface() {
     require_skill_catalog
     SURFACE_ENTRIES=()
     HARNESS_VERSION="$(surface_harness_version)"
+
+    # Pruning comes first so that a skill this surface no longer publishes is reported by
+    # name rather than disappearing inside the reinstall loop below.
+    prune_unpublished_managed_skills "${destination}" "${runtime}"
 
     while IFS= read -r skill; do
         remove_managed_skill "${destination}/${skill}"
@@ -404,8 +483,20 @@ install_target_repo() {
 
     log_info "Installing agent-harness into target repository: ${BOLD}${target}${RESET}..."
 
+    if ! git -C "${target}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+        log_warn "${target} is not a Git repository; branch, worktree, spec, receipt, ledger, and scan commands will not work there until it is one."
+    fi
+
+    # An unknown recipe used to be tested with [ -d ... ] and skipped in silence, so a
+    # typo installed no recipe at all and the run still reported success.
+    if [ -n "${recipe}" ] && [ ! -d "${HARNESS_ROOT}/recipes/${recipe}" ]; then
+        log_error "Unknown recipe: ${recipe}"
+        log_info "Available recipes: $(find "${HARNESS_ROOT}/recipes" -mindepth 1 -maxdepth 1 -type d -exec basename {} \; | LC_ALL=C sort | tr '\n' ' ')"
+        return 1
+    fi
+
     # Apply recipe if specified
-    if [ -n "${recipe}" ] && [ -d "${HARNESS_ROOT}/recipes/${recipe}" ]; then
+    if [ -n "${recipe}" ]; then
         log_info "Applying recipe: ${BOLD}${recipe}${RESET}..."
         if [ ! -f "${target}/stack.config.json" ]; then
             transaction_copy "${HARNESS_ROOT}/recipes/${recipe}/stack.config.json" "${target}/stack.config.json"
@@ -581,8 +672,6 @@ elif [ -n "${TARGET_REPO}" ]; then
 elif [ "${INSTALL_GLOBAL}" = true ]; then
     install_global
 elif [ "${GUIDED_MODE}" = true ]; then
-    print_banner
-    echo ""
     log_info "Guided Setup Mode"
     install_global
     install_target_repo "$(pwd)" "${RECIPE_NAME}"

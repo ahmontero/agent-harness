@@ -24,8 +24,6 @@ while [[ $# -gt 0 ]]; do
             shift
             ;;
         --check-auth)
-            # defer: --check-auth is advertised but inert; no check reads CHECK_AUTH yet.
-            # shellcheck disable=SC2034 # kept until the deferred auth check above is implemented
             CHECK_AUTH=true
             shift
             ;;
@@ -70,8 +68,7 @@ log_info "--- 1. System & CLI Tooling ---"
 check_cmd "git" "true"
 check_cmd "jq" "true"
 check_cmd "gh" "false"
-check_cmd "curl" "true"
-check_cmd "ollama" "false"
+check_cmd "curl" "false"
 
 echo ""
 log_info "--- 2. Agent Harnesses Detection ---"
@@ -152,6 +149,108 @@ else
     else
         log_info "Run 'harness sync' to bring them up to date, or 'harness sync --check' for the report alone."
     fi
+fi
+
+echo ""
+log_info "--- 5. CLI Installation ---"
+# core/skills/doctor/SKILL.md has always claimed doctor diagnoses broken harness symlinks.
+# It did not look at them, so a CLI pointing at a checkout that had since moved reported a
+# healthy environment right up to the next command that failed.
+BIN_DIR="${HOME}/.local/bin"
+EXPECTED_CLI="$(get_harness_root)/bin/harness"
+for cli_name in harness agh agent-harness; do
+    cli_path="${BIN_DIR}/${cli_name}"
+    if [ -L "${cli_path}" ]; then
+        cli_target="$(readlink "${cli_path}")"
+        if [ "${cli_target}" = "${EXPECTED_CLI}" ]; then
+            log_success "CLI linked: ${cli_path}"
+        elif [ -e "${cli_path}" ]; then
+            log_warn "CLI ${cli_path} points at ${cli_target}, not this checkout (${EXPECTED_CLI})."
+            WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        else
+            log_error "CLI ${cli_path} is a broken symlink to ${cli_target}."
+            ERRORS_FOUND=$((ERRORS_FOUND + 1))
+        fi
+    elif [ -e "${cli_path}" ]; then
+        log_warn "CLI ${cli_path} exists but is not a symlink; agent-harness will not manage it."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    else
+        log_warn "CLI not installed: ${cli_path}. Run './setup --cli-only' to link it."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    fi
+done
+case ":${PATH}:" in
+    *":${BIN_DIR}:"*) log_success "On PATH: ${BIN_DIR}" ;;
+    *)
+        log_warn "${BIN_DIR} is not on PATH, so the linked CLI cannot be invoked by name."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        ;;
+esac
+
+echo ""
+log_info "--- 6. Pre-Commit Hook ---"
+HOOKS_DIR="$(resolve_hooks_dir "${REPO_DIR}" 2>/dev/null || true)"
+if [ -z "${HOOKS_DIR}" ]; then
+    log_warn "Hook state unavailable: ${REPO_DIR} is not a Git repository."
+    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+elif [ ! -e "${HOOKS_DIR}/pre-commit" ]; then
+    log_warn "There is no agent-harness pre-commit hook in ${HOOKS_DIR}. Run 'harness scan --install-hook'."
+    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+elif grep -qxF "${HARNESS_PRE_COMMIT_MARKER}" "${HOOKS_DIR}/pre-commit" 2>/dev/null; then
+    log_success "Landmine pre-commit hook installed: ${HOOKS_DIR}/pre-commit"
+else
+    log_warn "A pre-commit hook exists that was not written by agent-harness: ${HOOKS_DIR}/pre-commit"
+    log_info "Add 'harness scan --staged || exit 1' to it, or replace it with 'harness scan --install-hook --force'."
+    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+fi
+
+echo ""
+log_info "--- 7. Configuration ---"
+CONFIG_REPORT_STATUS=0
+CONFIG_REPORT="$("${SCRIPT_DIR}/stack-config.sh" validate 2>&1)" || CONFIG_REPORT_STATUS=$?
+printf '%s\n' "${CONFIG_REPORT}" | sed 's/^/  /'
+if [ "${CONFIG_REPORT_STATUS}" -ne 0 ]; then
+    log_error "The resolved configuration did not validate."
+    ERRORS_FOUND=$((ERRORS_FOUND + 1))
+fi
+
+if [ "${CHECK_AUTH}" = true ]; then
+    echo ""
+    log_info "--- 8. Provider Authentication ---"
+    # One shape for every provider that has a CLI: the tool, and the command that says
+    # whether it is signed in. Adding a provider is a row, not a branch.
+    report_provider_auth() {
+        local label="$1"
+        local provider="$2"
+        local cli=""
+
+        case "${provider}" in
+            github) cli="gh" ;;
+            gitlab) cli="glab" ;;
+            standalone)
+                log_info "${label} provider is standalone; there is nothing to authenticate."
+                return 0
+                ;;
+            *)
+                log_warn "${label} provider '${provider}' has no authentication check, so its state is unknown."
+                WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+                return 0
+                ;;
+        esac
+
+        if ! command -v "${cli}" >/dev/null 2>&1; then
+            log_warn "${label} provider is ${provider} but the '${cli}' CLI is not installed."
+            WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        elif "${cli}" auth status >/dev/null 2>&1; then
+            log_success "${label} provider ${provider}: authenticated."
+        else
+            log_warn "${label} provider ${provider}: not authenticated. Run '${cli} auth login'."
+            WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        fi
+    }
+
+    report_provider_auth "Issue tracker" "$(get_profile_value "issueTracker.provider" "standalone")"
+    report_provider_auth "CI" "$(get_profile_value "ci.provider" "standalone")"
 fi
 
 echo ""

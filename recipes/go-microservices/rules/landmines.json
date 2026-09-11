@@ -1,0 +1,64 @@
+[
+  {
+    "id": "SEC-001",
+    "name": "Hardcoded credential",
+    "pattern": "(apiKey|secretKey|authToken|password|token)[[:space:]]*:?=[[:space:]]*\"[A-Za-z0-9_/+=-]{16,}\"",
+    "fileExtensions": [
+      ".go"
+    ],
+    "level": "error",
+    "message": "Read credentials from the environment or a secret manager, never from a literal."
+  },
+  {
+    "id": "SEC-002",
+    "name": "Interpolated SQL",
+    "pattern": "(Query|QueryRow|Exec)(Context)?\\([^)]*fmt[.]Sprintf\\(",
+    "fileExtensions": [
+      ".go"
+    ],
+    "level": "error",
+    "message": "Pass query arguments as parameters; Sprintf into SQL is an injection."
+  },
+  {
+    "id": "GO-001",
+    "name": "Panic in library code",
+    "pattern": "^[[:space:]]*panic\\(",
+    "fileExtensions": [
+      ".go"
+    ],
+    "excludePaths": [
+      "*_test.go",
+      "cmd/*"
+    ],
+    "level": "warning",
+    "message": "Return an error and let the caller decide; a panic takes the whole process down."
+  },
+  {
+    "id": "GO-002",
+    "name": "Discarded context",
+    "pattern": "context[.](TODO|Background)\\(\\)",
+    "fileExtensions": [
+      ".go"
+    ],
+    "excludePaths": [
+      "*_test.go",
+      "main.go",
+      "cmd/*"
+    ],
+    "level": "warning",
+    "message": "Propagate the caller's context so cancellation and deadlines survive the call."
+  },
+  {
+    "id": "SEC-003",
+    "name": "Secret material committed by path",
+    "pathPattern": "(^|/)([.]env([.][^/]+)?|[^/]+[.](pem|key|pfx|p12|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519))$",
+    "excludePaths": [
+      "*.example",
+      "*.sample",
+      "*.template",
+      "*.dist"
+    ],
+    "level": "error",
+    "message": "Environment files and key material belong in a secret manager, never in Git. Remove it from the index and rotate the credential."
+  }
+]

@@ -6,6 +6,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.5.0] - 2026-09-11
+
+An audit of the installed harness found twenty-six defects, and almost every one was the
+same shape: the harness stated something it had not verified. This release closes all of
+them. Two can turn a previously green run red, and both are corrections rather than
+regressions — read them first.
+
+> **Upgrade note 1 — the lint and type gates now fail closed.** Their unconfigured defaults
+> ended in `|| echo 'No linter configured'`, so a repository with neither `ruff` nor
+> `npm run lint` passed both gates and `harness qa all` printed "All required QA gates
+> passed" having checked nothing. A gate with nothing configured for it now reports that it
+> **could not run** and exits non-zero. Set `qa.lintCommand` and `qa.typeCheckCommand`, or
+> set either to `false` to record that the project has none — that gate then reports as
+> *declared absent* and does not fail the suite.
+
+> **Upgrade note 2 — `config.example.json` is no longer a configuration fallback.** A
+> repository with no configuration of its own resolved to the example shipped in this
+> repository, silently adopting its fictional `backend` profile, its `pytest`/`ruff`/`mypy`
+> commands, and its `targetRepoPath` of `~/projects/backend-api`. An unconfigured repository
+> now resolves to the built-in defaults under the profile name `default`. If your project
+> was relying on the example, copy it to `harness.config.json` and edit it.
+
+### Added
+- `harness config validate` reports the configuration file that was resolved, the active profile and how it was chosen, and every structural problem it can determine by walking `schema.json`: invalid JSON, a key whose type the schema contradicts, a key the schema does not describe, a `defaultProfile` naming no profile, and a `targetRepoPath` that does not exist. It is a structural walk rather than a JSON Schema engine, and it prints which checks it did not perform.
+- `harness doctor` performs the three checks `core/skills/doctor/SKILL.md` has always claimed for it and never did: whether the `~/.local/bin` CLI symlinks resolve to this checkout and their directory is on `PATH`; whether the repository's `pre-commit` hook is agent-harness's own, a foreign hook, or absent; and whether the resolved configuration validates. A configuration that does not validate is an error, not a warning.
+- `harness doctor --check-auth` reports whether the configured issue and CI provider CLIs are authenticated. It was advertised, parsed, assigned to a variable no check read, and marked in the source with its own `# defer:` marker.
+- `harness receipt list`, `harness receipt show <run_id>`, and `harness receipt prune [--keep <count>]`. The receipt command has been write-only since AH-3: it produced an observability record the user it was produced for could not read back, and nothing ever removed one. An open receipt is never pruned — an abandoned run is a finding, not litter.
+- Scanner rules may match a repository-relative **path** through `pathPattern` instead of content through `pattern`, exactly one of the two. The scanner previously had no way to express a forbidden *filename*, so it could not block `.env`, `*.pem`, `*.key`, or a committed agent directory — the first thing a pre-commit gate is installed to stop. `SEC-003` ships in `rules/landmines.json`, in the template, and in every recipe.
+- `excludePaths` glob lists scope a rule without switching it off, and `harness-ignore: <RULE-ID>` on the matching line or the line above exempts one finding for one rule. Without an escape hatch the only way past a false positive was `--no-verify`, which retires the whole gate rather than one line.
+- Every recipe now ships the `rules/landmines.json` its `stack.config.json` has always declared. All three declared `./rules/landmines.json` and none provided one, so a TypeScript or Go project initialized from a recipe inherited the Python template's `.objects.all()` and `cursor.execute(f"` rules and was scanned for defects it could not have.
+- `harness completion install` writes a Bash completion alongside the Zsh one. The README has advertised "Shell Autocompletion (Zsh & Bash)" since the command existed while only the Zsh file was ever written, and the Zsh command list had drifted behind the dispatcher.
+- `harness worktree remove --dry-run`, and `--force` as the explicit way to discard uncommitted work.
+- `./setup --yes` confirms a guided installation without a prompt, for scripted and agent invocations.
+- `core/scripts/lib/specs.sh` and `core/scripts/lib/debt.sh`, so that "which delta specs are active" and "where are the debt markers" each have one implementation shared by the command that reports them and the command a human would run to check.
+
+### Fixed
+- `harness context` reported twelve active delta specs in a repository whose active count was zero: it recursed into `specs/archive/` while `harness spec status` correctly did not. Both now read the same helper.
+- `harness context` reported `0` technical debt markers because `ripgrep` was absent, not because the markers were. It called `rg` with no fallback while `harness debt` fell back to `grep` and found ten in the same tree. Both now scan tracked files through `git grep`, which also removes the divergence between `ripgrep` honouring `.gitignore` and `grep -r` not. A scan that cannot complete reports `null`, never zero — and an unreadable file is detected on stderr, because `git grep` reports one as a diagnostic and still exits with its code for "no match".
+- `harness context --json` is emitted by `jq`. Assembled by a heredoc, a quote or backslash anywhere in a repository path, branch, or profile name produced a document no consumer could parse.
+- `harness worktree remove <key>` interpolated the key into `grep` as an unanchored pattern and passed `--force` to every match. In the reproduction `harness worktree remove wt-AH` removed both `wt-AH-1` and `wt-AH-2` and destroyed an unsaved file, with no prompt and nothing to recover it from. It now matches an exact path, directory name, or branch issue segment, names every match before removing anything, refuses an ambiguous key, and refuses to discard uncommitted work without `--force`.
+- `harness ship` ran `git push … 2>/dev/null || log_warn "Push skipped or branch already up to date."`, turning a rejected non-fast-forward, a missing remote, and an expired credential into a warning before opening a pull request for a branch that was never pushed. A failed push now aborts before the pull request step and reports git's own stderr.
+- `harness scan` exited `0` and printed "passed with 0 errors" when `jq` was unusable, skipping the rule loop entirely. Recorded as a deferred open question in AH-9; it now fails closed.
+- `harness commit check` could only ever warn, so a subcommand named `check` could not be used as a gate. It now exits non-zero on a message that does not conform.
+- `harness commit build` refuses to commit when nothing is staged, instead of printing a success-shaped "Generated commit message" line and then surfacing git's own error. The unanchored issue-key pattern this delta also carried a fix for was landed first as AH-12 in 2.4.2; that implementation is the one kept, and this delta's test for a lowercase slug carrying a digit (`feat/add-2fa-support`) is kept alongside AH-12's group.
+- `harness sync --check` and `harness doctor` called a surface `current` while it published skills no manifest recorded. In the audited installation fourteen obsolete skills — including `ship`, which the catalog marks removed — were published into `~/.claude/skills` from a second checkout, and were unreachable to repair as well: `remove_managed_skill` matched only symlinks under the current `HARNESS_ROOT`, so no later run from any other checkout could clean them up. Managed entries are now recognized by shape, reported as drift when unrecorded, and removed by name by `harness sync`. Skills agent-harness does not manage are still left exactly where they are.
+- `--base <branch>` is parsed by `harness branch create` and `harness worktree create`. Both advertised it and read the base from the fourth positional argument, so `--base` reached `git checkout -b` as a revision and printed git's usage text instead of creating anything. The fourth positional form still works.
+- `--module <name>` is parsed by `harness spec create`. It records the module inside the spec, which `harness spec archive` reads back, rather than moving the file out of `specs/` where "active" is defined.
+- `harness spec create` rejects an issue key or slug containing a path separator or a `..` segment. `harness spec create AH-1 a/b` reached `sed` and failed with a raw redirection error naming a path outside `specs/`.
+- `harness debt --all` is parsed and means "include untracked files"; it was advertised and dropped. `harness debt --json` emits a single array of `{file, line, text}` — it previously emitted either a human log line or `ripgrep`'s JSON-Lines stream, neither of which any consumer could parse, and both `/harness-implement` and `/harness-fix` instruct agents to call it. The marker pattern now also recognizes `//` comments, so the TypeScript and Go recipes can carry markers at all.
+- `harness spec status --json` emits the active delta specs as a JSON array; the flag was advertised in the dispatcher help and dropped with every other argument, so the JSON form printed the human listing. `resolve_spec_path` now shares the same definition of "active" as `spec status` and `context`.
+- The dispatcher help lists `orchestrate` among the workflows `harness receipt start` accepts. It has accepted it since AH-7 and the help named only three.
+- `harness init --recipe <unknown>` exits non-zero and names the available recipes. It tested `[ -d recipes/<name> ]`, installed no recipe, and reported success.
+- `harness --profile` with no value exits non-zero naming the missing argument. It ran `shift 2` with one argument remaining, which under `set -e` exited `0` having done nothing.
+- `./setup` is advertised as a guided interactive installer and asked nothing. Run from `$HOME` it installed `AGENTS.md`, a `CLAUDE.md` and `GEMINI.md` symlink, `stack.config.json`, `rules/`, and four skill surfaces into the home directory. It now names both destinations and waits; with no terminal it refuses and names `--yes`, `--global`, and `--target` rather than assuming consent. It also refuses a directory that is not a Git repository, which every workflow the installed surface describes requires. An explicit `--target` is a deliberate choice and is reported rather than refused.
+- `./setup --yes` (or any run naming only modifiers) selected no action at all and still printed "Setup complete!". Guided is now the default scope, as the usage text always said.
+- `get_profile_value` returned the caller's default for any value configured as `false`: jq's `//` treats `false` as empty, so nothing could be switched off by configuration. It now selects the first key that is *present*.
+- `lib/config.sh` and `stack-scan.sh` passed configuration values to `eval`, so a configuration file containing a command substitution executed it. A leading `~` is expanded by parameter substitution instead.
+- `test/test_cli.sh` no longer rewrites the developer's own global skill surfaces. Its doctor group ran `harness doctor --fix` without isolating `HOME`, and `doctor --fix` repairs both the scopes doctor reports on -- one of which is derived from `$HOME` -- so running the suite synchronized the real `~/.claude`, `~/.gemini`, `~/.codex`, and `~/.agents` surfaces. `HOME` is now isolated for that group, and the two-scope repair is asserted inside the isolated home rather than assumed.
+- Committed transaction journals are pruned to the ten most recent. Each holds a full backup of every file its installation replaced and nothing ever removed one; the journal `--rollback` can still undo is never pruned.
+
+### Removed
+- `core/scripts/lib/ai-client.sh`, and the `localAI` block from `schema.json` and `config.example.json`. The library was sourced by nothing, so it had never run, and its configuration lived at the schema's top level while `get_profile_value` only reads `.profiles[…]` and `.project` — it could not have been enabled even by a user who tried. `harness doctor` no longer probes for `ollama` and no longer treats `curl` as required, since no reachable code path used it.
+
 ## [2.4.2] - 2026-09-11
 
 ### Fixed

@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
 source "${SCRIPT_DIR}/lib/issues.sh"
+source "${SCRIPT_DIR}/lib/specs.sh"
 
 ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
@@ -19,6 +20,24 @@ ensure_git_repo "${REPO_DIR}"
 SPECS_DIR="${REPO_DIR}/specs"
 ACTION="${1:-status}"
 shift || true
+
+# Both the issue key and the slug become part of a filename, and neither may leave specs/.
+# `harness spec create AH-1 a/b` used to reach sed and fail with a raw redirection error
+# naming a path outside the directory the command is about.
+require_safe_spec_token() {
+    local label="$1"
+    local value="$2"
+    if ! [[ "${value}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+        log_error "Unsafe ${label} '${value}'. Use letters, numbers, dots, dashes, or underscores, starting with a letter or number."
+        return 1
+    fi
+    case "${value}" in
+        *..*)
+            log_error "Unsafe ${label} '${value}'. A '..' segment would leave the specs directory."
+            return 1
+            ;;
+    esac
+}
 
 resolve_spec_path() {
     local requested="${1:-}"
@@ -35,7 +54,7 @@ resolve_spec_path() {
     if [ -d "${SPECS_DIR}" ]; then
         while IFS= read -r candidate; do
             candidates+=("${candidate}")
-        done < <(find "${SPECS_DIR}" -maxdepth 1 -type f -name "delta-*.md" | sort)
+        done < <(active_delta_specs "${SPECS_DIR}")
     fi
 
     if [ ${#candidates[@]} -eq 0 ]; then
@@ -87,21 +106,65 @@ verify_spec_file() {
 
 case "${ACTION}" in
     status)
+        STATUS_JSON=false
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --json) STATUS_JSON=true; shift ;;
+                *) log_error "Unknown spec status option: $1"; exit 1 ;;
+            esac
+        done
+
+        if [ "${STATUS_JSON}" = true ]; then
+            # The flag was advertised in the dispatcher help and dropped with every other
+            # argument, so the JSON form printed the human listing.
+            active_delta_specs "${SPECS_DIR}" | jq -R -s 'split("\n") | map(select(length > 0))'
+            exit 0
+        fi
+
         log_info "Listing Active Delta Specs in ${SPECS_DIR}..."
         if [ ! -d "${SPECS_DIR}" ]; then
             log_info "No specs directory found. Run 'harness spec create <issue> <slug>' to create one."
             exit 0
         fi
-        find "${SPECS_DIR}" -maxdepth 1 -type f -name "delta-*.md" 2>/dev/null | sort || log_info "No active delta specs."
+        active_delta_specs "${SPECS_DIR}" || log_info "No active delta specs."
         ;;
     create)
-        RAW_KEY="${1:-}"
-        SLUG="${2:-}"
+        RAW_KEY=""
+        SLUG=""
+        MODULE=""
+        CREATE_POSITIONAL=()
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --module)
+                    if [ -z "${2:-}" ]; then
+                        log_error "--module requires a name."
+                        exit 1
+                    fi
+                    MODULE="$2"
+                    shift 2
+                    ;;
+                -*)
+                    log_error "Unknown spec create option: $1"
+                    exit 1
+                    ;;
+                *)
+                    CREATE_POSITIONAL+=("$1")
+                    shift
+                    ;;
+            esac
+        done
+        RAW_KEY="${CREATE_POSITIONAL[0]:-}"
+        SLUG="${CREATE_POSITIONAL[1]:-}"
+
         if [ -z "${RAW_KEY}" ] || [ -z "${SLUG}" ]; then
             log_error "Usage: harness spec create <issue_key> <slug> [--module <name>]"
             exit 1
         fi
         ISSUE_KEY="$(normalize_issue_key "${RAW_KEY}")"
+        require_safe_spec_token "issue key" "${ISSUE_KEY}"
+        require_safe_spec_token "slug" "${SLUG}"
+        [ -z "${MODULE}" ] || require_safe_spec_token "module name" "${MODULE}"
+
         mkdir -p "${SPECS_DIR}"
         SPEC_FILE="${SPECS_DIR}/delta-${ISSUE_KEY}-${SLUG}.md"
         TEMPLATE="$(get_harness_root)/core/templates/delta-spec-template.md"
@@ -117,6 +180,14 @@ case "${ACTION}" in
 ## 4. Verification & QA
 SPEC_EOF
         fi
+        if [ -n "${MODULE}" ]; then
+            SPEC_TEMP="$(mktemp "${SPEC_FILE}.harness.XXXXXX")"
+            awk -v module="${MODULE}" '
+                { print }
+                /^- \*\*Issue \/ Ticket:\*\*/ && !done { printf "- **Module:** %s\n", module; done = 1 }
+            ' "${SPEC_FILE}" > "${SPEC_TEMP}"
+            mv "${SPEC_TEMP}" "${SPEC_FILE}"
+        fi
         log_success "Created Delta Spec: ${SPEC_FILE}"
         ;;
     verify)
@@ -129,7 +200,16 @@ SPEC_EOF
         MODULE_NAME="${1:-}"
         REQUESTED_PATH="${2:-}"
         if [ -z "${MODULE_NAME}" ]; then
+            # A spec created with --module carries its module, so archiving it needs no
+            # second statement of the same fact.
+            RESOLVED_FOR_MODULE="$(resolve_spec_path "${REQUESTED_PATH}")"
+            if [ -f "${RESOLVED_FOR_MODULE}" ]; then
+                MODULE_NAME="$(sed -n 's/^- \*\*Module:\*\* *//p' "${RESOLVED_FOR_MODULE}" | head -n 1)"
+            fi
+        fi
+        if [ -z "${MODULE_NAME}" ]; then
             log_error "Usage: harness spec archive <module_name> [spec_path]"
+            log_info "The spec records no module, so name the one to archive it under."
             exit 1
         fi
         if ! [[ "${MODULE_NAME}" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
