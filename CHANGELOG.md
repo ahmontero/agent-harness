@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.0] - 2026-09-11
+
+### Added
+- Every installed skill surface now records what it is. `.agent-harness-surface.json` carries the schema, namespace, harness version, installed mode, runtime, and one entry per skill — a `bundle` with a digest of its source content, or a `symlink` without one, because a symlinked expert primitive follows the source and cannot go stale. The digest prefixes every file with its relative path, so a reference republished under a new name signs differently from the original.
+- `harness sync --check` reports each identified surface as current, drifted, or unmanaged, with a reason per drifted surface, and exits non-zero if any is stale. It mutates nothing, so it is usable from CI and from a read-only workflow.
+- `harness doctor` reports the same surface states. Drift is a warning and doctor still exits `0`, because a stale surface works — it is out of date, not broken. `harness doctor --fix` synchronizes what it found. A check that cannot run reports as unavailable, never as clean.
+- `core/scripts/lib/surface.sh`, shared by the installer, sync, and doctor, so that "what should this surface contain?" has one implementation rather than two that can disagree.
+
+### Fixed
+- `harness sync` reached only the global surfaces, so a repository initialized with `harness init` kept the skills it was installed with forever. It now synchronizes the current repository's surfaces as well, with `--target <path>` and `--global` to narrow the scope.
+- `harness sync` silently downgraded an expert installation to curated. It removed every managed primitive and, never having been passed `--expert`, reinstalled none: a 19-skill expert surface became a 4-skill curated one with nothing said. Synchronization now preserves the mode recorded in the manifest.
+- The installer reported success after refusing to write a published skill name occupied by a path it does not manage. It now fails and rolls the transaction back, so the alternative to a complete surface is the previous one rather than a partial one.
+
+### Changed
+- Compatibility evidence moves to `schemaVersion: 3` and gains a `surfaceManifest` boolean; the matrix asserts the manifest for the scope and mode of each cell.
+- The README version badge now tracks `package.json`.
+
+> **Upgrade note.** Every surface installed before this release has no manifest and is reported `drifted` with the reason `no recorded version`. That is accurate rather than alarming: those surfaces really are of unknown provenance, and several were genuinely stale — this repository's own four and all five global ones were still carrying the 2.1.0 `/harness-implement` without the AH-8 stagnation breaker, and `harness-orchestrate` had never been installed anywhere despite shipping in 2.1.0. One `harness sync` clears it.
+
 ## [2.3.0] - 2026-09-10
 
 ### Fixed

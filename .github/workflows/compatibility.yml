@@ -58,9 +58,9 @@ jobs:
             {
               echo "## Compatibility evidence"
               echo
-              echo '| OS | Scope | Mode | Status | Idempotent | User content preserved |'
-              echo '| :--- | :--- | :--- | :--- | :---: | :---: |'
-              jq -r '"| \(.os) | \(.scope) | \(.mode) | \(.status) | \(.idempotent) | \(.userContentPreserved) |"' "${report}"
+              echo '| OS | Scope | Mode | Status | Idempotent | User content preserved | Surface manifest |'
+              echo '| :--- | :--- | :--- | :--- | :---: | :---: | :---: |'
+              jq -r '"| \(.os) | \(.scope) | \(.mode) | \(.status) | \(.idempotent) | \(.userContentPreserved) | \(.surfaceManifest) |"' "${report}"
             } >> "${GITHUB_STEP_SUMMARY}"
           fi
 

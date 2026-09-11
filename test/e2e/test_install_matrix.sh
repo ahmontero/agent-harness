@@ -143,6 +143,22 @@ verify_skill_surface() {
         expected_count=$((expected_count + 1))
         assert_file "${destination}/user-owned/SKILL.md" || return 1
     fi
+    # The manifest is what makes this surface identifiable after the fact. Asserting it in
+    # the matrix, per scope and per mode, is what keeps a cell from passing with a surface
+    # that is correct today and unrecognizable on the next upgrade.
+    # The matrix calls the two modes "default" and "expert"; the installer records them as
+    # "curated" and "expert". Translating here rather than renaming either vocabulary keeps
+    # the matrix's CLI and the manifest's contract independent of one another.
+    local recorded_mode="${mode}"
+    [ "${recorded_mode}" = "default" ] && recorded_mode="curated"
+    assert_file "${destination}/.agent-harness-surface.json" || return 1
+    if [ "$(jq -r '.runtime' "${destination}/.agent-harness-surface.json")" != "${runtime}" ] || \
+       [ "$(jq -r '.mode' "${destination}/.agent-harness-surface.json")" != "${recorded_mode}" ] || \
+       [ "$(jq -r '.harnessVersion' "${destination}/.agent-harness-surface.json")" != "$(jq -r '.version' "${HARNESS_ROOT}/package.json")" ]; then
+        echo "Surface manifest does not describe this installation: ${destination}" >&2
+        return 1
+    fi
+
     installed_count="$(find "${destination}" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | wc -l | tr -d ' ')"
     if [ "${installed_count}" -ne "${expected_count}" ]; then
         echo "Unexpected skill count in ${destination}: got ${installed_count}, expected ${expected_count}" >&2
@@ -241,7 +257,7 @@ write_report() {
         --arg mode "${mode}" \
         --arg status "${status}" \
         --argjson verifiedContracts "${contracts}" \
-        '{schemaVersion: 2, os: $os, scope: $scope, mode: $mode, status: $status, installerRuns: 2, idempotent: ($status == "passed"), userContentPreserved: ($status == "passed"), runtimeGating: ($status == "passed"), verifiedContracts: $verifiedContracts}' \
+        '{schemaVersion: 3, os: $os, scope: $scope, mode: $mode, status: $status, installerRuns: 2, idempotent: ($status == "passed"), userContentPreserved: ($status == "passed"), runtimeGating: ($status == "passed"), surfaceManifest: ($status == "passed"), verifiedContracts: $verifiedContracts}' \
         > "${path}"
 }
 
