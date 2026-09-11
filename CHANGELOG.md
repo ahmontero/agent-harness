@@ -6,6 +6,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Complementary Tooling section in `docs/PROVENANCE.md`, recording `mksglu/context-mode` as a tool that runs alongside `agent-harness` without being invoked by it, and a fifth relationship term for that case. Its Elastic-2.0 license is noted as the standing constraint on borrowing source into this MIT-licensed repository.
+
 ## [2.4.0] - 2026-09-11
 
 ### Added

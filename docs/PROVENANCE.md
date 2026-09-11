@@ -8,6 +8,7 @@
 - **Adapted method** means `agent-harness` implements a recognizable workflow or technique in its own structure and language.
 - **Uses** is reserved for software that is installed, imported, executed, or redistributed as a dependency.
 - **Complies with** means the repository follows an external standard without treating the standard as a dependency.
+- **Complementary tooling** means a separately installed tool that runs alongside `agent-harness` without being invoked by it; no source reuse and no dependency is implied.
 
 The commit links below are provenance snapshots, not dependency pins. The listed projects are not installed or executed by `agent-harness` during normal operation.
 
@@ -58,6 +59,18 @@ Some mechanisms are carried over from the author's own private `easys-stack` too
 | `easys-stack` (private, same author) | Ported and renamed | Reversible installer transactions: the journal layout, the `ERR`-trap rollback, and the mutation primitives were ported with the environment prefix renamed to `HARNESS_*`. `transaction_remove_tree` is new here, because this installer removes managed skill directories, and the primitives were hardened to fail closed instead of writing through a path they could not remove. | [`transaction.sh`](../core/scripts/lib/transaction.sh), [`test_transaction_lib.sh`](../test/test_transaction_lib.sh), [`test_install_transaction.sh`](../test/test_install_transaction.sh) |
 
 `easys-stack` is not public, is not a dependency, and shares this project's authorship, so the port creates no third-party license obligation and adds no entry to `THIRD_PARTY_NOTICES.md`. The two test suites were rewritten against this installer's own flags rather than ported line for line; the upstream cases for `--plan`, `--check`, collision fail-closed semantics, and completion blocks describe an installer contract `agent-harness` does not have.
+
+## Complementary Tooling
+
+Some tools run alongside `agent-harness` in the author's environment without being part of it. They are recorded here because a reader who finds one installed next to the other should not have to guess whether it is a dependency, and because the licensing policy below governs what may be borrowed from them.
+
+| Tool | Relationship | Why it is recorded | Snapshot | License |
+| :--- | :--- | :--- | :--- | :--- |
+| [mksglu/context-mode](https://github.com/mksglu/context-mode) | Complementary tooling | An MCP server that bounds what a tool call returns to the agent's context window and restores session state across a compaction. It governs how much the agent reads; `agent-harness` governs what the agent does. The two share no surface: `agent-harness` registers no MCP server and no lifecycle hooks, and `harness context` emits a static repository signal rather than recalling session history. | [`8d9d546`](https://github.com/mksglu/context-mode/tree/8d9d546a78e8791fd27b54fb46dc0018fce1a860) (`main`, 2026-09-10) | Elastic-2.0 |
+
+`context-mode` is not installed, invoked, or redistributed by `agent-harness`, and nothing in this repository depends on its presence. It adds no entry to `THIRD_PARTY_NOTICES.md`, and it is deliberately absent from the Upstream Drift Audit, which tracks only influences this repository was derived from.
+
+Its license is the one standing constraint on future borrowing. Elastic License 2.0 is source-available rather than open source, and it forbids altering, removing, or obscuring the licensor's notices. Copied source would therefore have to carry those notices inside a repository that is MIT-licensed and published to npm. The reuse available here is an adapted method under the vocabulary above, never a copy; a contribution that adapts one of its ideas belongs in the Open-Source Influences table, under its own row and its own license column.
 
 ## Standards and Conceptual Foundations
 
