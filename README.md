@@ -514,6 +514,13 @@ npm run lint
 npm test
 ```
 
+Every pull request runs both workflows, whatever branch it targets. The `pull_request`
+trigger carries no base-branch filter on purpose: a pull request stacked on another, or
+aimed at a `release/*` branch, used to run no job at all — and GitHub renders zero checks
+as an absence rather than a failure, so a pull request nothing had verified was
+indistinguishable from one that had passed everything. `push` stays scoped to `main`,
+since pull requests are where the coverage has to be universal.
+
 ---
 
 ## 📄 License
