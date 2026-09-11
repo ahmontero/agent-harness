@@ -53,6 +53,7 @@ SCRIPTS_DIR="${HARNESS_ROOT}/core/scripts"
 source "${SCRIPTS_DIR}/lib/utils.sh"
 source "${SCRIPTS_DIR}/lib/config.sh"
 source "${SCRIPTS_DIR}/lib/transaction.sh"
+source "${SCRIPTS_DIR}/lib/surface.sh"
 
 usage() {
     print_banner
@@ -83,6 +84,7 @@ INSTALL_GLOBAL=false
 CLI_ONLY=false
 VERIFY_MODE=false
 SYNC_ONLY=false
+SYNC_TARGET=""
 GUIDED_MODE=false
 ROLLBACK_MODE=false
 SKILL_MODE="curated"
@@ -99,7 +101,8 @@ while [[ $# -gt 0 ]]; do
         --global) INSTALL_GLOBAL=true; shift ;;
         --cli-only) CLI_ONLY=true; shift ;;
         --verify) VERIFY_MODE=true; shift ;;
-        --sync-only) SYNC_ONLY=true; shift ;;
+        --sync-only|--sync-global) SYNC_ONLY=true; shift ;;
+        --sync-target) SYNC_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -111,6 +114,7 @@ done
 if [ "${ROLLBACK_MODE}" = true ]; then
     if [ -n "${TARGET_REPO}" ] || [ "${INSTALL_GLOBAL}" = true ] || [ "${CLI_ONLY}" = true ] || \
        [ "${SYNC_ONLY}" = true ] || [ "${VERIFY_MODE}" = true ] || [ -n "${RECIPE_NAME}" ] || \
+       [ -n "${SYNC_TARGET}" ] || \
        [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ]; then
         log_error "--rollback cannot be combined with installation options."
         exit 1
@@ -169,6 +173,16 @@ chmod +x "${HARNESS_ROOT}/install.sh" "${HARNESS_ROOT}/setup" 2>/dev/null || tru
 SKILL_CATALOG="${HARNESS_ROOT}/core/skills/catalog.json"
 MANAGED_MARKER="agent-harness-skill-bundle-v1"
 SKILL_NAMESPACE=""
+
+# Manifest name, schema, and the digest functions live in lib/surface.sh, shared with the
+# drift check so the two can never drift apart themselves.
+SURFACE_ENTRIES=()
+HARNESS_VERSION=""
+
+# A published skill name occupied by something the installer may not touch. Counted rather
+# than warned about, because a run that could not install what it was asked to install has
+# not succeeded, whatever it printed on the way.
+SURFACE_BLOCKED=0
 
 require_skill_catalog() {
     local skill
@@ -249,12 +263,7 @@ remove_managed_skill() {
 }
 
 workflow_allowed_for_runtime() {
-    local workflow="$1"
-    local runtime="$2"
-
-    jq -e --arg workflow "${workflow}" --arg runtime "${runtime}" \
-        'if (.runtimes // {}) | has($workflow) then (.runtimes[$workflow] | index($runtime)) != null else true end' \
-        "${SKILL_CATALOG}" >/dev/null
+    surface_workflow_allowed "$1" "$2"
 }
 
 install_workflow_bundle() {
@@ -266,6 +275,7 @@ install_workflow_bundle() {
 
     if [ -e "${workflow_destination}" ] || [ -L "${workflow_destination}" ]; then
         log_warn "Preserving unmanaged skill path: ${workflow_destination}"
+        SURFACE_BLOCKED=$((SURFACE_BLOCKED + 1))
         return
     fi
 
@@ -282,6 +292,11 @@ install_workflow_bundle() {
         fi
         transaction_copy "${primitive_source}" "${workflow_destination}/references/${primitive}.md"
     done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "${SKILL_CATALOG}")
+
+    SURFACE_ENTRIES+=("$(jq -nc \
+        --arg name "${published_workflow}" \
+        --arg digest "$(surface_source_digest "${workflow}")" \
+        '{name: $name, kind: "bundle", digest: $digest}')")
 }
 
 install_skill_surface() {
@@ -298,6 +313,8 @@ install_skill_surface() {
 
     transaction_ensure_directory "${destination}"
     require_skill_catalog
+    SURFACE_ENTRIES=()
+    HARNESS_VERSION="$(surface_harness_version)"
 
     while IFS= read -r skill; do
         remove_managed_skill "${destination}/${skill}"
@@ -316,11 +333,38 @@ install_skill_surface() {
             local primitive_destination="${destination}/${published_primitive}"
             if [ -e "${primitive_destination}" ] || [ -L "${primitive_destination}" ]; then
                 log_warn "Preserving unmanaged skill path: ${primitive_destination}"
+                SURFACE_BLOCKED=$((SURFACE_BLOCKED + 1))
                 continue
             fi
             transaction_symlink "${HARNESS_ROOT}/core/skills/${primitive}" "${primitive_destination}"
+            SURFACE_ENTRIES+=("$(jq -nc --arg name "${published_primitive}" '{name: $name, kind: "symlink"}')")
         done < <(jq -r '.internal[]' "${SKILL_CATALOG}")
     fi
+
+    write_surface_manifest "${destination}" "${runtime}"
+}
+
+# Written last, and through the transaction, so a mid-install failure rolls it back with
+# everything else. A manifest that outlived the surface it describes would be worse than
+# no manifest: the drift check would read it and report a surface that is not there.
+write_surface_manifest() {
+    local destination="$1"
+    local runtime="$2"
+    local skills_json="[]"
+
+    if [ ${#SURFACE_ENTRIES[@]} -gt 0 ]; then
+        skills_json="$(printf '%s\n' "${SURFACE_ENTRIES[@]}" | jq -sc 'sort_by(.name)')"
+    fi
+
+    transaction_write_command "${destination}/${SURFACE_MANIFEST_NAME}" 644 \
+        jq -n \
+            --argjson schemaVersion "${SURFACE_MANIFEST_SCHEMA}" \
+            --arg namespace "${SKILL_NAMESPACE}" \
+            --arg harnessVersion "${HARNESS_VERSION}" \
+            --arg mode "${SKILL_MODE}" \
+            --arg runtime "${runtime}" \
+            --argjson skills "${skills_json}" \
+            '{schemaVersion: $schemaVersion, namespace: $namespace, harnessVersion: $harnessVersion, mode: $mode, runtime: $runtime, skills: $skills}'
 }
 
 # 1. Install CLI binary into ~/.local/bin
@@ -450,6 +494,68 @@ install_global() {
     log_success "Global agent skill surface installed."
 }
 
+# Repair, never initialize. Only a surface that already exists and already carries a
+# managed bundle is synchronized; anything else is named and left alone. The flagless
+# `harness sync` reaches into the current repository, so its blast radius has to stop at
+# directories agent-harness created itself -- installing a new one is `harness init`.
+sync_scope() {
+    local scope_label="$1"
+    local listing="$2"
+    local directories=() runtimes=()
+    local directory runtime scope_mode previous_mode
+
+    while IFS=$'\t' read -r directory runtime; do
+        [ -n "${directory}" ] || continue
+        surface_evaluate "${directory}"
+        case "${SURFACE_STATE}" in
+            absent|unmanaged)
+                log_info "Skipping ${directory}: ${SURFACE_STATE}. Run 'harness init' to install a surface there."
+                ;;
+            *)
+                # Enumerated before anything is written: a command that modifies a
+                # repository must say which paths, not report a count afterwards.
+                log_info "Will synchronize ${directory} (${SURFACE_STATE}, runtime ${runtime})"
+                directories+=("${directory}")
+                runtimes+=("${runtime}")
+                ;;
+        esac
+    done <<< "${listing}"
+
+    if [ ${#directories[@]} -eq 0 ]; then
+        log_info "Nothing to synchronize for scope: ${scope_label}"
+        return 0
+    fi
+
+    previous_mode="${SKILL_MODE}"
+    if [ "${SKILL_MODE}" != "expert" ]; then
+        scope_mode="$(surface_scope_mode <<< "${listing}")"
+        if [ -n "${scope_mode}" ]; then
+            SKILL_MODE="${scope_mode}"
+            log_info "Synchronizing ${scope_label} in ${SKILL_MODE} mode, as recorded in its manifest."
+        else
+            log_info "Synchronizing ${scope_label} in ${SKILL_MODE} mode: no manifest records a mode."
+        fi
+    fi
+
+    local index=0
+    while [ "${index}" -lt ${#directories[@]} ]; do
+        install_skill_surface "${directories[${index}]}" "${runtimes[${index}]}"
+        log_success "Synchronized ${directories[${index}]}"
+        index=$((index + 1))
+    done
+    SKILL_MODE="${previous_mode}"
+}
+
+# A run that could not install what it was asked to install has not succeeded. Failing
+# through the ERR trap rather than a bare exit is deliberate: it rolls the transaction
+# back, so the alternative to a complete surface is the previous one, never a partial one.
+require_unblocked_surfaces() {
+    [ "${SURFACE_BLOCKED}" -eq 0 ] && return 0
+    log_error "${SURFACE_BLOCKED} published skill name(s) are occupied by paths agent-harness may not replace."
+    log_error "Move or remove them and re-run; the installation has been rolled back."
+    return 1
+}
+
 # Execution
 transaction_begin install
 
@@ -462,9 +568,17 @@ if [ "${CLI_ONLY}" = true ]; then
     exit 0
 fi
 
-if [ -n "${TARGET_REPO}" ]; then
+if [ "${SYNC_ONLY}" = true ] || [ -n "${SYNC_TARGET}" ]; then
+    require_skill_catalog
+    if [ -n "${SYNC_TARGET}" ]; then
+        sync_scope "${SYNC_TARGET}" "$(surface_repo_list "${SYNC_TARGET}")"
+    fi
+    if [ "${SYNC_ONLY}" = true ]; then
+        sync_scope "the global surfaces" "$(surface_global_list)"
+    fi
+elif [ -n "${TARGET_REPO}" ]; then
     install_target_repo "${TARGET_REPO}" "${RECIPE_NAME}"
-elif [ "${INSTALL_GLOBAL}" = true ] || [ "${SYNC_ONLY}" = true ]; then
+elif [ "${INSTALL_GLOBAL}" = true ]; then
     install_global
 elif [ "${GUIDED_MODE}" = true ]; then
     print_banner
@@ -474,6 +588,7 @@ elif [ "${GUIDED_MODE}" = true ]; then
     install_target_repo "$(pwd)" "${RECIPE_NAME}"
 fi
 
+require_unblocked_surfaces
 transaction_commit
 
 log_success "Setup complete! Run 'harness doctor' to verify."

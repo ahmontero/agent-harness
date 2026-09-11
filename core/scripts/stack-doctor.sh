@@ -10,6 +10,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
+source "${SCRIPT_DIR}/lib/surface.sh"
 
 ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
@@ -95,6 +96,61 @@ if [ -d "${REPO_DIR}" ]; then
                 log_success "Self-healed: Created AGENTS.md from template."
             fi
         fi
+    fi
+fi
+
+echo ""
+log_info "--- 4. Installed Skill Surfaces ---"
+# Drift is staleness, not breakage: a stale surface still works, so it is a warning and
+# doctor still exits 0. What it must not do is stay quiet, or let a check that could not
+# run read as a check that passed.
+if ! jq --version >/dev/null 2>&1; then
+    log_warn "Surface drift check unavailable: jq is not usable, so no surface state was determined."
+    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+else
+    SURFACES_DRIFTED=0
+
+    report_surface_scope() {
+        local scope_label="$1"
+        local listing="$2"
+        local directory runtime reason
+
+        while IFS=$'\t' read -r directory runtime; do
+            [ -n "${directory}" ] || continue
+            surface_evaluate "${directory}"
+            case "${SURFACE_STATE}" in
+                current)
+                    log_success "current   ${directory} (${runtime})"
+                    ;;
+                drifted)
+                    SURFACES_DRIFTED=$((SURFACES_DRIFTED + 1))
+                    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+                    log_warn "drifted   ${directory} (${runtime}) [${scope_label}]"
+                    for reason in "${SURFACE_REASONS[@]}"; do
+                        printf '            %s\n' "${reason}" >&2
+                    done
+                    ;;
+            esac
+        done <<< "${listing}"
+    }
+
+    report_surface_scope "repository" "$(surface_repo_list "${REPO_DIR}")"
+    report_surface_scope "global" "$(surface_global_list)"
+
+    if [ "${SURFACES_DRIFTED}" -eq 0 ]; then
+        log_success "Every identified skill surface is current."
+    elif [ "${FIX_MODE}" = true ]; then
+        log_info "Self-healing ${SURFACES_DRIFTED} drifted surface(s)..."
+        if "$(get_harness_root)/install.sh" --sync-target "${REPO_DIR}" --sync-only; then
+            WARNINGS_FOUND=$((WARNINGS_FOUND - SURFACES_DRIFTED))
+            SURFACES_DRIFTED=0
+            log_success "Self-healed: skill surfaces synchronized."
+        else
+            log_error "Self-healing failed; the surfaces were left as they were."
+            ERRORS_FOUND=$((ERRORS_FOUND + 1))
+        fi
+    else
+        log_info "Run 'harness sync' to bring them up to date, or 'harness sync --check' for the report alone."
     fi
 fi
 

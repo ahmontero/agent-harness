@@ -8,6 +8,9 @@ set -eo pipefail
 
 TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 HARNESS_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
+# Named here rather than in group 20 because the surface-content assertions in group 6
+# must exclude it: it is an installation record, not a published skill.
+SURFACE_MANIFEST=".agent-harness-surface.json"
 
 echo "=== 1. Testing Shell Scripts Syntax ==="
 find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" "${HARNESS_ROOT}" -maxdepth 2 -type f \( -name "*.sh" -o -name "harness" -o -name "setup" \) | while read -r script; do
@@ -266,7 +269,7 @@ while IFS= read -r skill; do
         exit 1
     fi
 done < <(jq -r '(.public | keys[]), .internal[]' "${SKILL_CATALOG}")
-if find "${EXPERT_TARGET_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 ! -name 'harness-*' -print -quit | grep -q . || \
+if find "${EXPERT_TARGET_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 ! -name 'harness-*' ! -name "${SURFACE_MANIFEST}" -print -quit | grep -q . || \
    [ -e "${EXPERT_TARGET_DIR}/.codex/skills/harness-ship" ]; then
     echo "  [FAIL] Expert installation restored the removed ship skill"
     exit 1
@@ -537,11 +540,12 @@ if [ ! -x "${COMPAT_RUNNER}" ]; then
 fi
 "${COMPAT_RUNNER}" --scope target --mode default --report "${COMPAT_REPORT}" >/dev/null
 if ! jq -e '
-    .schemaVersion == 2 and
+    .schemaVersion == 3 and
     .scope == "target" and
     .mode == "default" and
     .status == "passed" and
     .runtimeGating == true and
+    .surfaceManifest == true and
     (.os | type == "string" and length > 0) and
     (.verifiedContracts | sort == ["agents", "claude", "codex", "cursor", "gemini"])
 ' "${COMPAT_REPORT}" >/dev/null; then
@@ -1297,5 +1301,339 @@ for shipped_rules in "${HARNESS_ROOT}/rules/landmines.json" "${HARNESS_ROOT}/cor
     fi
 done
 echo "  [PASS] unusable rule patterns abort the scan and PERF-001 discriminates correctly."
+
+echo ""
+echo "=== 20. Testing Skill Surface Manifest ==="
+# A copied bundle has no recorded identity, so nothing downstream can ask whether it is
+# current. The manifest is that identity, and these assertions are what stop it from
+# drifting into decoration: it must name the runtime it was installed for, the mode it was
+# installed in, the version it came from, and a digest per bundle.
+HARNESS_VERSION="$(jq -r '.version' "${HARNESS_ROOT}/package.json")"
+
+MANIFEST_TARGET="${TMP_TEST_DIR}/manifest-target"
+mkdir -p "${MANIFEST_TARGET}"
+git -C "${MANIFEST_TARGET}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${MANIFEST_TARGET}" >/dev/null
+
+for runtime_pair in "gemini:.gemini" "claude:.claude" "codex:.codex" "agents:.agents"; do
+    runtime_label="${runtime_pair%%:*}"
+    runtime_dir="${MANIFEST_TARGET}/${runtime_pair#*:}/skills"
+    manifest="${runtime_dir}/${SURFACE_MANIFEST}"
+    if [ ! -f "${manifest}" ] || ! jq empty "${manifest}" >/dev/null 2>&1; then
+        echo "  [FAIL] Curated installation wrote no valid surface manifest in ${runtime_dir}"
+        exit 1
+    fi
+    if [ "$(jq -r '.schemaVersion' "${manifest}")" != "1" ] || \
+       [ "$(jq -r '.namespace' "${manifest}")" != "harness" ] || \
+       [ "$(jq -r '.harnessVersion' "${manifest}")" != "${HARNESS_VERSION}" ] || \
+       [ "$(jq -r '.mode' "${manifest}")" != "curated" ] || \
+       [ "$(jq -r '.runtime' "${manifest}")" != "${runtime_label}" ]; then
+        echo "  [FAIL] Surface manifest does not identify its own installation in ${runtime_dir}"
+        exit 1
+    fi
+
+    # The recorded skills must be exactly the workflows this runtime is allowed to receive.
+    # Recording a gated workflow the runtime never got would report drift forever.
+    expected_skills=""
+    while IFS= read -r workflow; do
+        if jq -e --arg w "${workflow}" --arg r "${runtime_label}" \
+            'if (.runtimes // {}) | has($w) then (.runtimes[$w] | index($r)) != null else true end' \
+            "${SKILL_CATALOG}" >/dev/null; then
+            expected_skills="${expected_skills}harness-${workflow}
+"
+        fi
+    done < <(jq -r '.public | keys[]' "${SKILL_CATALOG}")
+    expected_skills="$(printf '%s' "${expected_skills}" | sort)"
+    recorded_skills="$(jq -r '.skills[].name' "${manifest}" | sort)"
+    if [ "${recorded_skills}" != "${expected_skills}" ]; then
+        echo "  [FAIL] Surface manifest in ${runtime_dir} records the wrong skill set"
+        exit 1
+    fi
+    if [ "$(jq -r '[.skills[] | select(.kind != "bundle")] | length' "${manifest}")" -ne 0 ] || \
+       [ "$(jq -r '[.skills[] | select(.digest | test("^[0-9a-f]{12}$") | not)] | length' "${manifest}")" -ne 0 ]; then
+        echo "  [FAIL] Curated manifest in ${runtime_dir} did not record every workflow as a 12-hex bundle digest"
+        exit 1
+    fi
+done
+
+# Expert primitives are symlinks into the source tree. They cannot drift, and recording
+# them as bundles with a digest would invent a comparison that means nothing.
+EXPERT_MANIFEST_TARGET="${TMP_TEST_DIR}/manifest-expert"
+mkdir -p "${EXPERT_MANIFEST_TARGET}"
+git -C "${EXPERT_MANIFEST_TARGET}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${EXPERT_MANIFEST_TARGET}" --expert >/dev/null
+EXPERT_MANIFEST="${EXPERT_MANIFEST_TARGET}/.codex/skills/${SURFACE_MANIFEST}"
+EXPECTED_PRIMITIVES="$(jq -r '.internal | length' "${SKILL_CATALOG}")"
+if [ "$(jq -r '.mode' "${EXPERT_MANIFEST}")" != "expert" ] || \
+   [ "$(jq -r '[.skills[] | select(.kind == "symlink")] | length' "${EXPERT_MANIFEST}")" -ne "${EXPECTED_PRIMITIVES}" ] || \
+   [ "$(jq -r '[.skills[] | select(.kind == "symlink" and has("digest"))] | length' "${EXPERT_MANIFEST}")" -ne 0 ]; then
+    echo "  [FAIL] Expert manifest did not record its primitives as digest-free symlinks"
+    exit 1
+fi
+
+# A digest that ignores content is useless, and one that ignores paths cannot tell a
+# renamed reference from the original. The sandbox below changes only the reference's
+# *name*, keeping its bytes identical, which is the case a content-only digest misses.
+DIGEST_SANDBOX="${TMP_TEST_DIR}/digest-sandbox"
+rm -rf "${DIGEST_SANDBOX}"
+mkdir -p "${DIGEST_SANDBOX}"
+cp -R "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core" "${HARNESS_ROOT}/install.sh" \
+      "${HARNESS_ROOT}/setup" "${HARNESS_ROOT}/package.json" "${DIGEST_SANDBOX}/"
+DIGEST_TARGET="${TMP_TEST_DIR}/digest-target"
+mkdir -p "${DIGEST_TARGET}"
+git -C "${DIGEST_TARGET}" init -q
+"${DIGEST_SANDBOX}/install.sh" --target "${DIGEST_TARGET}" >/dev/null
+DIGEST_MANIFEST="${DIGEST_TARGET}/.codex/skills/${SURFACE_MANIFEST}"
+DIGEST_BEFORE="$(jq -r '.skills[] | select(.name == "harness-fix") | .digest' "${DIGEST_MANIFEST}")"
+
+printf '\n<!-- content change -->\n' >> "${DIGEST_SANDBOX}/core/skills/bug/SKILL.md"
+"${DIGEST_SANDBOX}/install.sh" --target "${DIGEST_TARGET}" >/dev/null
+DIGEST_AFTER_CONTENT="$(jq -r '.skills[] | select(.name == "harness-fix") | .digest' "${DIGEST_MANIFEST}")"
+if [ "${DIGEST_BEFORE}" = "${DIGEST_AFTER_CONTENT}" ]; then
+    echo "  [FAIL] Bundle digest did not change when a reference protocol changed"
+    exit 1
+fi
+
+# Byte-identical content published under a different reference name must sign differently.
+cp -R "${DIGEST_SANDBOX}/core/skills/bug" "${DIGEST_SANDBOX}/core/skills/bug-renamed"
+jq '(.internal) += ["bug-renamed"] | (.public.fix) = ((.public.fix | map(select(. != "bug"))) + ["bug-renamed"])' \
+    "${DIGEST_SANDBOX}/core/skills/catalog.json" > "${DIGEST_SANDBOX}/core/skills/catalog.json.tmp"
+mv "${DIGEST_SANDBOX}/core/skills/catalog.json.tmp" "${DIGEST_SANDBOX}/core/skills/catalog.json"
+"${DIGEST_SANDBOX}/install.sh" --target "${DIGEST_TARGET}" >/dev/null
+DIGEST_AFTER_RENAME="$(jq -r '.skills[] | select(.name == "harness-fix") | .digest' "${DIGEST_MANIFEST}")"
+if [ "${DIGEST_AFTER_RENAME}" = "${DIGEST_AFTER_CONTENT}" ]; then
+    echo "  [FAIL] Bundle digest ignored a reference rename that preserved content"
+    exit 1
+fi
+
+# A rolled-back install must leave no manifest claiming a surface that is not there.
+ROLLBACK_MANIFEST_TARGET="${TMP_TEST_DIR}/manifest-rollback"
+ROLLBACK_STATE_DIR="${TMP_TEST_DIR}/manifest-rollback-state"
+mkdir -p "${ROLLBACK_MANIFEST_TARGET}" "${ROLLBACK_STATE_DIR}"
+git -C "${ROLLBACK_MANIFEST_TARGET}" init -q
+HARNESS_STATE_DIR="${ROLLBACK_STATE_DIR}" HARNESS_ENABLE_FAILURE_INJECTION=true HARNESS_TEST_FAIL_AFTER=12 \
+    "${HARNESS_ROOT}/install.sh" --target "${ROLLBACK_MANIFEST_TARGET}" >/dev/null 2>&1 || true
+if find "${ROLLBACK_MANIFEST_TARGET}" -name "${SURFACE_MANIFEST}" -print -quit | grep -q .; then
+    echo "  [FAIL] A rolled-back installation left a surface manifest behind"
+    exit 1
+fi
+echo "  [PASS] surface manifests record runtime, mode, version, and path-sensitive digests."
+
+echo ""
+echo "=== 21. Testing Surface Drift Detection ==="
+# Drift has to be answerable without a network and without reinstalling, or nobody will ask.
+# --check is the read-only half: it reports, it never repairs, and it exits non-zero when
+# any surface is stale so CI can consume it.
+DRIFT_TARGET="${TMP_TEST_DIR}/drift-target"
+mkdir -p "${DRIFT_TARGET}"
+git -C "${DRIFT_TARGET}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${DRIFT_TARGET}" >/dev/null
+
+run_drift_check() {
+    DRIFT_STATUS=0
+    DRIFT_OUTPUT="$("${HARNESS_ROOT}/bin/harness" sync --check --target "${DRIFT_TARGET}" 2>&1)" || DRIFT_STATUS=$?
+}
+
+run_drift_check
+if [ "${DRIFT_STATUS}" -ne 0 ] || printf '%s' "${DRIFT_OUTPUT}" | grep -qi "drifted"; then
+    echo "  [FAIL] sync --check reported drift immediately after a clean installation"
+    exit 1
+fi
+
+# A gated workflow absent from a runtime that must not receive it is correct, not drift.
+# Reporting it would make every codex, gemini, and agents surface permanently stale.
+if [ -e "${DRIFT_TARGET}/.codex/skills/harness-orchestrate" ]; then
+    echo "  [FAIL] the drift fixture is wrong: orchestrate must not be installed for codex"
+    exit 1
+fi
+
+# --check must not touch anything it inspects.
+DRIFT_FINGERPRINT_BEFORE="$(find "${DRIFT_TARGET}" -type f -exec git hash-object {} \; | sort | git hash-object --stdin)"
+run_drift_check
+DRIFT_FINGERPRINT_AFTER="$(find "${DRIFT_TARGET}" -type f -exec git hash-object {} \; | sort | git hash-object --stdin)"
+if [ "${DRIFT_FINGERPRINT_BEFORE}" != "${DRIFT_FINGERPRINT_AFTER}" ]; then
+    echo "  [FAIL] sync --check mutated the surface it inspected"
+    exit 1
+fi
+
+# An edited bundle is the case that matters: the file still exists and still looks right.
+printf '\nlocally edited\n' >> "${DRIFT_TARGET}/.claude/skills/harness-implement/SKILL.md"
+run_drift_check
+if [ "${DRIFT_STATUS}" -eq 0 ] || ! printf '%s' "${DRIFT_OUTPUT}" | grep -q "harness-implement"; then
+    echo "  [FAIL] sync --check did not report an edited bundle as drifted"
+    exit 1
+fi
+rm -rf "${DRIFT_TARGET}/.claude/skills/harness-implement"
+cp -R "${DRIFT_TARGET}/.codex/skills/harness-implement" "${DRIFT_TARGET}/.claude/skills/harness-implement"
+
+# A workflow that should be present and is gone.
+rm -rf "${DRIFT_TARGET}/.agents/skills/harness-fix"
+run_drift_check
+if [ "${DRIFT_STATUS}" -eq 0 ] || ! printf '%s' "${DRIFT_OUTPUT}" | grep -q "harness-fix"; then
+    echo "  [FAIL] sync --check did not report a missing workflow as drifted"
+    exit 1
+fi
+cp -R "${DRIFT_TARGET}/.codex/skills/harness-fix" "${DRIFT_TARGET}/.agents/skills/harness-fix"
+
+# Every installation that predates this delta is in exactly this state. It must read as
+# drifted with a stated reason, not as an error and not as clean.
+rm -f "${DRIFT_TARGET}/.gemini/skills/${SURFACE_MANIFEST}"
+run_drift_check
+if [ "${DRIFT_STATUS}" -eq 0 ] || ! printf '%s' "${DRIFT_OUTPUT}" | grep -q "no recorded version"; then
+    echo "  [FAIL] sync --check did not report a manifest-less surface as drifted with a reason"
+    exit 1
+fi
+
+# A version bump alone is drift: the bundles may be byte-identical today, but the surface
+# no longer records which release produced them.
+STALE_TARGET="${TMP_TEST_DIR}/drift-stale"
+mkdir -p "${STALE_TARGET}"
+git -C "${STALE_TARGET}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${STALE_TARGET}" >/dev/null
+STALE_MANIFEST="${STALE_TARGET}/.codex/skills/${SURFACE_MANIFEST}"
+jq '.harnessVersion = "0.0.1-old"' "${STALE_MANIFEST}" > "${STALE_MANIFEST}.tmp"
+mv "${STALE_MANIFEST}.tmp" "${STALE_MANIFEST}"
+STALE_STATUS=0
+STALE_OUTPUT="$("${HARNESS_ROOT}/bin/harness" sync --check --target "${STALE_TARGET}" 2>&1)" || STALE_STATUS=$?
+if [ "${STALE_STATUS}" -eq 0 ] || ! printf '%s' "${STALE_OUTPUT}" | grep -q "0.0.1-old"; then
+    echo "  [FAIL] sync --check did not report an older recorded version as drifted"
+    exit 1
+fi
+echo "  [PASS] sync --check reports drift with reasons, spares gated absences, and mutates nothing."
+
+echo ""
+echo "=== 22. Testing Surface Synchronization ==="
+# The only command that could ever update an installed surface used to reach the global
+# half and silently downgrade an expert installation on the way. These assertions pin both.
+SYNC_TARGET_DIR="${TMP_TEST_DIR}/sync-target"
+mkdir -p "${SYNC_TARGET_DIR}"
+git -C "${SYNC_TARGET_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${SYNC_TARGET_DIR}" >/dev/null
+
+surface_fingerprint() {
+    find "$1" -type f -exec git hash-object {} \; | LC_ALL=C sort | git hash-object --stdin
+}
+
+SYNC_PRISTINE="$(surface_fingerprint "${SYNC_TARGET_DIR}/.claude/skills")"
+printf '\nlocally edited\n' >> "${SYNC_TARGET_DIR}/.claude/skills/harness-implement/SKILL.md"
+if [ "$(surface_fingerprint "${SYNC_TARGET_DIR}/.claude/skills")" = "${SYNC_PRISTINE}" ]; then
+    echo "  [FAIL] the sync fixture did not actually dirty the surface"
+    exit 1
+fi
+"${HARNESS_ROOT}/bin/harness" sync --target "${SYNC_TARGET_DIR}" >/dev/null
+if [ "$(surface_fingerprint "${SYNC_TARGET_DIR}/.claude/skills")" != "${SYNC_PRISTINE}" ]; then
+    echo "  [FAIL] sync did not restore a drifted surface to byte-identical content"
+    exit 1
+fi
+if ! "${HARNESS_ROOT}/bin/harness" sync --check --target "${SYNC_TARGET_DIR}" >/dev/null 2>&1; then
+    echo "  [FAIL] a synchronized surface still reports drift"
+    exit 1
+fi
+
+# An expert surface must survive a sync that was given no mode. This is the regression
+# that motivated the manifest: today's sync removes every managed primitive and reinstalls
+# none, turning a 19-skill expert surface into a 4-skill curated one without saying so.
+SYNC_EXPERT_DIR="${TMP_TEST_DIR}/sync-expert"
+mkdir -p "${SYNC_EXPERT_DIR}"
+git -C "${SYNC_EXPERT_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${SYNC_EXPERT_DIR}" --expert >/dev/null
+EXPERT_BEFORE="$(find "${SYNC_EXPERT_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 -type l | wc -l | tr -d ' ')"
+"${HARNESS_ROOT}/bin/harness" sync --target "${SYNC_EXPERT_DIR}" >/dev/null
+EXPERT_AFTER="$(find "${SYNC_EXPERT_DIR}/.codex/skills" -mindepth 1 -maxdepth 1 -type l | wc -l | tr -d ' ')"
+if [ "${EXPERT_BEFORE}" -eq 0 ] || [ "${EXPERT_AFTER}" -ne "${EXPERT_BEFORE}" ] || \
+   [ "$(jq -r '.mode' "${SYNC_EXPERT_DIR}/.codex/skills/${SURFACE_MANIFEST}")" != "expert" ]; then
+    echo "  [FAIL] sync downgraded an expert surface to curated"
+    exit 1
+fi
+
+# Repair, never initialize: a repository with no managed surface is left untouched.
+SYNC_VIRGIN_DIR="${TMP_TEST_DIR}/sync-virgin"
+mkdir -p "${SYNC_VIRGIN_DIR}"
+git -C "${SYNC_VIRGIN_DIR}" init -q
+"${HARNESS_ROOT}/bin/harness" sync --target "${SYNC_VIRGIN_DIR}" >/dev/null 2>&1 || true
+if [ -e "${SYNC_VIRGIN_DIR}/.claude" ] || [ -e "${SYNC_VIRGIN_DIR}/AGENTS.md" ]; then
+    echo "  [FAIL] sync initialized a repository that had no managed surface"
+    exit 1
+fi
+
+# A published name occupied by something the installer may not replace is a failed run,
+# not a warning followed by success.
+SYNC_BLOCKED_DIR="${TMP_TEST_DIR}/sync-blocked"
+mkdir -p "${SYNC_BLOCKED_DIR}"
+git -C "${SYNC_BLOCKED_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${SYNC_BLOCKED_DIR}" >/dev/null
+rm -rf "${SYNC_BLOCKED_DIR}/.codex/skills/harness-fix"
+mkdir -p "${SYNC_BLOCKED_DIR}/.codex/skills/harness-fix"
+echo "mine" > "${SYNC_BLOCKED_DIR}/.codex/skills/harness-fix/SKILL.md"
+if "${HARNESS_ROOT}/bin/harness" sync --target "${SYNC_BLOCKED_DIR}" >/dev/null 2>&1; then
+    echo "  [FAIL] sync reported success while a published skill name was unavailable"
+    exit 1
+fi
+if [ "$(cat "${SYNC_BLOCKED_DIR}/.codex/skills/harness-fix/SKILL.md")" != "mine" ]; then
+    echo "  [FAIL] sync replaced a skill path it does not manage"
+    exit 1
+fi
+
+# One sync is one transaction, undone the same way any installation is.
+SYNC_ROLLBACK_DIR="${TMP_TEST_DIR}/sync-rollback"
+SYNC_ROLLBACK_STATE="${TMP_TEST_DIR}/sync-rollback-state"
+mkdir -p "${SYNC_ROLLBACK_DIR}" "${SYNC_ROLLBACK_STATE}"
+git -C "${SYNC_ROLLBACK_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${SYNC_ROLLBACK_DIR}" >/dev/null
+printf '\nlocally edited\n' >> "${SYNC_ROLLBACK_DIR}/.claude/skills/harness-implement/SKILL.md"
+SYNC_DIRTY="$(surface_fingerprint "${SYNC_ROLLBACK_DIR}/.claude/skills")"
+HARNESS_STATE_DIR="${SYNC_ROLLBACK_STATE}" "${HARNESS_ROOT}/bin/harness" sync --target "${SYNC_ROLLBACK_DIR}" >/dev/null
+HARNESS_STATE_DIR="${SYNC_ROLLBACK_STATE}" "${HARNESS_ROOT}/setup" --rollback >/dev/null
+if [ "$(surface_fingerprint "${SYNC_ROLLBACK_DIR}/.claude/skills")" != "${SYNC_DIRTY}" ]; then
+    echo "  [FAIL] rolling back a sync did not restore the previous surface"
+    exit 1
+fi
+echo "  [PASS] sync repairs, preserves expert mode, never initializes, fails closed, and rolls back."
+
+echo ""
+echo "=== 23. Testing Doctor Surface Reporting ==="
+# Drift is staleness, not breakage, so it is a warning: doctor must still exit 0. What it
+# must never do is stay silent, or claim a check ran when it could not.
+DOCTOR_DIR="${TMP_TEST_DIR}/doctor-target"
+mkdir -p "${DOCTOR_DIR}"
+git -C "${DOCTOR_DIR}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${DOCTOR_DIR}" >/dev/null
+printf '\nlocally edited\n' >> "${DOCTOR_DIR}/.claude/skills/harness-implement/SKILL.md"
+
+DOCTOR_STATUS=0
+DOCTOR_OUTPUT="$(cd "${DOCTOR_DIR}" && "${HARNESS_ROOT}/bin/harness" doctor 2>&1)" || DOCTOR_STATUS=$?
+if [ "${DOCTOR_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] doctor treated surface drift as an error instead of a warning"
+    exit 1
+fi
+if ! printf '%s' "${DOCTOR_OUTPUT}" | grep -q "drifted" || \
+   ! printf '%s' "${DOCTOR_OUTPUT}" | grep -q "harness-implement"; then
+    echo "  [FAIL] doctor did not report the drifted surface and its reason"
+    exit 1
+fi
+
+DOCTOR_FIX_STATUS=0
+(cd "${DOCTOR_DIR}" && "${HARNESS_ROOT}/bin/harness" doctor --fix >/dev/null 2>&1) || DOCTOR_FIX_STATUS=$?
+if [ "${DOCTOR_FIX_STATUS}" -ne 0 ] || \
+   ! "${HARNESS_ROOT}/bin/harness" sync --check --target "${DOCTOR_DIR}" >/dev/null 2>&1; then
+    echo "  [FAIL] doctor --fix did not repair the drifted surface"
+    exit 1
+fi
+
+# A check that could not run must never read as a check that passed.
+DOCTOR_STUB="${TMP_TEST_DIR}/doctor-stub"
+mkdir -p "${DOCTOR_STUB}"
+cat > "${DOCTOR_STUB}/jq" <<'STUB_EOF'
+#!/usr/bin/env bash
+exit 1
+STUB_EOF
+chmod +x "${DOCTOR_STUB}/jq"
+DOCTOR_NOJQ="$(cd "${DOCTOR_DIR}" && PATH="${DOCTOR_STUB}:${PATH}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1)" || true
+if ! printf '%s' "${DOCTOR_NOJQ}" | grep -qi "unavailable" || \
+   printf '%s' "${DOCTOR_NOJQ}" | grep -q "current  "; then
+    echo "  [FAIL] doctor reported a surface state without a working jq"
+    exit 1
+fi
+echo "  [PASS] doctor warns on drift, repairs with --fix, and reports an unrunnable check as unavailable."
 echo ""
 echo "All automated tests passed successfully! [100%]"

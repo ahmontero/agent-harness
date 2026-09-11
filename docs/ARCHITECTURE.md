@@ -60,5 +60,13 @@ Removal stays unconditional while installation is filtered. The installer clears
 
 Internal primitives are never gated. Expert mode continues to expose all of them in every runtime.
 
-### 4. Sub-Second Context Extraction
+### 4. Recorded Surface Identity
+
+A public workflow is **copied** into each runtime's skills directory; an expert primitive is **symlinked** to the source tree. The asymmetry matters: a symlink follows the source and cannot go stale, while a copy is a snapshot that upgrading the harness does not touch.
+
+Each surface therefore carries a `.agent-harness-surface.json` manifest recording the schema, namespace, harness version, installed mode, runtime, and one entry per skill — `bundle` with a digest, or `symlink` without one. The digest is `git hash-object` over the bundle's content with every file preceded by its relative path, so a reference republished under a new name signs differently from the original.
+
+`core/scripts/lib/surface.sh` holds that reasoning once, and the installer, `harness sync`, and `harness doctor` all read it from there. Two implementations of "what should this surface contain?" would eventually disagree, and the disagreement would surface as a directory reported current because the checker forgot a rule the installer applies.
+
+### 5. Sub-Second Context Extraction
 - `harness context --json` extracts the active profile, repository, branch/trunk, dirty state, configured test runner and issue provider, plus active-spec and debt counts in a compact JSON signal.

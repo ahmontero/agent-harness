@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.3.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.4.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -252,6 +252,8 @@ Lightweight Spec-Driven Development (OpenSpec):
 
 Diagnoses environment health:
 - Verifies required executables, target repository health, and Git configuration.
+- Reports whether each installed skill surface is still current, with a reason per drifted surface. Drift is a warning, not an error: a stale surface still works.
+- `--fix` synchronizes the drifted surfaces it found. A check that could not run reports as unavailable, never as clean.
 </details>
 
 <details>
@@ -370,6 +372,17 @@ The single `harness` executable acts as a multi-call dispatcher (like `busybox` 
 - **Dynamic profile resolution:** Auto-detects the active profile based on the current directory or explicit `--profile <name>`.
 - **Custom aliases:** Define a custom alias in `stack.config.json` (e.g. `"cliAlias": "backend"`):
   - Typing `backend doctor` or `backend qa` automatically targets that specific profile.
+
+### 🔄 Keeping installed surfaces current
+
+Workflow bundles are copied into each runtime's skills directory, so upgrading agent-harness does not update a surface that was installed earlier. Every surface records what it is in a `.agent-harness-surface.json` manifest — version, mode, runtime, and a digest per bundle — which makes that answerable offline:
+
+```bash
+harness sync --check     # report drift and exit non-zero if any surface is stale
+harness sync             # repair the global surfaces and the current repository's
+```
+
+`harness sync` repairs; it never installs a new surface — that is `harness init`. It writes only to surfaces that already exist and are managed, names every one of them before writing, preserves the mode each was installed in (an expert surface stays expert), and is undone by `./setup --rollback` like any other installation. `--target <path>` acts on one repository and `--global` on the global surfaces alone.
 
 ### 🐚 Shell Autocompletion (Zsh & Bash)
 
