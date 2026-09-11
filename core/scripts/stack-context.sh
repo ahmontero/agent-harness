@@ -3,6 +3,11 @@
 # agent-harness: core/scripts/stack-context.sh
 # Fast, Token-Efficient Workspace Context Signal Extractor (<1s)
 # ==============================================================================
+#
+# Every number here is read by an agent that cannot check it, so each one is produced by
+# the same helper as the command a human would run to verify it. The JSON is emitted by jq
+# rather than a heredoc: a quote or a backslash anywhere in a path, branch, or profile name
+# used to produce a document no consumer could parse.
 
 set -eo pipefail
 
@@ -10,6 +15,8 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
+source "${SCRIPT_DIR}/lib/specs.sh"
+source "${SCRIPT_DIR}/lib/debt.sh"
 
 ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
@@ -40,36 +47,37 @@ ORCHESTRATE_REVIEWER="$(get_profile_value "orchestrate.models.reviewer" "opus")"
 DIRTY="false"
 is_working_tree_dirty "${REPO_DIR}" && DIRTY="true"
 
-# Count open delta specs if any
-SPECS_COUNT=0
-if [ -d "${REPO_DIR}/specs" ]; then
-    SPECS_COUNT=$(find "${REPO_DIR}/specs" -name "delta-*.md" 2>/dev/null | wc -l | tr -d ' ')
-fi
+SPECS_COUNT="$(active_delta_spec_count "${REPO_DIR}/specs")"
 
-# Count debt markers if any
-DEBT_COUNT=0
-if command -v rg >/dev/null 2>&1; then
-    DEBT_COUNT=$(rg -c "# pragmatism:|# defer:" "${REPO_DIR}" 2>/dev/null | awk -F: '{s+=$2} END {print s+0}')
-fi
+# An unavailable count is reported as unavailable. Reporting it as zero is the same
+# failure as a gate that prints success after suppressing its own error.
+DEBT_COUNT="$(debt_count "${REPO_DIR}" "${REPO_DIR}" false 2>/dev/null)" || DEBT_COUNT=""
 
 if [ "${JSON_OUTPUT}" = true ]; then
-    cat <<JSON_EOF
-{
-  "profile": "${ACTIVE_PROFILE}",
-  "repository": "${REPO_DIR}",
-  "branch": "${BRANCH}",
-  "trunkBranch": "${TRUNK}",
-  "dirty": ${DIRTY},
-  "testRunner": "${TEST_RUNNER}",
-  "issueProvider": "${ISSUE_PROVIDER}",
-  "orchestrateModels": {
-    "implementer": "${ORCHESTRATE_IMPLEMENTER}",
-    "reviewer": "${ORCHESTRATE_REVIEWER}"
-  },
-  "activeDeltaSpecs": ${SPECS_COUNT},
-  "technicalDebtMarkers": ${DEBT_COUNT}
-}
-JSON_EOF
+    jq -n \
+        --arg profile "${ACTIVE_PROFILE}" \
+        --arg repository "${REPO_DIR}" \
+        --arg branch "${BRANCH}" \
+        --arg trunkBranch "${TRUNK}" \
+        --argjson dirty "${DIRTY}" \
+        --arg testRunner "${TEST_RUNNER}" \
+        --arg issueProvider "${ISSUE_PROVIDER}" \
+        --arg implementer "${ORCHESTRATE_IMPLEMENTER}" \
+        --arg reviewer "${ORCHESTRATE_REVIEWER}" \
+        --argjson activeDeltaSpecs "${SPECS_COUNT}" \
+        --argjson technicalDebtMarkers "${DEBT_COUNT:-null}" \
+        '{
+            profile: $profile,
+            repository: $repository,
+            branch: $branch,
+            trunkBranch: $trunkBranch,
+            dirty: $dirty,
+            testRunner: $testRunner,
+            issueProvider: $issueProvider,
+            orchestrateModels: { implementer: $implementer, reviewer: $reviewer },
+            activeDeltaSpecs: $activeDeltaSpecs,
+            technicalDebtMarkers: $technicalDebtMarkers
+        }'
 else
     cat <<TEXT_EOF
 ${BOLD}${CYAN}=== Agent Workspace Context ===${RESET}
@@ -81,6 +89,6 @@ Test Runner:          ${TEST_RUNNER}
 Issue Provider:       ${ISSUE_PROVIDER}
 Orchestrate Models:   implementer=${ORCHESTRATE_IMPLEMENTER} reviewer=${ORCHESTRATE_REVIEWER}
 Active Delta Specs:   ${SPECS_COUNT}
-Technical Debt Items: ${DEBT_COUNT}
+Technical Debt Items: ${DEBT_COUNT:-${YELLOW}unavailable: the scan could not complete${RESET}}
 TEXT_EOF
 fi

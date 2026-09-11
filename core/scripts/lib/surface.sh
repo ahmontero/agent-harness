@@ -15,6 +15,7 @@
 set -eo pipefail
 
 SURFACE_MANIFEST_NAME=".agent-harness-surface.json"
+SURFACE_MANAGED_MARKER="agent-harness-skill-bundle-v1"
 SURFACE_MANIFEST_SCHEMA=1
 SURFACE_DIGEST_LENGTH=12
 
@@ -112,6 +113,45 @@ surface_expected_entries() {
     fi
 }
 
+# True when agent-harness installed this entry: a bundle carrying the managed marker, or a
+# symlink into some checkout's core/skills.
+#
+# The symlink target is deliberately not pinned to this checkout. Pinning it is what made a
+# surface installed from a second checkout unrepairable: neither the drift check nor the
+# installer would look at those entries, so fourteen obsolete skills stayed published while
+# every command reported the surface current.
+surface_entry_is_managed() {
+    local entry="$1"
+    local target
+
+    if [ -L "${entry}" ]; then
+        target="$(readlink "${entry}")"
+        case "${target}" in
+            */core/skills/*) return 0 ;;
+        esac
+        return 1
+    fi
+
+    if [ -d "${entry}" ] && [ -f "${entry}/.agent-harness-managed" ] && \
+       grep -qx "${SURFACE_MANAGED_MARKER}" "${entry}/.agent-harness-managed" 2>/dev/null; then
+        return 0
+    fi
+
+    return 1
+}
+
+# The managed entries a surface currently publishes, as bare names.
+surface_published_managed_names() {
+    local directory="$1"
+    local entry
+    [ -d "${directory}" ] || return 0
+    for entry in "${directory}"/*; do
+        [ -e "${entry}" ] || [ -L "${entry}" ] || continue
+        surface_entry_is_managed "${entry}" || continue
+        basename "${entry}"
+    done
+}
+
 surface_has_managed_content() {
     local directory="$1"
     [ -d "${directory}" ] || return 1
@@ -196,6 +236,17 @@ surface_evaluate() {
             fi
         fi
     done < <(jq -r '.skills[] | "\(.name)\t\(.kind)\t\(.digest // "")"' "${manifest}")
+
+    # An entry in neither the manifest nor the catalog used to be invisible: the check only
+    # compared those two lists with each other. A managed skill the surface publishes and
+    # no installation records is drift, whichever checkout put it there.
+    local published
+    while IFS= read -r published; do
+        [ -n "${published}" ] || continue
+        if ! printf '%s\n' "${recorded_names}" | cut -f1 | grep -qxF "${published}"; then
+            SURFACE_REASONS+=("${published}: published in this surface and recorded by no installation of it")
+        fi
+    done < <(surface_published_managed_names "${directory}" | LC_ALL=C sort)
 
     if [ ${#SURFACE_REASONS[@]} -eq 0 ]; then
         SURFACE_STATE="current"

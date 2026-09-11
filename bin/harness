@@ -34,13 +34,22 @@ esac
 
 # 2. Check for explicit --profile / -p flag
 if [ "${1:-}" = "--profile" ] || [ "${1:-}" = "-p" ]; then
+    if [ -z "${2:-}" ]; then
+        log_error "The ${1} option requires a profile name."
+        exit 1
+    fi
     export STACK_PROFILE="$2"
     shift 2
 fi
 
 # 3. Active profile resolution
-ACTIVE_PROFILE="$(get_active_profile)"
+PROFILE_RESOLUTION="$(get_active_profile_with_reason)"
+ACTIVE_PROFILE="${PROFILE_RESOLUTION%%$'\t'*}"
+# Subcommands run with STACK_PROFILE already exported, which would make every one of them
+# report "resolved by the environment". The reason travels with it so `harness config
+# validate` and `harness doctor` can still say where the profile actually came from.
 export STACK_PROFILE="${ACTIVE_PROFILE}"
+export STACK_PROFILE_REASON="${PROFILE_RESOLUTION#*$'\t'}"
 
 show_help() {
     print_banner
@@ -60,6 +69,9 @@ ${BOLD}Core Commands:${RESET}
 
   ${GREEN}context${RESET}       Extract fast, token-efficient workspace signals (<1s) for LLMs
                 harness context [--json]
+
+  ${GREEN}config${RESET}        Report the resolved configuration and validate its structure
+                harness config validate
 
   ${GREEN}spec${RESET}          Spec-Driven Development & Living Delta Specs management
                 harness spec status [--json]
@@ -81,7 +93,7 @@ ${BOLD}Core Commands:${RESET}
   ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
                 harness worktree create <type> <issue_key> <slug> [--base <branch>]
                 harness worktree list
-                harness worktree remove <issue_key>
+                harness worktree remove <issue_key|path> [--force] [--dry-run]
 
   ${GREEN}branch${RESET}        Manage & validate issue-driven branches
                 harness branch create <type> <issue_key> <slug> [--base <branch>]
@@ -96,9 +108,12 @@ ${BOLD}Core Commands:${RESET}
                 harness debt [--json] [--all] [--path <path>]
 
   ${GREEN}receipt${RESET}       Record private local workflow lifecycle events
-                harness receipt start <implement|fix|investigate> [--issue <token>]
+                harness receipt start <implement|fix|investigate|orchestrate> [--issue <token>]
                 harness receipt phase <run_id> <phase> <status>
                 harness receipt finish <run_id> <outcome>
+                harness receipt list
+                harness receipt show <run_id>
+                harness receipt prune [--keep <count>]
 
   ${GREEN}ledger${RESET}        Keep a durable append-only record of a workflow run
                 harness ledger start <run_id>
@@ -133,6 +148,9 @@ case "${COMMAND}" in
         ;;
     context)
         exec "${SCRIPTS_DIR}/stack-context.sh" "$@"
+        ;;
+    config)
+        exec "${SCRIPTS_DIR}/stack-config.sh" "$@"
         ;;
     spec)
         exec "${SCRIPTS_DIR}/stack-spec.sh" "$@"

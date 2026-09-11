@@ -1,0 +1,69 @@
+[
+  {
+    "id": "SEC-001",
+    "name": "Hardcoded credential",
+    "pattern": "(apiKey|secretKey|authToken|password|accessToken)[[:space:]]*[:=][[:space:]]*['\"`][A-Za-z0-9_/+=-]{16,}['\"`]",
+    "fileExtensions": [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx"
+    ],
+    "level": "error",
+    "message": "Read credentials from process.env at the boundary, never from a literal."
+  },
+  {
+    "id": "TS-001",
+    "name": "Suppressed type error",
+    "pattern": "@ts-(ignore|nocheck)",
+    "fileExtensions": [
+      ".ts",
+      ".tsx"
+    ],
+    "level": "warning",
+    "message": "Fix the type or narrow it with a documented assertion; a suppression hides the next error too."
+  },
+  {
+    "id": "TS-002",
+    "name": "Dynamic evaluation",
+    "pattern": "(^|[^A-Za-z0-9_.])(eval|new[[:space:]]+Function)\\(",
+    "fileExtensions": [
+      ".ts",
+      ".tsx",
+      ".js",
+      ".jsx"
+    ],
+    "level": "error",
+    "message": "Dynamic evaluation of a string is an injection surface. Use an explicit dispatch table."
+  },
+  {
+    "id": "TS-003",
+    "name": "Left-behind console call",
+    "pattern": "console[.](log|debug)\\(",
+    "fileExtensions": [
+      ".ts",
+      ".tsx"
+    ],
+    "excludePaths": [
+      "*.test.ts",
+      "*.test.tsx",
+      "*.spec.ts",
+      "scripts/*"
+    ],
+    "level": "warning",
+    "message": "Use the project logger so the output has a level and a destination."
+  },
+  {
+    "id": "SEC-003",
+    "name": "Secret material committed by path",
+    "pathPattern": "(^|/)([.]env([.][^/]+)?|[^/]+[.](pem|key|pfx|p12|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519))$",
+    "excludePaths": [
+      "*.example",
+      "*.sample",
+      "*.template",
+      "*.dist"
+    ],
+    "level": "error",
+    "message": "Environment files and key material belong in a secret manager, never in Git. Remove it from the index and rotate the credential."
+  }
+]

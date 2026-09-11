@@ -1635,5 +1635,1151 @@ if ! printf '%s' "${DOCTOR_NOJQ}" | grep -qi "unavailable" || \
     exit 1
 fi
 echo "  [PASS] doctor warns on drift, repairs with --fix, and reports an unrunnable check as unavailable."
+
+echo ""
+echo "=== 24. Testing Configuration Resolution ==="
+
+# A repository with no configuration must resolve to the built-in defaults. The shipped
+# config.example.json is documentation; while it acted as a fallback every unconfigured
+# repository silently adopted its "backend" profile and its pytest/ruff/mypy commands.
+CONFIG_BARE="${TMP_TEST_DIR}/config-bare"
+mkdir -p "${CONFIG_BARE}"
+git -C "${CONFIG_BARE}" init -q
+BARE_VALIDATE="$(cd "${CONFIG_BARE}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate 2>&1 || true)"
+if ! printf '%s' "${BARE_VALIDATE}" | grep -q "Configuration file: none"; then
+    echo "  [FAIL] config validate did not report an absent configuration as none: ${BARE_VALIDATE}"
+    exit 1
+fi
+if printf '%s' "${BARE_VALIDATE}" | grep -q "config.example.json"; then
+    echo "  [FAIL] config.example.json is still acting as a configuration fallback"
+    exit 1
+fi
+BARE_PROFILE="$(cd "${CONFIG_BARE}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json | jq -r '.profile')"
+if [ "${BARE_PROFILE}" != "default" ]; then
+    echo "  [FAIL] An unconfigured repository resolved to profile '${BARE_PROFILE}' instead of default"
+    exit 1
+fi
+if ! (cd "${CONFIG_BARE}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate >/dev/null 2>&1); then
+    echo "  [FAIL] config validate failed on a repository with no configuration"
+    exit 1
+fi
+echo "  [PASS] An unconfigured repository resolves to the built-in defaults."
+
+# jq's // treats false as empty, so a configured false was replaced by the caller's
+# default and nothing could be switched off by configuration.
+CONFIG_FALSE="${TMP_TEST_DIR}/config-false"
+mkdir -p "${CONFIG_FALSE}"
+git -C "${CONFIG_FALSE}" init -q
+cat > "${CONFIG_FALSE}/harness.config.json" <<'FALSE_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "p" },
+  "profiles": { "p": { "displayName": "P", "qa": { "testCommand": false } } }
+}
+FALSE_CONFIG_EOF
+FALSE_VALUE="$(cd "${CONFIG_FALSE}" && STACK_PROFILE=p bash -c '
+    source "'"${HARNESS_ROOT}"'/core/scripts/lib/utils.sh"
+    source "'"${HARNESS_ROOT}"'/core/scripts/lib/config.sh"
+    get_profile_value "qa.testCommand" "true"
+')"
+if [ "${FALSE_VALUE}" != "false" ]; then
+    echo "  [FAIL] A configured false was reported as '${FALSE_VALUE}' instead of false"
+    exit 1
+fi
+MISSING_VALUE="$(cd "${CONFIG_FALSE}" && STACK_PROFILE=p bash -c '
+    source "'"${HARNESS_ROOT}"'/core/scripts/lib/utils.sh"
+    source "'"${HARNESS_ROOT}"'/core/scripts/lib/config.sh"
+    get_profile_value "qa.absentKey" "fallback"
+')"
+if [ "${MISSING_VALUE}" != "fallback" ]; then
+    echo "  [FAIL] An absent key did not fall back to its default: '${MISSING_VALUE}'"
+    exit 1
+fi
+echo "  [PASS] A configured false is distinguished from an absent key."
+
+# Configuration values reached eval, so a configuration file could execute commands.
+CONFIG_EVAL="${TMP_TEST_DIR}/config-eval"
+EVAL_WITNESS="${TMP_TEST_DIR}/eval-witness"
+mkdir -p "${CONFIG_EVAL}"
+git -C "${CONFIG_EVAL}" init -q
+cat > "${CONFIG_EVAL}/harness.config.json" <<EVAL_CONFIG_EOF
+{
+  "project": { "defaultProfile": "p" },
+  "profiles": { "p": { "targetRepoPath": "\$(touch ${EVAL_WITNESS})", "rules": { "scanner": "\$(touch ${EVAL_WITNESS})" } } }
+}
+EVAL_CONFIG_EOF
+(cd "${CONFIG_EVAL}" && STACK_PROFILE=p "${HARNESS_ROOT}/bin/harness" context >/dev/null 2>&1) || true
+(cd "${CONFIG_EVAL}" && STACK_PROFILE=p "${HARNESS_ROOT}/bin/harness" scan --all >/dev/null 2>&1) || true
+if [ -e "${EVAL_WITNESS}" ]; then
+    echo "  [FAIL] A configuration value was evaluated as a shell command"
+    exit 1
+fi
+echo "  [PASS] Configuration values are expanded, never evaluated."
+
+# Structural validation, and an honest account of what it does not cover.
+config_validate_in() {
+    local directory="$1"
+    (cd "${directory}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate 2>&1)
+}
+config_validate_status() {
+    local directory="$1"
+    local status=0
+    (cd "${directory}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate >/dev/null 2>&1) || status=$?
+    printf '%s' "${status}"
+}
+
+CONFIG_BROKEN="${TMP_TEST_DIR}/config-broken"
+mkdir -p "${CONFIG_BROKEN}"
+git -C "${CONFIG_BROKEN}" init -q
+printf '{ "project": ' > "${CONFIG_BROKEN}/harness.config.json"
+if [ "$(config_validate_status "${CONFIG_BROKEN}")" = "0" ]; then
+    echo "  [FAIL] config validate accepted a file that is not valid JSON"
+    exit 1
+fi
+BROKEN_OUTPUT="$(config_validate_in "${CONFIG_BROKEN}" || true)"
+if ! printf '%s' "${BROKEN_OUTPUT}" | grep -q "not valid JSON"; then
+    echo "  [FAIL] config validate did not name invalid JSON as the problem"
+    exit 1
+fi
+
+CONFIG_SHAPE="${TMP_TEST_DIR}/config-shape"
+mkdir -p "${CONFIG_SHAPE}"
+git -C "${CONFIG_SHAPE}" init -q
+cat > "${CONFIG_SHAPE}/harness.config.json" <<'SHAPE_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "absent" },
+  "profiles": { "p": { "qa": { "testCommand": ["not", "a", "string"] }, "unknownKey": 1 } }
+}
+SHAPE_CONFIG_EOF
+SHAPE_OUTPUT="$(config_validate_in "${CONFIG_SHAPE}" || true)"
+if [ "$(config_validate_status "${CONFIG_SHAPE}")" = "0" ]; then
+    echo "  [FAIL] config validate accepted a configuration with type and reference errors"
+    exit 1
+fi
+for expected in "qa.testCommand" "defaultProfile" "unknownKey"; do
+    if ! printf '%s' "${SHAPE_OUTPUT}" | grep -q "${expected}"; then
+        echo "  [FAIL] config validate did not report ${expected}: ${SHAPE_OUTPUT}"
+        exit 1
+    fi
+done
+if ! printf '%s' "${SHAPE_OUTPUT}" | grep -q "Not checked"; then
+    echo "  [FAIL] config validate did not state which checks it could not perform"
+    exit 1
+fi
+echo "  [PASS] config validate reports structural problems and names what it did not check."
+
+echo ""
+echo "=== 25. Testing Gate Refusals ==="
+
+# The unconfigured lint and type defaults ended in `|| echo 'No linter configured'`, so a
+# repository with neither tool passed both gates and `qa all` printed "All required QA
+# gates passed" having checked nothing.
+gates_repo() {
+    local directory="$1"
+    local qa_block="$2"
+    mkdir -p "${directory}"
+    git -C "${directory}" init -q
+    git -C "${directory}" config user.email "tests@agent-harness.local"
+    git -C "${directory}" config user.name "Agent Harness Tests"
+    printf '[]\n' > "${directory}/rules.json"
+    cat > "${directory}/harness.config.json" <<GATES_CONFIG_EOF
+{
+  "project": { "name": "gates", "defaultProfile": "p" },
+  "profiles": { "p": { "qa": ${qa_block}, "rules": { "scanner": "./rules.json" } } }
+}
+GATES_CONFIG_EOF
+    git -C "${directory}" add -A
+    git -C "${directory}" commit -qm "fixture"
+}
+
+GATES_UNSET="${TMP_TEST_DIR}/gates-unset"
+gates_repo "${GATES_UNSET}" '{ "testCommand": "true" }'
+
+for gate in lint types; do
+    GATE_STATUS=0
+    GATE_OUTPUT="$(cd "${GATES_UNSET}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa "${gate}" 2>&1)" || GATE_STATUS=$?
+    if [ "${GATE_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] qa ${gate} exited 0 with no checker configured"
+        exit 1
+    fi
+    if ! printf '%s' "${GATE_OUTPUT}" | grep -q "could not run"; then
+        echo "  [FAIL] qa ${gate} did not report that the gate could not run: ${GATE_OUTPUT}"
+        exit 1
+    fi
+    case "${gate}" in
+        lint) expected_key="qa.lintCommand" ;;
+        types) expected_key="qa.typeCheckCommand" ;;
+    esac
+    if ! printf '%s' "${GATE_OUTPUT}" | grep -q "${expected_key}"; then
+        echo "  [FAIL] qa ${gate} did not name ${expected_key} as the key to set: ${GATE_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] An unconfigured lint or type gate refuses instead of passing."
+
+ALL_STATUS=0
+ALL_OUTPUT="$(cd "${GATES_UNSET}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all 2>&1)" || ALL_STATUS=$?
+if [ "${ALL_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] qa all exited 0 while two gates could not run"
+    exit 1
+fi
+if printf '%s' "${ALL_OUTPUT}" | grep -q "All required QA gates passed"; then
+    echo "  [FAIL] qa all printed success while two gates could not run"
+    exit 1
+fi
+if ! printf '%s' "${ALL_OUTPUT}" | grep -q "could not run: lint types"; then
+    echo "  [FAIL] qa all did not name the gates that could not run: ${ALL_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] qa all separates a gate that could not run from a gate that failed."
+
+# A project with no linter may record that as a decision. It is the reason a configured
+# false has to survive a lookup at all: the alternative is a gate nobody can satisfy.
+GATES_DECLARED="${TMP_TEST_DIR}/gates-declared"
+gates_repo "${GATES_DECLARED}" '{ "testCommand": "true", "lintCommand": false, "typeCheckCommand": false }'
+DECLARED_STATUS=0
+DECLARED_OUTPUT="$(cd "${GATES_DECLARED}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all 2>&1)" || DECLARED_STATUS=$?
+if [ "${DECLARED_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] qa all failed on a repository that declared it has no linter: ${DECLARED_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${DECLARED_OUTPUT}" | grep -q "declared" ; then
+    echo "  [FAIL] qa all did not report the declared-absent gates: ${DECLARED_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A gate declared absent is reported as declared, not as passed."
+
+# Without a usable jq the rule loop was skipped entirely and the scan printed
+# "passed with 0 errors" -- the fail-open shape AH-9 left as an open question.
+GATES_STUB="${TMP_TEST_DIR}/gates-stub"
+mkdir -p "${GATES_STUB}"
+cat > "${GATES_STUB}/jq" <<'JQ_STUB_EOF'
+#!/usr/bin/env bash
+exit 1
+JQ_STUB_EOF
+chmod +x "${GATES_STUB}/jq"
+SCAN_NOJQ_STATUS=0
+SCAN_NOJQ_OUTPUT="$(cd "${GATES_UNSET}" && PATH="${GATES_STUB}:${PATH}" "${HARNESS_ROOT}/bin/harness" scan --all 2>&1)" || SCAN_NOJQ_STATUS=$?
+if [ "${SCAN_NOJQ_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan exited 0 without a usable jq: ${SCAN_NOJQ_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${SCAN_NOJQ_OUTPUT}" | grep -q "passed with 0 errors"; then
+    echo "  [FAIL] scan reported a passing scan without a usable jq"
+    exit 1
+fi
+echo "  [PASS] The scanner refuses to report a result it could not compute."
+
+# A failed push degraded to a warning and the pull request was opened anyway, for a
+# branch that was never pushed.
+SHIP_REPO="${TMP_TEST_DIR}/ship-repo"
+gates_repo "${SHIP_REPO}" '{ "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" }'
+SHIP_STUB="${TMP_TEST_DIR}/ship-stub"
+SHIP_WITNESS="${TMP_TEST_DIR}/ship-witness"
+mkdir -p "${SHIP_STUB}"
+cat > "${SHIP_STUB}/gh" <<SHIP_STUB_EOF
+#!/usr/bin/env bash
+printf '%s\n' "\$*" >> "${SHIP_WITNESS}"
+SHIP_STUB_EOF
+chmod +x "${SHIP_STUB}/gh"
+SHIP_STATUS=0
+SHIP_OUTPUT="$(cd "${SHIP_REPO}" && PATH="${SHIP_STUB}:${PATH}" env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship 2>&1)" || SHIP_STATUS=$?
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship exited 0 although the branch could not be pushed: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if [ -e "${SHIP_WITNESS}" ]; then
+    echo "  [FAIL] ship opened a pull request for a branch it had not pushed: $(cat "${SHIP_WITNESS}")"
+    exit 1
+fi
+echo "  [PASS] ship stops at a failed push instead of opening a pull request."
+
+# A subcommand named `check` that can only warn cannot be used as a gate.
+COMMIT_CHECK_REPO="${TMP_TEST_DIR}/commit-check"
+gates_repo "${COMMIT_CHECK_REPO}" '{ "testCommand": "true" }'
+git -C "${COMMIT_CHECK_REPO}" commit -q --allow-empty -m "not a conventional message"
+CHECK_STATUS=0
+(cd "${COMMIT_CHECK_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit check >/dev/null 2>&1) || CHECK_STATUS=$?
+if [ "${CHECK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit check exited 0 on a message that does not conform"
+    exit 1
+fi
+git -C "${COMMIT_CHECK_REPO}" commit -q --allow-empty -m "fix(AH-11): conform to the standard"
+if ! (cd "${COMMIT_CHECK_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit check >/dev/null 2>&1); then
+    echo "  [FAIL] commit check rejected a conforming message"
+    exit 1
+fi
+echo "  [PASS] commit check fails on a non-conforming message."
+
+echo ""
+echo "=== 26. Testing Signal Truthfulness ==="
+
+# context recursed into specs/archive/ while spec status did not, so the two disagreed:
+# twelve "active" delta specs in a repository whose active count was zero.
+SIGNAL_REPO="${TMP_TEST_DIR}/signals"
+mkdir -p "${SIGNAL_REPO}/specs/archive/done"
+git -C "${SIGNAL_REPO}" init -q
+cat > "${SIGNAL_REPO}/harness.config.json" <<'SIGNAL_CONFIG_EOF'
+{
+  "project": { "name": "signals", "defaultProfile": "p" },
+  "profiles": { "p": { "displayName": "Signals" } }
+}
+SIGNAL_CONFIG_EOF
+printf '# Delta Spec: X\n' > "${SIGNAL_REPO}/specs/delta-AH-1-active.md"
+printf '# Delta Spec: Y\n' > "${SIGNAL_REPO}/specs/archive/done/delta-AH-0-archived.md"
+printf '# Delta Spec: Z\n' > "${SIGNAL_REPO}/specs/archive/done/delta-AH-2-archived.md"
+
+SIGNAL_STATUS_COUNT="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" spec status 2>/dev/null | grep -c 'delta-.*\.md' || true)"
+SIGNAL_CONTEXT_COUNT="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json | jq -r '.activeDeltaSpecs')"
+if [ "${SIGNAL_CONTEXT_COUNT}" != "1" ] || [ "${SIGNAL_STATUS_COUNT}" != "1" ]; then
+    echo "  [FAIL] spec status reported ${SIGNAL_STATUS_COUNT} and context reported ${SIGNAL_CONTEXT_COUNT} active delta specs; both must be 1"
+    exit 1
+fi
+echo "  [PASS] context and spec status agree on the active delta spec count."
+
+# The debt count was computed by a ripgrep invocation with no fallback, so a machine
+# without ripgrep reported zero markers -- indistinguishable from a repository that has none.
+printf '# pragmatism: one\n# defer: two\n' > "${SIGNAL_REPO}/tracked.txt"
+git -C "${SIGNAL_REPO}" add -A
+git -C "${SIGNAL_REPO}" -c user.email=t@t -c user.name=t commit -qm fixture
+DEBT_LISTED="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" debt --json | jq -r 'length')"
+DEBT_IN_CONTEXT="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json | jq -r '.technicalDebtMarkers')"
+if [ "${DEBT_LISTED}" != "2" ] || [ "${DEBT_IN_CONTEXT}" != "2" ]; then
+    echo "  [FAIL] debt reported ${DEBT_LISTED} markers and context reported ${DEBT_IN_CONTEXT}; both must be 2"
+    exit 1
+fi
+echo "  [PASS] context and debt agree on the technical debt marker count."
+
+# A scan that could not complete must not be reported as a count of zero.
+if [ "$(id -u)" -ne 0 ]; then
+    UNREADABLE_REPO="${TMP_TEST_DIR}/signals-unreadable"
+    mkdir -p "${UNREADABLE_REPO}/locked"
+    git -C "${UNREADABLE_REPO}" init -q
+    printf '# pragmatism: hidden\n' > "${UNREADABLE_REPO}/locked/marker.txt"
+    git -C "${UNREADABLE_REPO}" add -A
+    git -C "${UNREADABLE_REPO}" -c user.email=t@t -c user.name=t commit -qm fixture
+    chmod 000 "${UNREADABLE_REPO}/locked"
+    UNREADABLE_CONTEXT="$(cd "${UNREADABLE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json 2>/dev/null | jq -r '.technicalDebtMarkers')"
+    chmod 755 "${UNREADABLE_REPO}/locked"
+    if [ "${UNREADABLE_CONTEXT}" = "0" ]; then
+        echo "  [FAIL] context reported 0 debt markers for a scan that could not complete"
+        exit 1
+    fi
+    if [ "${UNREADABLE_CONTEXT}" != "null" ]; then
+        echo "  [FAIL] context reported '${UNREADABLE_CONTEXT}' instead of null for an incomplete scan"
+        exit 1
+    fi
+    echo "  [PASS] An incomplete debt scan is reported as null, never as zero."
+else
+    echo "  [SKIP] Debt scan failure is not reproducible as root."
+fi
+
+# The JSON document was assembled by a heredoc, so a quote anywhere in a path or branch
+# name produced a document no consumer could parse.
+QUOTE_PARENT="${TMP_TEST_DIR}/quote-parent"
+QUOTE_REPO="${QUOTE_PARENT}/re\"po"
+mkdir -p "${QUOTE_REPO}"
+git -C "${QUOTE_REPO}" init -q
+if ! (cd "${QUOTE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json) | jq empty >/dev/null 2>&1; then
+    echo "  [FAIL] context --json produced an unparseable document for a path containing a quote"
+    exit 1
+fi
+echo "  [PASS] context --json is valid JSON for a path containing a quote."
+
+# doctor claimed to diagnose symlinks, hooks, and configuration and checked none of them.
+DOCTOR_CLAIMS_REPO="${TMP_TEST_DIR}/doctor-claims"
+mkdir -p "${DOCTOR_CLAIMS_REPO}"
+git -C "${DOCTOR_CLAIMS_REPO}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${DOCTOR_CLAIMS_REPO}" >/dev/null
+DOCTOR_CLAIMS="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
+for section in "CLI Installation" "Pre-Commit Hook" "Configuration"; do
+    if ! printf '%s' "${DOCTOR_CLAIMS}" | grep -q "${section}"; then
+        echo "  [FAIL] doctor does not report on ${section}: ${DOCTOR_CLAIMS}"
+        exit 1
+    fi
+done
+if ! printf '%s' "${DOCTOR_CLAIMS}" | grep -q "no agent-harness pre-commit hook"; then
+    echo "  [FAIL] doctor did not report the absent pre-commit hook: ${DOCTOR_CLAIMS}"
+    exit 1
+fi
+
+FOREIGN_HOOKS="$(git -C "${DOCTOR_CLAIMS_REPO}" rev-parse --git-path hooks)"
+case "${FOREIGN_HOOKS}" in
+    /*) ;;
+    *) FOREIGN_HOOKS="${DOCTOR_CLAIMS_REPO}/${FOREIGN_HOOKS}" ;;
+esac
+mkdir -p "${FOREIGN_HOOKS}"
+printf '#!/bin/sh\nexit 0\n' > "${FOREIGN_HOOKS}/pre-commit"
+chmod +x "${FOREIGN_HOOKS}/pre-commit"
+DOCTOR_FOREIGN="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
+if ! printf '%s' "${DOCTOR_FOREIGN}" | grep -q "not written by agent-harness"; then
+    echo "  [FAIL] doctor did not report a foreign pre-commit hook: ${DOCTOR_FOREIGN}"
+    exit 1
+fi
+
+# A configuration doctor cannot validate is an error, not a silent pass.
+printf '{ "project": ' > "${DOCTOR_CLAIMS_REPO}/harness.config.json"
+DOCTOR_BADCONF_STATUS=0
+(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor >/dev/null 2>&1) || DOCTOR_BADCONF_STATUS=$?
+if [ "${DOCTOR_BADCONF_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] doctor exited 0 with a configuration that is not valid JSON"
+    exit 1
+fi
+echo "  [PASS] doctor checks the CLI installation, the pre-commit hook, and the configuration."
+
+# --check-auth was advertised, parsed, and read by nothing.
+DOCTOR_AUTH="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor --check-auth 2>&1 || true)"
+if ! printf '%s' "${DOCTOR_AUTH}" | grep -q "Provider Authentication"; then
+    echo "  [FAIL] doctor --check-auth reported nothing about provider authentication: ${DOCTOR_AUTH}"
+    exit 1
+fi
+echo "  [PASS] doctor --check-auth reports provider authentication state."
+
+echo ""
+echo "=== 27. Testing Destructive Command Refusals ==="
+
+# `worktree remove wt-AH` interpolated the key into grep as a pattern and removed every
+# match with --force. In the reproduction it removed two worktrees and destroyed an
+# unsaved file, with no prompt and no way to recover it.
+WT_ROOT="${TMP_TEST_DIR}/worktrees"
+WT_MAIN="${WT_ROOT}/wt"
+mkdir -p "${WT_MAIN}"
+git -C "${WT_MAIN}" init -q
+git -C "${WT_MAIN}" config user.email "tests@agent-harness.local"
+git -C "${WT_MAIN}" config user.name "Agent Harness Tests"
+git -C "${WT_MAIN}" commit -q --allow-empty -m init
+
+harness_wt() {
+    (cd "${WT_MAIN}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree "$@" 2>&1)
+}
+harness_wt_status() {
+    local status=0
+    (cd "${WT_MAIN}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree "$@" >/dev/null 2>&1) || status=$?
+    printf '%s' "${status}"
+}
+worktree_count() {
+    git -C "${WT_MAIN}" worktree list | grep -c . || true
+}
+
+harness_wt create feat AH-1 alpha >/dev/null
+harness_wt create feat AH-2 beta >/dev/null
+if [ "$(worktree_count)" != "3" ]; then
+    echo "  [FAIL] Fixture worktrees were not created"
+    exit 1
+fi
+
+# The substring that used to match everything must now match nothing.
+LOOSE_OUTPUT="$(harness_wt remove wt-AH || true)"
+if [ "$(worktree_count)" != "3" ]; then
+    echo "  [FAIL] A substring key removed worktrees: ${LOOSE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${LOOSE_OUTPUT}" | grep -q "matches no worktree"; then
+    echo "  [FAIL] A substring key did not report that it matches nothing: ${LOOSE_OUTPUT}"
+    exit 1
+fi
+if [ "$(harness_wt_status remove wt-AH)" = "0" ]; then
+    echo "  [FAIL] worktree remove exited 0 for a key that matches no worktree"
+    exit 1
+fi
+echo "  [PASS] worktree remove matches an exact key, never a substring."
+
+# --dry-run names the target and changes nothing.
+DRY_OUTPUT="$(harness_wt remove AH-1 --dry-run)"
+if [ "$(worktree_count)" != "3" ]; then
+    echo "  [FAIL] --dry-run removed a worktree"
+    exit 1
+fi
+if ! printf '%s' "${DRY_OUTPUT}" | grep -q "wt-AH-1"; then
+    echo "  [FAIL] --dry-run did not name the worktree it would remove: ${DRY_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] worktree remove --dry-run reports without mutating."
+
+# Uncommitted work is never discarded without --force.
+printf 'important\n' > "${WT_ROOT}/wt-AH-1/UNSAVED.txt"
+DIRTY_OUTPUT="$(harness_wt remove AH-1 || true)"
+if [ ! -f "${WT_ROOT}/wt-AH-1/UNSAVED.txt" ]; then
+    echo "  [FAIL] worktree remove destroyed uncommitted work: ${DIRTY_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${DIRTY_OUTPUT}" | grep -q "uncommitted"; then
+    echo "  [FAIL] worktree remove did not explain the refusal: ${DIRTY_OUTPUT}"
+    exit 1
+fi
+if [ "$(harness_wt_status remove AH-1 --force)" != "0" ]; then
+    echo "  [FAIL] worktree remove --force did not remove a dirty worktree"
+    exit 1
+fi
+if [ "$(worktree_count)" != "2" ]; then
+    echo "  [FAIL] worktree remove --force did not remove exactly one worktree"
+    exit 1
+fi
+echo "  [PASS] worktree remove refuses uncommitted work unless forced."
+
+# An ambiguous key is a refusal, not a guess about which of two to destroy.
+# Created with git directly: `harness worktree create` derives the directory from the
+# issue key, so two worktrees answering to one key can only be built by hand -- which is
+# exactly the situation a branch-derived match has to refuse rather than guess at.
+git -C "${WT_MAIN}" worktree add -q -b fix/AH-2-gamma "${WT_ROOT}/other-AH-2" HEAD
+AMBIGUOUS_OUTPUT="$(harness_wt remove AH-2 || true)"
+if printf '%s' "${AMBIGUOUS_OUTPUT}" | grep -q "Removed worktree"; then
+    echo "  [FAIL] An ambiguous key removed a worktree: ${AMBIGUOUS_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${AMBIGUOUS_OUTPUT}" | grep -q "matches more than one worktree"; then
+    echo "  [FAIL] An ambiguous key was not reported as ambiguous: ${AMBIGUOUS_OUTPUT}"
+    exit 1
+fi
+if [ "$(worktree_count)" != "3" ]; then
+    echo "  [FAIL] An ambiguous key changed the worktree list"
+    exit 1
+fi
+echo "  [PASS] An ambiguous worktree key is refused."
+
+# ./setup is advertised as a guided interactive installer and asked nothing, so running it
+# from $HOME installed AGENTS.md, two symlinks, a config, rules, and four surfaces there.
+GUIDED_HOME="${TMP_TEST_DIR}/guided-home"
+GUIDED_CWD="${TMP_TEST_DIR}/guided-cwd"
+mkdir -p "${GUIDED_HOME}" "${GUIDED_CWD}"
+git -C "${GUIDED_CWD}" init -q
+GUIDED_STATUS=0
+GUIDED_OUTPUT="$(cd "${GUIDED_CWD}" && env HOME="${GUIDED_HOME}" "${HARNESS_ROOT}/setup" 2>&1 < /dev/null)" || GUIDED_STATUS=$?
+if [ "${GUIDED_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] Guided setup installed without confirmation and without a terminal"
+    exit 1
+fi
+if [ -f "${GUIDED_CWD}/AGENTS.md" ]; then
+    echo "  [FAIL] Guided setup wrote into the current directory before being confirmed"
+    exit 1
+fi
+for flag in "--yes" "--global" "--target"; do
+    if ! printf '%s' "${GUIDED_OUTPUT}" | grep -q -- "${flag}"; then
+        echo "  [FAIL] Guided setup did not name ${flag} as the explicit alternative: ${GUIDED_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] Guided setup refuses to install unconfirmed."
+
+if ! (cd "${GUIDED_CWD}" && env HOME="${GUIDED_HOME}" "${HARNESS_ROOT}/setup" --yes >/dev/null 2>&1); then
+    echo "  [FAIL] Guided setup --yes did not install"
+    exit 1
+fi
+if [ ! -f "${GUIDED_CWD}/AGENTS.md" ]; then
+    echo "  [FAIL] Guided setup --yes did not initialize the current directory"
+    exit 1
+fi
+echo "  [PASS] Guided setup installs when it is explicitly confirmed."
+
+# Every workflow the installed surface describes needs a repository.
+GUIDED_NOGIT="${TMP_TEST_DIR}/guided-nogit"
+mkdir -p "${GUIDED_NOGIT}"
+NOGIT_STATUS=0
+NOGIT_OUTPUT="$(cd "${GUIDED_NOGIT}" && env HOME="${GUIDED_HOME}" "${HARNESS_ROOT}/setup" --yes 2>&1)" || NOGIT_STATUS=$?
+if [ "${NOGIT_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] Guided setup initialized a directory that is not a Git repository"
+    exit 1
+fi
+if ! printf '%s' "${NOGIT_OUTPUT}" | grep -q "not a Git repository"; then
+    echo "  [FAIL] Guided setup did not explain the refusal: ${NOGIT_OUTPUT}"
+    exit 1
+fi
+TARGET_NOGIT="${TMP_TEST_DIR}/target-nogit"
+mkdir -p "${TARGET_NOGIT}"
+TARGET_NOGIT_OUTPUT="$("${HARNESS_ROOT}/install.sh" --target "${TARGET_NOGIT}" 2>&1)"
+if ! printf '%s' "${TARGET_NOGIT_OUTPUT}" | grep -q "not a Git repository"; then
+    echo "  [FAIL] An explicit --target did not warn about a directory that is not a Git repository"
+    exit 1
+fi
+echo "  [PASS] A directory that is not a repository is refused when guided and reported when explicit."
+
+# Every journal holds a full backup of every replaced file and nothing ever removed one.
+PRUNE_STATE="${TMP_TEST_DIR}/prune-state"
+PRUNE_HOME="${TMP_TEST_DIR}/prune-home"
+mkdir -p "${PRUNE_STATE}" "${PRUNE_HOME}"
+prune_run=0
+while [ "${prune_run}" -lt 12 ]; do
+    env HOME="${PRUNE_HOME}" HARNESS_STATE_DIR="${PRUNE_STATE}" \
+        "${HARNESS_ROOT}/install.sh" --cli-only >/dev/null 2>&1
+    prune_run=$((prune_run + 1))
+done
+PRUNE_COUNT="$(find "${PRUNE_STATE}/transactions" -mindepth 1 -maxdepth 1 -type d | grep -c . || true)"
+if [ "${PRUNE_COUNT}" -gt 10 ]; then
+    echo "  [FAIL] ${PRUNE_COUNT} transaction journals were retained; at most 10 are kept"
+    exit 1
+fi
+if [ "${PRUNE_COUNT}" -lt 1 ]; then
+    echo "  [FAIL] Journal pruning removed every journal, leaving nothing to roll back"
+    exit 1
+fi
+if ! env HOME="${PRUNE_HOME}" HARNESS_STATE_DIR="${PRUNE_STATE}" \
+        "${HARNESS_ROOT}/install.sh" --rollback >/dev/null 2>&1; then
+    echo "  [FAIL] The most recent installation was no longer rollbackable after pruning"
+    exit 1
+fi
+echo "  [PASS] Transaction journals are pruned and the latest stays rollbackable."
+
+echo ""
+echo "=== 28. Testing Advertised Flags ==="
+
+FLAGS_REPO="${TMP_TEST_DIR}/flags"
+mkdir -p "${FLAGS_REPO}"
+git -C "${FLAGS_REPO}" init -q
+git -C "${FLAGS_REPO}" config user.email "tests@agent-harness.local"
+git -C "${FLAGS_REPO}" config user.name "Agent Harness Tests"
+cat > "${FLAGS_REPO}/harness.config.json" <<'FLAGS_CONFIG_EOF'
+{
+  "project": { "name": "flags", "defaultProfile": "p" },
+  "profiles": { "p": { "displayName": "Flags", "git": { "trunkBranch": "trunk" } } }
+}
+FLAGS_CONFIG_EOF
+git -C "${FLAGS_REPO}" add -A
+git -C "${FLAGS_REPO}" commit -qm "fixture"
+git -C "${FLAGS_REPO}" branch -M trunk
+git -C "${FLAGS_REPO}" checkout -q -b other
+git -C "${FLAGS_REPO}" commit -q --allow-empty -m "divergent"
+
+harness_in_flags() {
+    (cd "${FLAGS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>&1)
+}
+
+# --base was advertised by both commands and read from the fourth positional argument, so
+# it reached git as a revision and printed git's usage text instead of creating a branch.
+harness_in_flags branch create feat AH-50 from-trunk --base trunk >/dev/null
+if [ "$(git -C "${FLAGS_REPO}" branch --show-current)" != "feat/AH-50-from-trunk" ]; then
+    echo "  [FAIL] branch create --base did not create and check out the branch"
+    exit 1
+fi
+if [ "$(git -C "${FLAGS_REPO}" rev-parse HEAD)" != "$(git -C "${FLAGS_REPO}" rev-parse trunk)" ]; then
+    echo "  [FAIL] branch create --base did not branch from the named base"
+    exit 1
+fi
+git -C "${FLAGS_REPO}" checkout -q other
+
+harness_in_flags worktree create feat AH-51 wt-from-trunk --base trunk >/dev/null
+FLAGS_WT="$(dirname "${FLAGS_REPO}")/$(basename "${FLAGS_REPO}")-AH-51"
+if [ ! -d "${FLAGS_WT}" ]; then
+    echo "  [FAIL] worktree create --base did not create the worktree"
+    exit 1
+fi
+if [ "$(git -C "${FLAGS_WT}" rev-parse HEAD)" != "$(git -C "${FLAGS_REPO}" rev-parse trunk)" ]; then
+    echo "  [FAIL] worktree create --base did not branch from the named base"
+    exit 1
+fi
+echo "  [PASS] branch create and worktree create accept --base."
+
+# --module was advertised and discarded. An active spec stays directly in specs/, which is
+# what "active" means to both spec status and context, so the module is recorded inside the
+# spec and read back by `spec archive` rather than changing where the file lives.
+harness_in_flags spec create AH-52 modular --module catalogue >/dev/null
+if [ ! -f "${FLAGS_REPO}/specs/delta-AH-52-modular.md" ]; then
+    echo "  [FAIL] spec create --module did not create the spec: $(find "${FLAGS_REPO}/specs" -type f)"
+    exit 1
+fi
+if ! grep -q "catalogue" "${FLAGS_REPO}/specs/delta-AH-52-modular.md"; then
+    echo "  [FAIL] spec create --module did not record the module in the spec"
+    exit 1
+fi
+if [ "$(cd "${FLAGS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" spec status 2>/dev/null | grep -c 'delta-AH-52')" != "1" ]; then
+    echo "  [FAIL] A spec created with --module is not reported as active"
+    exit 1
+fi
+echo "  [PASS] spec create --module records the module and keeps the spec active."
+
+# An issue key or slug that escapes specs/ reached sed and failed with a raw redirection error.
+for bad in "a/b" ".." "../x"; do
+    if harness_in_flags spec create AH-53 "${bad}" >/dev/null 2>&1; then
+        echo "  [FAIL] spec create accepted an unsafe slug: ${bad}"
+        exit 1
+    fi
+    UNSAFE_OUTPUT="$(harness_in_flags spec create AH-53 "${bad}" || true)"
+    if ! printf '%s' "${UNSAFE_OUTPUT}" | grep -q "Unsafe"; then
+        echo "  [FAIL] spec create did not name the slug as unsafe: ${bad} -> ${UNSAFE_OUTPUT}"
+        exit 1
+    fi
+done
+if harness_in_flags spec create "../etc" safe >/dev/null 2>&1; then
+    echo "  [FAIL] spec create accepted an unsafe issue key"
+    exit 1
+fi
+echo "  [PASS] spec create rejects an issue key or slug that escapes specs/."
+
+# --all was advertised and dropped, so there was no way to reach an untracked marker.
+printf '# pragmatism: untracked\n' > "${FLAGS_REPO}/loose.txt"
+printf '// defer: slashes\n' > "${FLAGS_REPO}/tracked.ts"
+git -C "${FLAGS_REPO}" add tracked.ts
+git -C "${FLAGS_REPO}" commit -qm "tracked marker"
+TRACKED_COUNT="$(harness_in_flags debt --json | jq -r 'length')"
+ALL_COUNT="$(harness_in_flags debt --all --json | jq -r 'length')"
+if [ "${TRACKED_COUNT}" != "1" ]; then
+    echo "  [FAIL] debt reported ${TRACKED_COUNT} tracked markers; the // marker must count"
+    exit 1
+fi
+if [ "${ALL_COUNT}" != "2" ]; then
+    echo "  [FAIL] debt --all reported ${ALL_COUNT} markers; it must also see the untracked one"
+    exit 1
+fi
+if ! harness_in_flags debt --json | jq -e '.[0] | has("file") and has("line") and has("text")' >/dev/null; then
+    echo "  [FAIL] debt --json did not emit objects with file, line, and text"
+    exit 1
+fi
+if ! harness_in_flags debt --path "${FLAGS_REPO}/tracked.ts" --json | jq -e 'length == 1' >/dev/null; then
+    echo "  [FAIL] debt --path did not restrict the scan"
+    exit 1
+fi
+# A colon in a path must not drop the finding: emitting fewer findings than the text
+# listing shows is the same class of defect as reporting a count nothing computed.
+mkdir -p "${FLAGS_REPO}/dir:with:colons"
+printf '# defer: colon path\n' > "${FLAGS_REPO}/dir:with:colons/marker.py"
+git -C "${FLAGS_REPO}" add -A
+git -C "${FLAGS_REPO}" commit -qm "colon marker"
+if ! harness_in_flags debt --json | jq -e '[.[] | select(.file | contains("dir:with:colons"))] | length == 1' >/dev/null; then
+    echo "  [FAIL] debt --json dropped a finding whose path contains a colon: $(harness_in_flags debt --json)"
+    exit 1
+fi
+echo "  [PASS] debt honours --all, --path, and emits a JSON array."
+
+# `spec status [--json]` was advertised in the dispatcher help and the flag was dropped on
+# the floor with every other argument, so the JSON form printed the human listing.
+harness_in_flags spec create AH-55 second >/dev/null
+STATUS_JSON="$(harness_in_flags spec status --json)"
+if ! printf '%s' "${STATUS_JSON}" | jq empty >/dev/null 2>&1; then
+    echo "  [FAIL] spec status --json did not emit JSON: ${STATUS_JSON}"
+    exit 1
+fi
+if [ "$(printf '%s' "${STATUS_JSON}" | jq -r 'length')" != "2" ]; then
+    echo "  [FAIL] spec status --json did not list both active specs: ${STATUS_JSON}"
+    exit 1
+fi
+if ! printf '%s' "${STATUS_JSON}" | jq -e 'all(.[]; test("delta-.*[.]md$"))' >/dev/null; then
+    echo "  [FAIL] spec status --json listed something that is not a delta spec: ${STATUS_JSON}"
+    exit 1
+fi
+echo "  [PASS] spec status --json emits the active delta specs as JSON."
+
+# README advertises autocompletion for Zsh and Bash; only the Zsh file was ever written.
+COMPLETION_HOME="${TMP_TEST_DIR}/completion-home"
+mkdir -p "${COMPLETION_HOME}"
+env HOME="${COMPLETION_HOME}" "${HARNESS_ROOT}/bin/harness" completion install >/dev/null
+if [ ! -f "${COMPLETION_HOME}/.zsh/completion/_harness" ]; then
+    echo "  [FAIL] completion install wrote no Zsh completion"
+    exit 1
+fi
+BASH_COMPLETION="${COMPLETION_HOME}/.local/share/bash-completion/completions/harness"
+if [ ! -f "${BASH_COMPLETION}" ]; then
+    echo "  [FAIL] completion install wrote no Bash completion"
+    exit 1
+fi
+if ! bash -n "${BASH_COMPLETION}"; then
+    echo "  [FAIL] The Bash completion is not valid Bash"
+    exit 1
+fi
+for command_name in config receipt ledger sync; do
+    if ! grep -q "${command_name}" "${BASH_COMPLETION}" || \
+       ! grep -q "${command_name}" "${COMPLETION_HOME}/.zsh/completion/_harness"; then
+        echo "  [FAIL] Completions do not offer '${command_name}'"
+        exit 1
+    fi
+done
+echo "  [PASS] completion install writes both a Zsh and a Bash completion."
+
+# --profile with no value ran `shift 2` with one argument left, which under set -e exited 0
+# having done nothing at all.
+PROFILE_STATUS=0
+PROFILE_OUTPUT="$(cd "${FLAGS_REPO}" && "${HARNESS_ROOT}/bin/harness" --profile 2>&1)" || PROFILE_STATUS=$?
+if [ "${PROFILE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] harness --profile with no value exited 0"
+    exit 1
+fi
+if ! printf '%s' "${PROFILE_OUTPUT}" | grep -q "requires a profile name"; then
+    echo "  [FAIL] harness --profile with no value did not name the missing argument: ${PROFILE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] harness --profile requires a value."
+
+# An unknown recipe installed nothing and reported success.
+RECIPE_TARGET="${TMP_TEST_DIR}/recipe-unknown"
+mkdir -p "${RECIPE_TARGET}"
+git -C "${RECIPE_TARGET}" init -q
+RECIPE_STATUS=0
+RECIPE_OUTPUT="$("${HARNESS_ROOT}/install.sh" --target "${RECIPE_TARGET}" --recipe pyton-fastapi 2>&1)" || RECIPE_STATUS=$?
+if [ "${RECIPE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] An unknown recipe installed successfully"
+    exit 1
+fi
+if ! printf '%s' "${RECIPE_OUTPUT}" | grep -q "python-fastapi"; then
+    echo "  [FAIL] An unknown recipe did not name the available recipes: ${RECIPE_OUTPUT}"
+    exit 1
+fi
+if [ -f "${RECIPE_TARGET}/AGENTS.md" ]; then
+    echo "  [FAIL] An unknown recipe left a partial installation behind"
+    exit 1
+fi
+echo "  [PASS] An unknown recipe is refused and rolled back."
+
+# The issue-key pattern was unanchored, so feat/add-2fa-support committed as feat(add-2).
+git -C "${FLAGS_REPO}" checkout -q -b feat/add-2fa-support
+printf 'x\n' > "${FLAGS_REPO}/subject.txt"
+git -C "${FLAGS_REPO}" add subject.txt
+harness_in_flags commit build feat "support two-factor auth" >/dev/null
+BUILT_MESSAGE="$(git -C "${FLAGS_REPO}" log -1 --pretty=%s)"
+if [ "${BUILT_MESSAGE}" != "feat: support two-factor auth" ]; then
+    echo "  [FAIL] commit build read an issue key out of a slug: ${BUILT_MESSAGE}"
+    exit 1
+fi
+git -C "${FLAGS_REPO}" checkout -q -b feat/AH-54-real-key
+printf 'y\n' > "${FLAGS_REPO}/subject2.txt"
+git -C "${FLAGS_REPO}" add subject2.txt
+harness_in_flags commit build feat "carry the issue key" >/dev/null
+KEYED_MESSAGE="$(git -C "${FLAGS_REPO}" log -1 --pretty=%s)"
+if [ "${KEYED_MESSAGE}" != "feat(AH-54): carry the issue key" ]; then
+    echo "  [FAIL] commit build did not carry the branch's issue key: ${KEYED_MESSAGE}"
+    exit 1
+fi
+echo "  [PASS] commit build anchors the issue key to the branch's issue segment."
+
+# commit build printed a success-shaped message and then surfaced git's own error.
+EMPTY_INDEX_STATUS=0
+EMPTY_INDEX_OUTPUT="$(harness_in_flags commit build feat "nothing is staged")" || EMPTY_INDEX_STATUS=$?
+if [ "${EMPTY_INDEX_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit build committed with an empty index"
+    exit 1
+fi
+if ! printf '%s' "${EMPTY_INDEX_OUTPUT}" | grep -q "Nothing is staged"; then
+    echo "  [FAIL] commit build did not explain the empty index: ${EMPTY_INDEX_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] commit build refuses an empty index."
+
+echo ""
+echo "=== 29. Testing Drift Of Unrecorded Surfaces ==="
+# The drift check only ever compared the manifest against the catalog, so an entry that
+# was in neither was invisible. In the audited installation fourteen obsolete skills --
+# including `ship`, which the catalog marks removed -- were published into ~/.claude/skills
+# from a second checkout while `harness sync --check` called the surface current. They were
+# unreachable to repair too: remove_managed_skill only matched symlinks under the current
+# HARNESS_ROOT, so no later run from any other checkout could clean them up.
+UNRECORDED_TARGET="${TMP_TEST_DIR}/unrecorded-target"
+mkdir -p "${UNRECORDED_TARGET}"
+git -C "${UNRECORDED_TARGET}" init -q
+"${HARNESS_ROOT}/install.sh" --target "${UNRECORDED_TARGET}" >/dev/null
+
+UNRECORDED_SURFACE="${UNRECORDED_TARGET}/.claude/skills"
+if ! "${HARNESS_ROOT}/bin/harness" sync --check --target "${UNRECORDED_TARGET}" >/dev/null 2>&1; then
+    echo "  [FAIL] A freshly installed surface was already reported as drifted"
+    exit 1
+fi
+
+# A bundle carrying the managed marker that no manifest records.
+mkdir -p "${UNRECORDED_SURFACE}/harness-obsolete/references"
+printf -- '---\nname: harness-obsolete\ndescription: gone\n---\n' > "${UNRECORDED_SURFACE}/harness-obsolete/SKILL.md"
+printf 'agent-harness-skill-bundle-v1\n' > "${UNRECORDED_SURFACE}/harness-obsolete/.agent-harness-managed"
+
+# A symlink into a checkout that is not this one, which is how the audited surface got its
+# fourteen. The target must exist so the link is not merely broken.
+FOREIGN_CHECKOUT="${TMP_TEST_DIR}/foreign-checkout"
+mkdir -p "${FOREIGN_CHECKOUT}/core/skills/ship"
+printf -- '---\nname: ship\ndescription: removed from the catalog\n---\n' > "${FOREIGN_CHECKOUT}/core/skills/ship/SKILL.md"
+ln -s "${FOREIGN_CHECKOUT}/core/skills/ship" "${UNRECORDED_SURFACE}/ship"
+
+UNRECORDED_REPORT="$("${HARNESS_ROOT}/bin/harness" sync --check --target "${UNRECORDED_TARGET}" 2>&1 || true)"
+if "${HARNESS_ROOT}/bin/harness" sync --check --target "${UNRECORDED_TARGET}" >/dev/null 2>&1; then
+    echo "  [FAIL] sync --check called a surface current while it published two unrecorded skills"
+    exit 1
+fi
+for unrecorded in "harness-obsolete" "ship"; do
+    if ! printf '%s' "${UNRECORDED_REPORT}" | grep -q "${unrecorded}"; then
+        echo "  [FAIL] sync --check did not name the unrecorded skill '${unrecorded}': ${UNRECORDED_REPORT}"
+        exit 1
+    fi
+done
+echo "  [PASS] A managed skill no manifest records is reported as drift."
+
+# An unmanaged directory is somebody else's, and must be left exactly where it is.
+mkdir -p "${UNRECORDED_SURFACE}/somebody-elses-skill"
+printf -- '---\nname: somebody-elses-skill\ndescription: not ours\n---\n' > "${UNRECORDED_SURFACE}/somebody-elses-skill/SKILL.md"
+
+SYNC_REPAIR="$("${HARNESS_ROOT}/bin/harness" sync --target "${UNRECORDED_TARGET}" 2>&1)"
+if [ -e "${UNRECORDED_SURFACE}/harness-obsolete" ] || [ -L "${UNRECORDED_SURFACE}/ship" ]; then
+    echo "  [FAIL] sync left an unrecorded managed skill published: ${SYNC_REPAIR}"
+    exit 1
+fi
+for removed in "harness-obsolete" "ship"; do
+    if ! printf '%s' "${SYNC_REPAIR}" | grep -q "${removed}"; then
+        echo "  [FAIL] sync removed '${removed}' without naming it: ${SYNC_REPAIR}"
+        exit 1
+    fi
+done
+if [ ! -f "${UNRECORDED_SURFACE}/somebody-elses-skill/SKILL.md" ]; then
+    echo "  [FAIL] sync removed a skill agent-harness does not manage"
+    exit 1
+fi
+if ! "${HARNESS_ROOT}/bin/harness" sync --check --target "${UNRECORDED_TARGET}" >/dev/null 2>&1; then
+    echo "  [FAIL] The surface is still drifted after sync repaired it"
+    exit 1
+fi
+echo "  [PASS] sync removes unrecorded managed skills by name and leaves unmanaged ones alone."
+
+echo ""
+echo "=== 30. Testing Scanner Paths And Suppression ==="
+# The scanner could only ever match file *content*, so it could not express a forbidden
+# filename -- which is the first thing a pre-commit gate is installed to stop. And with no
+# escape hatch, one false positive left --no-verify as the only option, retiring the whole
+# gate rather than one line.
+PATHS_REPO="${TMP_TEST_DIR}/scanner-paths"
+mkdir -p "${PATHS_REPO}"
+git -C "${PATHS_REPO}" init -q
+git -C "${PATHS_REPO}" config user.email "tests@agent-harness.local"
+git -C "${PATHS_REPO}" config user.name "Agent Harness Tests"
+
+scan_paths() {
+    SCAN_PATHS_STATUS=0
+    SCAN_PATHS_OUTPUT="$(cd "${PATHS_REPO}" && "${HARNESS_ROOT}/bin/harness" scan --all --rules "$1" 2>&1)" || SCAN_PATHS_STATUS=$?
+}
+
+PATH_RULES="${TMP_TEST_DIR}/path-rules.json"
+cat > "${PATH_RULES}" <<'PATH_RULES_EOF'
+[
+  {
+    "id": "PATH-001",
+    "name": "Environment file",
+    "pathPattern": "(^|/)\\.env([.][^/]+)?$",
+    "excludePaths": ["*.example"],
+    "level": "error",
+    "message": "Environment files must not be committed."
+  },
+  {
+    "id": "CONTENT-001",
+    "name": "Forbidden content",
+    "pattern": "FORBIDDEN_CONTENT",
+    "level": "error",
+    "message": "Remove the forbidden content."
+  },
+  {
+    "id": "SCOPED-001",
+    "name": "Scoped content",
+    "pattern": "SCOPED_MARKER",
+    "excludePaths": ["vendor/*", "*.generated.js"],
+    "level": "error",
+    "message": "Remove the scoped marker."
+  }
+]
+PATH_RULES_EOF
+
+printf 'SECRET=1\n' > "${PATHS_REPO}/.env"
+printf 'SECRET=example\n' > "${PATHS_REPO}/.env.example"
+git -C "${PATHS_REPO}" add -A -f
+scan_paths "${PATH_RULES}"
+if [ "${SCAN_PATHS_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] A pathPattern rule did not flag a committed .env: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${SCAN_PATHS_OUTPUT}" | grep -q "PATH-001"; then
+    echo "  [FAIL] The pathPattern finding did not name its rule: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${SCAN_PATHS_OUTPUT}" | grep -q "\.env\.example"; then
+    echo "  [FAIL] excludePaths did not exempt .env.example: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+git -C "${PATHS_REPO}" rm -q --cached .env >/dev/null
+rm -f "${PATHS_REPO}/.env"
+echo "  [PASS] A pathPattern rule matches a forbidden filename and honours excludePaths."
+
+# Suppression on the matching line and on the line above it.
+printf 'ok = 1\nvalue = "FORBIDDEN_CONTENT"  # harness-ignore: CONTENT-001\n' > "${PATHS_REPO}/inline.py"
+printf '# harness-ignore: CONTENT-001\nvalue = "FORBIDDEN_CONTENT"\n' > "${PATHS_REPO}/above.py"
+git -C "${PATHS_REPO}" add -A
+scan_paths "${PATH_RULES}"
+if [ "${SCAN_PATHS_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] Suppressed findings still failed the scan: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] harness-ignore suppresses a finding on its line and on the line below."
+
+# Suppression is per rule: naming one rule must not silence another.
+printf 'value = "FORBIDDEN_CONTENT"  # harness-ignore: PATH-001\n' > "${PATHS_REPO}/wrong-rule.py"
+git -C "${PATHS_REPO}" add -A
+scan_paths "${PATH_RULES}"
+if [ "${SCAN_PATHS_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] A harness-ignore for one rule silenced another: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+rm -f "${PATHS_REPO}/wrong-rule.py"
+git -C "${PATHS_REPO}" add -A
+echo "  [PASS] harness-ignore names one rule and silences only that rule."
+
+# excludePaths on a content rule.
+mkdir -p "${PATHS_REPO}/vendor"
+printf 'SCOPED_MARKER\n' > "${PATHS_REPO}/vendor/lib.js"
+printf 'SCOPED_MARKER\n' > "${PATHS_REPO}/bundle.generated.js"
+git -C "${PATHS_REPO}" add -A
+scan_paths "${PATH_RULES}"
+if [ "${SCAN_PATHS_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] excludePaths did not exempt a content-rule match: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+printf 'SCOPED_MARKER\n' > "${PATHS_REPO}/app.js"
+git -C "${PATHS_REPO}" add -A
+scan_paths "${PATH_RULES}"
+if [ "${SCAN_PATHS_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] excludePaths exempted a path it does not cover: ${SCAN_PATHS_OUTPUT}"
+    exit 1
+fi
+rm -f "${PATHS_REPO}/app.js"
+git -C "${PATHS_REPO}" add -A
+echo "  [PASS] excludePaths scopes a content rule without disabling it."
+
+# A rule must say what it matches, exactly once.
+for broken in '[{"id":"B1","name":"n","level":"error","message":"m"}]' \
+              '[{"id":"B2","name":"n","pattern":"a","pathPattern":"b","level":"error","message":"m"}]'; do
+    BROKEN_RULES="${TMP_TEST_DIR}/broken-rule.json"
+    printf '%s\n' "${broken}" > "${BROKEN_RULES}"
+    scan_paths "${BROKEN_RULES}"
+    if [ "${SCAN_PATHS_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] The scanner accepted a rule that does not name exactly one matcher: ${broken}"
+        exit 1
+    fi
+done
+echo "  [PASS] A rule must carry exactly one of pattern or pathPattern."
+
+# The shipped rules refuse secret material by path.
+for shipped_rules in "${HARNESS_ROOT}/rules/landmines.json" "${HARNESS_ROOT}/core/templates/landmines-template.json"; do
+    if ! jq -e '[.[] | select(.id == "SEC-003")] | length == 1' "${shipped_rules}" >/dev/null; then
+        echo "  [FAIL] ${shipped_rules} does not ship SEC-003"
+        exit 1
+    fi
+    for secret_path in ".env" ".env.production" "deploy/server.pem" "certs/private.key" "home/id_rsa"; do
+        mkdir -p "${PATHS_REPO}/$(dirname "${secret_path}")"
+        printf 'x\n' > "${PATHS_REPO}/${secret_path}"
+        git -C "${PATHS_REPO}" add -A -f
+        scan_paths "${shipped_rules}"
+        if [ "${SCAN_PATHS_STATUS}" -eq 0 ]; then
+            echo "  [FAIL] ${shipped_rules} did not refuse ${secret_path}: ${SCAN_PATHS_OUTPUT}"
+            exit 1
+        fi
+        git -C "${PATHS_REPO}" rm -q --cached "${secret_path}" >/dev/null
+        rm -f "${PATHS_REPO}/${secret_path}"
+    done
+    printf 'x\n' > "${PATHS_REPO}/.env.example"
+    git -C "${PATHS_REPO}" add -A -f
+    scan_paths "${shipped_rules}"
+    if [ "${SCAN_PATHS_STATUS}" -ne 0 ]; then
+        echo "  [FAIL] ${shipped_rules} refused .env.example: ${SCAN_PATHS_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] The shipped rules refuse environment files and key material by path."
+
+# Every recipe declares a scanner and must ship the rules it declares.
+for recipe_config in "${HARNESS_ROOT}"/recipes/*/stack.config.json; do
+    recipe_dir="$(dirname "${recipe_config}")"
+    declared="$(jq -r '.profiles | to_entries[0].value.rules.scanner // empty' "${recipe_config}")"
+    if [ -z "${declared}" ]; then
+        echo "  [FAIL] $(basename "${recipe_dir}") declares no scanner rules"
+        exit 1
+    fi
+    recipe_rules="${recipe_dir}/${declared#./}"
+    if [ ! -f "${recipe_rules}" ] || ! jq empty "${recipe_rules}" >/dev/null 2>&1; then
+        echo "  [FAIL] $(basename "${recipe_dir}") declares ${declared} and does not ship it"
+        exit 1
+    fi
+    if ! jq -e 'length > 0 and all(.[];
+            has("id") and has("name") and has("level") and has("message") and
+            (((has("pattern") | if . then 1 else 0 end) + (has("pathPattern") | if . then 1 else 0 end)) == 1))' \
+        "${recipe_rules}" >/dev/null; then
+        echo "  [FAIL] ${recipe_rules} contains a rule that is not well formed"
+        exit 1
+    fi
+    scan_paths "${recipe_rules}"
+    if [ "${SCAN_PATHS_STATUS}" -ne 0 ]; then
+        echo "  [FAIL] ${recipe_rules} could not be run by the scanner: ${SCAN_PATHS_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] Every recipe ships the scanner rules its configuration declares."
+
+echo ""
+echo "=== 31. Testing Receipt Read Path ==="
+# The receipt command has been write-only since AH-3: it produced an observability record
+# that the user it was produced for could not read back, and nothing ever removed one.
+RECEIPT_READ_REPO="${TMP_TEST_DIR}/receipt-read"
+mkdir -p "${RECEIPT_READ_REPO}"
+git -C "${RECEIPT_READ_REPO}" init -q
+git -C "${RECEIPT_READ_REPO}" config user.email "tests@agent-harness.local"
+git -C "${RECEIPT_READ_REPO}" config user.name "Agent Harness Tests"
+git -C "${RECEIPT_READ_REPO}" commit -q --allow-empty -m init
+git -C "${RECEIPT_READ_REPO}" checkout -q -b task/AH-60-read-path
+
+receipt_in() {
+    (cd "${RECEIPT_READ_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" receipt "$@")
+}
+
+OPEN_RUN="$(receipt_in start implement --issue AH-60)"
+receipt_in phase "${OPEN_RUN}" understand passed
+CLOSED_RUN="$(receipt_in start fix --issue AH-61)"
+receipt_in phase "${CLOSED_RUN}" reproduce passed
+receipt_in finish "${CLOSED_RUN}" completed
+
+LIST_OUTPUT="$(receipt_in list)"
+for expected in "${OPEN_RUN}" "${CLOSED_RUN}" "AH-60" "AH-61" "task/AH-60-read-path" "implement" "fix"; do
+    if ! printf '%s' "${LIST_OUTPUT}" | grep -qF "${expected}"; then
+        echo "  [FAIL] receipt list did not report '${expected}': ${LIST_OUTPUT}"
+        exit 1
+    fi
+done
+if ! printf '%s' "${LIST_OUTPUT}" | grep -F "${OPEN_RUN}" | grep -q "open"; then
+    echo "  [FAIL] receipt list did not mark the unfinished run as open: ${LIST_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${LIST_OUTPUT}" | grep -F "${CLOSED_RUN}" | grep -q "completed"; then
+    echo "  [FAIL] receipt list did not report the finished run's outcome: ${LIST_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] receipt list reports every run, its issue, its branch, and whether it is open."
+
+SHOW_OUTPUT="$(receipt_in show "${CLOSED_RUN}")"
+for expected in "workflow_started" "reproduce" "workflow_finished" "completed"; do
+    if ! printf '%s' "${SHOW_OUTPUT}" | grep -qF "${expected}"; then
+        echo "  [FAIL] receipt show did not report '${expected}': ${SHOW_OUTPUT}"
+        exit 1
+    fi
+done
+if receipt_in show "no-such-run" >/dev/null 2>&1; then
+    echo "  [FAIL] receipt show accepted a run that does not exist"
+    exit 1
+fi
+echo "  [PASS] receipt show prints one run's events."
+
+# An abandoned run is a finding, not litter, so pruning never touches a run that is open.
+PRUNE_RUNS=""
+prune_index=0
+while [ "${prune_index}" -lt 4 ]; do
+    extra_run="$(receipt_in start investigate)"
+    receipt_in finish "${extra_run}" completed
+    PRUNE_RUNS="${PRUNE_RUNS}${extra_run}
+"
+    prune_index=$((prune_index + 1))
+done
+SECOND_OPEN="$(receipt_in start investigate)"
+
+PRUNE_OUTPUT="$(receipt_in prune --keep 2)"
+if ! printf '%s' "${PRUNE_OUTPUT}" | grep -q "3"; then
+    echo "  [FAIL] receipt prune did not report how many receipts it removed: ${PRUNE_OUTPUT}"
+    exit 1
+fi
+REMAINING="$(receipt_in list)"
+for still_open in "${OPEN_RUN}" "${SECOND_OPEN}"; do
+    if ! printf '%s' "${REMAINING}" | grep -qF "${still_open}"; then
+        echo "  [FAIL] receipt prune removed a run that is still open: ${still_open}"
+        exit 1
+    fi
+done
+TERMINAL_LEFT="$(printf '%s' "${REMAINING}" | grep -c "completed" || true)"
+if [ "${TERMINAL_LEFT}" != "2" ]; then
+    echo "  [FAIL] receipt prune left ${TERMINAL_LEFT} terminal receipts instead of 2: ${REMAINING}"
+    exit 1
+fi
+echo "  [PASS] receipt prune keeps the newest terminal receipts and never prunes an open run."
+
 echo ""
 echo "All automated tests passed successfully! [100%]"

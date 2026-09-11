@@ -44,7 +44,7 @@ flowchart TD
 
 ### 1. Minimal System Dependencies
 - Written in Bash with no Node, Python, or compiled runtime bundle.
-- Requires Git and `jq`; network and optional AI integrations additionally use `curl`.
+- Requires Git and `jq`. `curl` is needed only to fetch the one-line remote installer; no command the harness runs uses the network.
 - Keeps startup and installation overhead small by relying on standard system tooling.
 
 ### 2. Universal Multi-Harness Federation
@@ -69,4 +69,4 @@ Each surface therefore carries a `.agent-harness-surface.json` manifest recordin
 `core/scripts/lib/surface.sh` holds that reasoning once, and the installer, `harness sync`, and `harness doctor` all read it from there. Two implementations of "what should this surface contain?" would eventually disagree, and the disagreement would surface as a directory reported current because the checker forgot a rule the installer applies.
 
 ### 5. Sub-Second Context Extraction
-- `harness context --json` extracts the active profile, repository, branch/trunk, dirty state, configured test runner and issue provider, plus active-spec and debt counts in a compact JSON signal.
+- `harness context --json` extracts the active profile, repository, branch/trunk, dirty state, configured test runner and issue provider, plus active-spec and debt counts in a compact JSON signal. Every count comes from the same helper as the command a human would run to check it -- `core/scripts/lib/specs.sh` for active delta specs, `core/scripts/lib/debt.sh` for markers -- for the reason `lib/surface.sh` exists: two implementations of one question eventually disagree, and the one an agent reads is the one nobody verifies. A count the scan could not compute is reported as `null`, never as zero.

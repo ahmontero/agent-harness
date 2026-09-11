@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.4.1-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.5.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -251,8 +251,12 @@ Lightweight Spec-Driven Development (OpenSpec):
 <summary><b>5. 🩺 Self-Healing Doctor (<code>/harness-doctor [--fix]</code>)</b></summary>
 
 Diagnoses environment health:
-- Verifies required executables, target repository health, and Git configuration.
+- Verifies required executables, target repository health, and which agent harnesses are active.
 - Reports whether each installed skill surface is still current, with a reason per drifted surface. Drift is a warning, not an error: a stale surface still works.
+- Checks that the `~/.local/bin` CLI symlinks resolve to this checkout and that the directory is on `PATH`.
+- Reports whether the repository's `pre-commit` hook is agent-harness's own, a foreign hook, or absent.
+- Validates the resolved configuration; a configuration that does not validate is an error, not a warning.
+- `--check-auth` reports whether the configured issue and CI provider CLIs are authenticated.
 - `--fix` synchronizes the drifted surfaces it found. A check that could not run reports as unavailable, never as clean.
 </details>
 
@@ -267,6 +271,17 @@ Manages isolated `git worktree` directories per ticket:
 <summary><b>7. 🧪 QA Orchestrator (<code>/harness-qa &lt;test|tdd|all&gt;</code>)</b></summary>
 
 Unified interface for running test runners (`pytest`, `vitest`, `jest`, `cargo`, `go test`), linters, and type-checkers based on active project profiles.
+
+Gates fail closed. A gate with nothing configured for it reports that it **could not run**
+and exits non-zero; `harness qa all` names such gates separately from the ones that failed
+and refuses to print success for either. A project that genuinely has no linter or type
+checker records that as a decision rather than living with an unsatisfiable gate:
+
+```json
+{ "qa": { "lintCommand": false, "typeCheckCommand": false } }
+```
+
+Those gates then report as *declared absent* and do not fail the suite.
 </details>
 
 <details>
@@ -292,7 +307,9 @@ Transforms technical blockers or ambiguous domain decisions into structured disc
 <details>
 <summary><b>11. 🌾 Debt Harvester (<code>/harness-debt [--json]</code>)</b></summary>
 
-Audits and indexes pragmatic technical debt markers (`# pragmatism:`, `# defer:`) across the codebase.
+Audits and indexes pragmatic technical debt markers (`# pragmatism:`, `# defer:`, and their `//` forms) across the codebase.
+- Tracked files by default, through `git grep`, so the count does not depend on which search tool happens to be installed. `--all` includes untracked files.
+- `--json` emits a single array of `{file, line, text}`. A scan that could not complete exits non-zero rather than reporting zero markers.
 </details>
 
 <details>
@@ -334,6 +351,12 @@ In your target repository, define custom domain rules in `rules/`:
 ```
 
 ### 2. `rules/landmines.json` (Automated Pre-Commit Scanner)
+
+A rule matches either file **content** through `pattern` or a repository-relative **path**
+through `pathPattern` — exactly one of the two. Both are POSIX extended regular expressions
+(`grep -E`); a pattern the platform's `grep` cannot compile aborts the scan instead of
+silently matching nothing.
+
 ```json
 [
   {
@@ -343,9 +366,31 @@ In your target repository, define custom domain rules in `rules/`:
     "fileExtensions": [".py", ".ts"],
     "level": "error",
     "message": "Raw f-string SQL query detected. Always use parameterized queries."
+  },
+  {
+    "id": "NO_COMMITTED_SECRETS",
+    "name": "Secret material committed by path",
+    "pathPattern": "(^|/)([.]env([.][^/]+)?|[^/]+[.](pem|key))$",
+    "excludePaths": ["*.example"],
+    "level": "error",
+    "message": "Environment files and key material belong in a secret manager, never in Git."
   }
 ]
 ```
+
+`excludePaths` takes glob patterns and scopes a rule without switching it off (`vendor/*`,
+`*.generated.js`, `tests/*`). A single line can be exempted in place:
+
+```python
+value = legacy_call()  # harness-ignore: NO_RAW_SQL
+```
+
+The marker works on the matching line or the line directly above it, and it silences only
+the rule it names. Without an escape hatch the only way past a false positive is
+`--no-verify`, which retires the whole gate rather than one line.
+
+The shipped rules and every recipe include a `pathPattern` rule refusing `.env` files,
+private keys, and certificate bundles, with `*.example` and `*.sample` exempted.
 
 Install as pre-commit guard:
 ```bash
@@ -373,6 +418,27 @@ The single `harness` executable acts as a multi-call dispatcher (like `busybox` 
 - **Custom aliases:** Define a custom alias in `stack.config.json` (e.g. `"cliAlias": "backend"`):
   - Typing `backend doctor` or `backend qa` automatically targets that specific profile.
 
+### ⚙️ Which configuration is in force
+
+Resolution stops at the first file a project actually carries, in this order:
+`harness.config.json`, `.harnessrc.json`, `stack.config.json`, `.stackrc.json`,
+`config.json` in the current directory, then `config.json` at the harness root, then
+`~/.config/agent-harness/config.json`. A repository with none of them resolves to the
+built-in defaults under the profile name `default`.
+
+`config.example.json` is **documentation** and is not part of that order. Copy it, do not
+rely on it.
+
+```bash
+harness config validate
+```
+
+reports the file that was resolved, the active profile and how it was chosen, and every
+structural problem it can determine from `schema.json`: invalid JSON, a key whose type the
+schema contradicts, a key the schema does not describe, a `defaultProfile` naming no
+profile, and a `targetRepoPath` that does not exist. It is a structural walk of the schema
+rather than a JSON Schema engine, and it prints which checks it did not perform.
+
 ### 🔄 Keeping installed surfaces current
 
 Workflow bundles are copied into each runtime's skills directory, so upgrading agent-harness does not update a surface that was installed earlier. Every surface records what it is in a `.agent-harness-surface.json` manifest — version, mode, runtime, and a digest per bundle — which makes that answerable offline:
@@ -390,6 +456,9 @@ Enable instant tab completion for `harness` / `agh`:
 ```bash
 harness completion install
 ```
+
+It writes a Zsh completion to `~/.zsh/completion/_harness` and a Bash completion to
+`~/.local/share/bash-completion/completions/harness`, and prints how to load each.
 
 ---
 

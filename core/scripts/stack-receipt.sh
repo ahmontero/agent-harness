@@ -34,6 +34,9 @@ Usage:
   harness receipt start <implement|fix|investigate> [--issue <token>]
   harness receipt phase <run_id> <phase_token> <started|passed|failed|blocked|skipped>
   harness receipt finish <run_id> <completed|failed|blocked|cancelled>
+  harness receipt list
+  harness receipt show <run_id>
+  harness receipt prune [--keep <count>]
 USAGE_EOF
 }
 
@@ -133,6 +136,41 @@ load_active_receipt() {
     echo "${path}"
 }
 
+RECEIPT_DEFAULT_KEEP=50
+
+# Reads one receipt's identity as "<run_id>\t<workflow>\t<issue>\t<branch>\t<started>\t<state>".
+# A receipt with no workflow_finished event is open, which is a finding rather than litter:
+# it means a workflow stopped without recording how it ended.
+receipt_summary() {
+    local path="$1"
+    local run_id
+    run_id="$(basename "${path}" .jsonl)"
+    jq -rs --arg run_id "${run_id}" '
+        (map(select(.event == "workflow_started")) | first) as $started
+        | (map(select(.event == "workflow_finished")) | last) as $finished
+        | [
+            $run_id,
+            ($started.workflow // "unknown"),
+            ($started.issue // "-"),
+            ($started.branch // "-"),
+            ($started.timestamp // "-"),
+            (if $finished == null then "open" else $finished.outcome end)
+          ] | @tsv
+    ' "${path}" 2>/dev/null
+}
+
+# Newest last, ordered by the start timestamp the receipt records rather than by filename:
+# run IDs come from mktemp and carry no ordering at all.
+receipt_summaries() {
+    local path
+    while IFS= read -r path; do
+        [ -n "${path}" ] || continue
+        [ -L "${path}" ] && continue
+        receipt_summary "${path}"
+    done < <(find "${RECEIPTS_DIR}" -mindepth 1 -maxdepth 1 -type f -name '*.jsonl' 2>/dev/null | LC_ALL=C sort) \
+        | LC_ALL=C sort -t"$(printf '\t')" -k5,5
+}
+
 ACTION="${1:-}"
 shift || true
 
@@ -227,6 +265,68 @@ case "${ACTION}" in
             '{schemaVersion: 1, runId: $run_id, timestamp: $timestamp, workflow: $workflow, event: "workflow_finished", outcome: $outcome}' \
             >> "${RECEIPT_FILE}"
         release_receipt_lock
+        ;;
+    list)
+        [ $# -eq 0 ] || { usage; exit 1; }
+        RECEIPT_ROWS="$(receipt_summaries)"
+        if [ -z "${RECEIPT_ROWS}" ]; then
+            log_info "No receipts have been recorded in this repository."
+            exit 0
+        fi
+        printf '%-24s %-12s %-12s %-28s %-22s %s\n' "RUN" "WORKFLOW" "ISSUE" "BRANCH" "STARTED" "STATE"
+        while IFS=$'\t' read -r run_id workflow issue branch started state; do
+            [ -n "${run_id}" ] || continue
+            printf '%-24s %-12s %-12s %-28s %-22s %s\n' \
+                "${run_id}" "${workflow}" "${issue}" "${branch}" "${started}" "${state}"
+        done <<< "${RECEIPT_ROWS}"
+        ;;
+    show)
+        RUN_ID="${1:-}"
+        [ $# -eq 1 ] || { usage; exit 1; }
+        validate_token "run ID" "${RUN_ID}"
+        RECEIPT_FILE="${RECEIPTS_DIR}/${RUN_ID}.jsonl"
+        if [ -L "${RECEIPT_FILE}" ] || [ ! -f "${RECEIPT_FILE}" ]; then
+            log_error "Receipt not found: ${RUN_ID}"
+            exit 1
+        fi
+        jq -c '.' "${RECEIPT_FILE}"
+        ;;
+    prune)
+        # By count, not by age: portable date arithmetic between BSD and GNU would be the
+        # only new portability risk in this delta, and the transaction journals already
+        # prune this way. An open receipt is never a candidate.
+        KEEP="${RECEIPT_DEFAULT_KEEP}"
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --keep)
+                    [ -n "${2:-}" ] || { log_error "--keep requires a count."; exit 1; }
+                    KEEP="$2"
+                    shift 2
+                    ;;
+                *) log_error "Unknown receipt prune option: $1"; usage; exit 1 ;;
+            esac
+        done
+        if ! [[ "${KEEP}" =~ ^[0-9]+$ ]]; then
+            log_error "--keep must be a non-negative integer; got '${KEEP}'."
+            exit 1
+        fi
+
+        TERMINAL_RUNS=()
+        while IFS=$'\t' read -r run_id workflow issue branch started state; do
+            [ -n "${run_id}" ] || continue
+            [ "${state}" = "open" ] && continue
+            TERMINAL_RUNS+=("${run_id}")
+        done <<< "$(receipt_summaries)"
+
+        REMOVED=0
+        EXCESS=$(( ${#TERMINAL_RUNS[@]} - KEEP ))
+        prune_index=0
+        while [ "${prune_index}" -lt "${EXCESS}" ]; do
+            rm -f "${RECEIPTS_DIR}/${TERMINAL_RUNS[${prune_index}]}.jsonl"
+            REMOVED=$((REMOVED + 1))
+            prune_index=$((prune_index + 1))
+        done
+        log_success "Pruned ${REMOVED} terminal receipt(s); ${KEEP} kept, open runs untouched."
         ;;
     -h|--help|help)
         usage

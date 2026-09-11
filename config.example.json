@@ -37,11 +37,5 @@
         "scanner": "./rules/landmines.json"
       }
     }
-  },
-  "localAI": {
-    "enabled": false,
-    "baseUrl": "http://localhost:11434/v1",
-    "model": "qwen2.5-coder:latest",
-    "temperature": 0.2
   }
 }

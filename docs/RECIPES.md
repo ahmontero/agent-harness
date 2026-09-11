@@ -30,15 +30,22 @@ harness init --recipe python-fastapi
 
 ## 🛠️ How to Create a New Recipe (3-Minute Guide)
 
-A recipe lives in `recipes/<recipe-name>/` and requires only 3 files:
+A recipe lives in `recipes/<recipe-name>/` and requires 4 files:
 
 ```text
 recipes/<recipe-name>/
 ├── stack.config.json       # Framework QA commands, file detection, and aliases
 └── rules/
     ├── floor.md            # Unbreakable quality floor & architectural invariants
-    └── landmines.md        # Common antipatterns and pitfalls for LLMs
+    ├── landmines.md        # Common antipatterns and pitfalls for LLMs
+    └── landmines.json      # Machine-checkable rules for `harness scan`
 ```
+
+`landmines.json` is not optional. `stack.config.json` declares its path under
+`rules.scanner`, and a recipe that declares a scanner it does not ship leaves a project
+initialized from it being scanned by whichever rules the installer fell back to — which is
+how the TypeScript and Go recipes were inheriting the Python template's Django rules. The
+test suite asserts that every recipe ships the rules its configuration declares.
 
 ### 1. `stack.config.json`
 Define the QA runners, linters, and detection heuristics:
@@ -72,7 +79,10 @@ List 3-5 non-negotiable architectural invariants:
 ```
 
 ### 3. `rules/landmines.md` & `rules/landmines.json`
-Document specific pitfalls that AI agents often fall into, along with regex patterns for `harness scan`:
+Document specific pitfalls that AI agents often fall into, along with regex patterns for
+`harness scan`. A rule matches file content through `pattern` or a repository-relative path
+through `pathPattern` — exactly one of the two — and may carry `excludePaths` globs to scope
+itself without switching off:
 ```json
 [
   {

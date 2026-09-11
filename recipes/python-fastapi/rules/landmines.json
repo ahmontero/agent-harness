@@ -1,0 +1,62 @@
+[
+  {
+    "id": "SEC-001",
+    "name": "Hardcoded credential",
+    "pattern": "(api_key|secret_key|auth_token|bearer|password)[[:space:]]*=[[:space:]]*['\"][A-Za-z0-9_/+=-]{16,}['\"]",
+    "fileExtensions": [
+      ".py"
+    ],
+    "level": "error",
+    "message": "Read credentials from the environment through your settings object, never from a literal."
+  },
+  {
+    "id": "SEC-002",
+    "name": "Interpolated SQL",
+    "pattern": "(execute|executemany|text)\\([[:space:]]*f['\"]",
+    "fileExtensions": [
+      ".py"
+    ],
+    "level": "error",
+    "message": "Bind parameters instead of interpolating them; an f-string in a query is an injection."
+  },
+  {
+    "id": "ASYNC-001",
+    "name": "Blocking call in async code",
+    "pattern": "^[[:space:]]*(time[.]sleep|requests[.](get|post|put|patch|delete))\\(",
+    "fileExtensions": [
+      ".py"
+    ],
+    "level": "warning",
+    "message": "Use asyncio.sleep or an async client; a blocking call stalls the whole event loop."
+  },
+  {
+    "id": "ASSERT-001",
+    "name": "Bare assert outside tests",
+    "pattern": "^[[:space:]]*assert[[:space:]]",
+    "fileExtensions": [
+      ".py"
+    ],
+    "excludePaths": [
+      "tests/*",
+      "*/tests/*",
+      "test_*.py",
+      "*_test.py",
+      "conftest.py"
+    ],
+    "level": "error",
+    "message": "python -O strips assert. Raise HTTPException or a domain error instead."
+  },
+  {
+    "id": "SEC-003",
+    "name": "Secret material committed by path",
+    "pathPattern": "(^|/)([.]env([.][^/]+)?|[^/]+[.](pem|key|pfx|p12|jks|keystore)|id_(rsa|dsa|ecdsa|ed25519))$",
+    "excludePaths": [
+      "*.example",
+      "*.sample",
+      "*.template",
+      "*.dist"
+    ],
+    "level": "error",
+    "message": "Environment files and key material belong in a secret manager, never in Git. Remove it from the index and rotate the credential."
+  }
+]

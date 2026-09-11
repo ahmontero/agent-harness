@@ -173,16 +173,6 @@
           }
         }
       }
-    },
-    "localAI": {
-      "type": "object",
-      "description": "Local AI provider settings (Ollama / LocalAI)",
-      "properties": {
-        "enabled": { "type": "boolean" },
-        "baseUrl": { "type": "string" },
-        "model": { "type": "string" },
-        "temperature": { "type": "number" }
-      }
     }
   }
 }
