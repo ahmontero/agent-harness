@@ -16,36 +16,6 @@ ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
 ensure_git_repo "${REPO_DIR}"
 
-# The issue key is a whole segment of the branch name, or the head of one. The previous
-# pattern was unanchored, so `feat/add-2fa-support` committed as `feat(add-2)`: any letters
-# followed by a dash and a digit matched, wherever they appeared.
-#
-# Segments are examined in order, whole-segment matches first, so both conventions work:
-# feat/AH-54-real-key and task/ONE-12345/update-order-snapshot.
-extract_branch_issue_key() {
-    local branch="$1"
-    local segment
-    local -a segments=()
-
-    IFS='/' read -r -a segments <<< "${branch}"
-
-    for segment in "${segments[@]}"; do
-        if [[ "${segment}" =~ ^[A-Za-z][A-Za-z0-9]*-[0-9]+$ ]]; then
-            printf '%s\n' "${segment}"
-            return 0
-        fi
-    done
-
-    for segment in "${segments[@]}"; do
-        if [[ "${segment}" =~ ^([A-Za-z][A-Za-z0-9]*-[0-9]+)- ]]; then
-            printf '%s\n' "${BASH_REMATCH[1]}"
-            return 0
-        fi
-    done
-
-    printf '%s\n' ""
-}
-
 ACTION="${1:-build}"
 shift || true
 
@@ -67,7 +37,13 @@ case "${ACTION}" in
         fi
 
         BRANCH="$(get_current_branch "${REPO_DIR}")"
-        ISSUE_KEY="$(extract_branch_issue_key "${BRANCH}")"
+        # Extract issue key from branch if present (e.g. feat/PROJ-123-slug -> PROJ-123).
+        # A key is an uppercase prefix, a hyphen, then digits not followed by a dot, so a
+        # version-like token (chore/release-2.4.1, fix/bump-node-22-1) is not read as one.
+        ISSUE_KEY=""
+        if [[ "${BRANCH}" =~ ([A-Z]+-[0-9]+)($|[^0-9.]) ]]; then
+            ISSUE_KEY="${BASH_REMATCH[1]}"
+        fi
 
         FINAL_MSG=""
         if [ -n "${ISSUE_KEY}" ]; then

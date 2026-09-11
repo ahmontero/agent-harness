@@ -1656,7 +1656,63 @@ fi
 echo "  [PASS] doctor warns on drift, repairs with --fix, and reports an unrunnable check as unavailable."
 
 echo ""
-echo "=== 24. Testing Configuration Resolution ==="
+echo "=== 24. Testing Commit Scope Derivation ==="
+# A version number in a branch name is not an issue key. Reading one out of
+# chore/release-2.4.1 records chore(release-2): ..., a scope that points at no issue and
+# that no reader can trace back to one.
+COMMIT_DIR="${TMP_TEST_DIR}/commit-scope"
+mkdir -p "${COMMIT_DIR}"
+git -C "${COMMIT_DIR}" init -q
+git -C "${COMMIT_DIR}" config user.email "tests@agent-harness.local"
+git -C "${COMMIT_DIR}" config user.name "Agent Harness Tests"
+echo "fixture" > "${COMMIT_DIR}/fixture.txt"
+git -C "${COMMIT_DIR}" add fixture.txt
+git -C "${COMMIT_DIR}" commit -qm "commit scope fixture"
+# Keeps the builder inside the fixture: with no local config it resolves the example
+# profile's targetRepoPath and would commit into whatever happens to live there.
+cat > "${COMMIT_DIR}/harness.config.json" <<'COMMIT_CONFIG_EOF'
+{
+  "project": { "name": "commit-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Commit scope fixture" } }
+}
+COMMIT_CONFIG_EOF
+
+# commit_subject <branch> <type> <message> -> prints the recorded commit subject
+commit_subject() {
+    local branch="$1" type="$2" message="$3"
+    git -C "${COMMIT_DIR}" checkout -q -B "${branch}"
+    printf '%s\n' "${branch}" > "${COMMIT_DIR}/fixture.txt"
+    git -C "${COMMIT_DIR}" add fixture.txt
+    (cd "${COMMIT_DIR}" && "${HARNESS_ROOT}/bin/harness" commit build "${type}" "${message}" >/dev/null 2>&1)
+    git -C "${COMMIT_DIR}" log -1 --pretty=%s
+}
+
+COMMIT_RELEASE_SUBJECT="$(commit_subject "chore/release-2.4.1" chore "release 2.4.1")"
+if [ "${COMMIT_RELEASE_SUBJECT}" != "chore: release 2.4.1" ]; then
+    echo "  [FAIL] commit build read an issue key out of a release version: ${COMMIT_RELEASE_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_BUMP_SUBJECT="$(commit_subject "fix/bump-node-22-1" fix "bump node to 22.1")"
+if [ "${COMMIT_BUMP_SUBJECT}" != "fix: bump node to 22.1" ]; then
+    echo "  [FAIL] commit build read an issue key out of a version bump: ${COMMIT_BUMP_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_TASK_SUBJECT="$(commit_subject "task/AH-11-slug" feat "keep the real key")"
+if [ "${COMMIT_TASK_SUBJECT}" != "feat(AH-11): keep the real key" ]; then
+    echo "  [FAIL] commit build dropped the issue key of a task branch: ${COMMIT_TASK_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_COMPAT_SUBJECT="$(commit_subject "fix/COMPAT-1-slug" fix "keep a single-digit key")"
+if [ "${COMMIT_COMPAT_SUBJECT}" != "fix(COMPAT-1): keep a single-digit key" ]; then
+    echo "  [FAIL] commit build dropped a single-digit issue key: ${COMMIT_COMPAT_SUBJECT}"
+    exit 1
+fi
+echo "  [PASS] commit build scopes real issue keys and leaves version-like branches unscoped."
+
+echo "=== 25. Testing Configuration Resolution ==="
 
 # A repository with no configuration must resolve to the built-in defaults. The shipped
 # config.example.json is documentation; while it acted as a fallback every unconfigured
@@ -1787,7 +1843,7 @@ fi
 echo "  [PASS] config validate reports structural problems and names what it did not check."
 
 echo ""
-echo "=== 25. Testing Gate Refusals ==="
+echo "=== 26. Testing Gate Refusals ==="
 
 # The unconfigured lint and type defaults ended in `|| echo 'No linter configured'`, so a
 # repository with neither tool passed both gates and `qa all` printed "All required QA
@@ -1930,7 +1986,7 @@ fi
 echo "  [PASS] commit check fails on a non-conforming message."
 
 echo ""
-echo "=== 26. Testing Signal Truthfulness ==="
+echo "=== 27. Testing Signal Truthfulness ==="
 
 # context recursed into specs/archive/ while spec status did not, so the two disagreed:
 # twelve "active" delta specs in a repository whose active count was zero.
@@ -2056,7 +2112,7 @@ fi
 echo "  [PASS] doctor --check-auth reports provider authentication state."
 
 echo ""
-echo "=== 27. Testing Destructive Command Refusals ==="
+echo "=== 28. Testing Destructive Command Refusals ==="
 
 # `worktree remove wt-AH` interpolated the key into grep as a pattern and removed every
 # match with --force. In the reproduction it removed two worktrees and destroyed an
@@ -2240,7 +2296,7 @@ fi
 echo "  [PASS] Transaction journals are pruned and the latest stays rollbackable."
 
 echo ""
-echo "=== 28. Testing Advertised Flags ==="
+echo "=== 29. Testing Advertised Flags ==="
 
 FLAGS_REPO="${TMP_TEST_DIR}/flags"
 mkdir -p "${FLAGS_REPO}"
@@ -2437,7 +2493,9 @@ if [ -f "${RECIPE_TARGET}/AGENTS.md" ]; then
 fi
 echo "  [PASS] An unknown recipe is refused and rolled back."
 
-# The issue-key pattern was unanchored, so feat/add-2fa-support committed as feat(add-2).
+# A lowercase slug carrying a digit is not an issue key: feat/add-2fa-support committed as
+# feat(add-2). The group above covers the version-like branches and the keys that must
+# survive; this is the case it does not reach.
 git -C "${FLAGS_REPO}" checkout -q -b feat/add-2fa-support
 printf 'x\n' > "${FLAGS_REPO}/subject.txt"
 git -C "${FLAGS_REPO}" add subject.txt
@@ -2447,16 +2505,7 @@ if [ "${BUILT_MESSAGE}" != "feat: support two-factor auth" ]; then
     echo "  [FAIL] commit build read an issue key out of a slug: ${BUILT_MESSAGE}"
     exit 1
 fi
-git -C "${FLAGS_REPO}" checkout -q -b feat/AH-54-real-key
-printf 'y\n' > "${FLAGS_REPO}/subject2.txt"
-git -C "${FLAGS_REPO}" add subject2.txt
-harness_in_flags commit build feat "carry the issue key" >/dev/null
-KEYED_MESSAGE="$(git -C "${FLAGS_REPO}" log -1 --pretty=%s)"
-if [ "${KEYED_MESSAGE}" != "feat(AH-54): carry the issue key" ]; then
-    echo "  [FAIL] commit build did not carry the branch's issue key: ${KEYED_MESSAGE}"
-    exit 1
-fi
-echo "  [PASS] commit build anchors the issue key to the branch's issue segment."
+echo "  [PASS] commit build does not read an issue key out of a lowercase slug."
 
 # commit build printed a success-shaped message and then surfaced git's own error.
 EMPTY_INDEX_STATUS=0
@@ -2472,7 +2521,7 @@ fi
 echo "  [PASS] commit build refuses an empty index."
 
 echo ""
-echo "=== 29. Testing Drift Of Unrecorded Surfaces ==="
+echo "=== 30. Testing Drift Of Unrecorded Surfaces ==="
 # The drift check only ever compared the manifest against the catalog, so an entry that
 # was in neither was invisible. In the audited installation fourteen obsolete skills --
 # including `ship`, which the catalog marks removed -- were published into ~/.claude/skills
@@ -2541,7 +2590,7 @@ fi
 echo "  [PASS] sync removes unrecorded managed skills by name and leaves unmanaged ones alone."
 
 echo ""
-echo "=== 30. Testing Scanner Paths And Suppression ==="
+echo "=== 31. Testing Scanner Paths And Suppression ==="
 # The scanner could only ever match file *content*, so it could not express a forbidden
 # filename -- which is the first thing a pre-commit gate is installed to stop. And with no
 # escape hatch, one false positive left --no-verify as the only option, retiring the whole
@@ -2720,7 +2769,7 @@ done
 echo "  [PASS] Every recipe ships the scanner rules its configuration declares."
 
 echo ""
-echo "=== 31. Testing Receipt Read Path ==="
+echo "=== 32. Testing Receipt Read Path ==="
 # The receipt command has been write-only since AH-3: it produced an observability record
 # that the user it was produced for could not read back, and nothing ever removed one.
 RECEIPT_READ_REPO="${TMP_TEST_DIR}/receipt-read"

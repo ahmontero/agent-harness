@@ -49,7 +49,7 @@ regressions — read them first.
 - `harness ship` ran `git push … 2>/dev/null || log_warn "Push skipped or branch already up to date."`, turning a rejected non-fast-forward, a missing remote, and an expired credential into a warning before opening a pull request for a branch that was never pushed. A failed push now aborts before the pull request step and reports git's own stderr.
 - `harness scan` exited `0` and printed "passed with 0 errors" when `jq` was unusable, skipping the rule loop entirely. Recorded as a deferred open question in AH-9; it now fails closed.
 - `harness commit check` could only ever warn, so a subcommand named `check` could not be used as a gate. It now exits non-zero on a message that does not conform.
-- `harness commit build` extracted the issue key with an unanchored pattern, so `feat/add-2fa-support` committed as `feat(add-2)`. The key is now a whole branch segment or the head of one, which supports both `feat/AH-54-slug` and `task/ONE-12345/slug`. It also refuses to commit when nothing is staged instead of printing a success-shaped message and surfacing git's own error.
+- `harness commit build` refuses to commit when nothing is staged, instead of printing a success-shaped "Generated commit message" line and then surfacing git's own error. The unanchored issue-key pattern this delta also carried a fix for was landed first as AH-12 in 2.4.2; that implementation is the one kept, and this delta's test for a lowercase slug carrying a digit (`feat/add-2fa-support`) is kept alongside AH-12's group.
 - `harness sync --check` and `harness doctor` called a surface `current` while it published skills no manifest recorded. In the audited installation fourteen obsolete skills — including `ship`, which the catalog marks removed — were published into `~/.claude/skills` from a second checkout, and were unreachable to repair as well: `remove_managed_skill` matched only symlinks under the current `HARNESS_ROOT`, so no later run from any other checkout could clean them up. Managed entries are now recognized by shape, reported as drift when unrecorded, and removed by name by `harness sync`. Skills agent-harness does not manage are still left exactly where they are.
 - `--base <branch>` is parsed by `harness branch create` and `harness worktree create`. Both advertised it and read the base from the fourth positional argument, so `--base` reached `git checkout -b` as a revision and printed git's usage text instead of creating anything. The fourth positional form still works.
 - `--module <name>` is parsed by `harness spec create`. It records the module inside the spec, which `harness spec archive` reads back, rather than moving the file out of `specs/` where "active" is defined.
@@ -68,6 +68,11 @@ regressions — read them first.
 
 ### Removed
 - `core/scripts/lib/ai-client.sh`, and the `localAI` block from `schema.json` and `config.example.json`. The library was sourced by nothing, so it had never run, and its configuration lived at the schema's top level while `get_profile_value` only reads `.profiles[…]` and `.project` — it could not have been enabled even by a user who tried. `harness doctor` no longer probes for `ollama` and no longer treats `curl` as required, since no reachable code path used it.
+
+## [2.4.2] - 2026-09-11
+
+### Fixed
+- `harness commit build` read a Conventional Commit scope out of any branch carrying a version number: `chore/release-2.4.1` recorded `chore(release-2): …` and `fix/bump-node-22-1` recorded `fix(node-22): …`. The issue-key pattern accepted a lowercase word as a project prefix and left its digits unbounded on the right, so they stopped at the first dot. A key is now an uppercase prefix, a hyphen, and digits that are not followed by a dot: `AH-11` and `COMPAT-1` still scope their commits, and a version-like branch is left unscoped rather than scoped to a fragment of the version.
 
 ## [2.4.1] - 2026-09-11
 
