@@ -3304,4 +3304,153 @@ fi
 echo "  [PASS] repeated digest computations agree and report no interrupted write."
 
 echo ""
+echo "=== 38. Testing Init Project Detection ==="
+# harness init copied a fixed template declaring every repository a Python "backend"
+# running pytest, so the first command a new user ran -- harness qa all -- invoked pytest
+# in a Node repository. The README already promised detection, so the claim existed and the
+# code did not honour it.
+INIT_ROOT="${TMP_TEST_DIR}/init-detection"
+mkdir -p "${INIT_ROOT}/home"
+
+# Builds a repository from the files named, initializes the harness in it, and leaves the
+# generated configuration in INIT_CONFIG.
+init_detect_repo() {
+    local name="$1"
+    shift
+    INIT_REPO="${INIT_ROOT}/${name}"
+    mkdir -p "${INIT_REPO}"
+    git -C "${INIT_REPO}" init -q
+    git -C "${INIT_REPO}" config user.email "tests@agent-harness.local"
+    git -C "${INIT_REPO}" config user.name "Agent Harness Tests"
+    local spec relative
+    for spec in "$@"; do
+        relative="${spec%%=*}"
+        mkdir -p "${INIT_REPO}/$(dirname "${relative}")"
+        printf '%s\n' "${spec#*=}" > "${INIT_REPO}/${relative}"
+    done
+    git -C "${INIT_REPO}" add -A
+    git -C "${INIT_REPO}" commit -q -m init
+    HOME="${INIT_ROOT}/home" HARNESS_STATE_DIR="${INIT_ROOT}/state" \
+        "${HARNESS_ROOT}/install.sh" --target "${INIT_REPO}" >/dev/null 2>&1
+    INIT_CONFIG="${INIT_REPO}/stack.config.json"
+    if [ ! -f "${INIT_CONFIG}" ]; then
+        echo "  [FAIL] harness init wrote no configuration in ${name}"
+        exit 1
+    fi
+}
+
+init_config_query() {
+    jq -r "$1" "${INIT_CONFIG}"
+}
+
+# Whatever init writes must pass the repository's own validator.
+assert_config_validates() {
+    local status=0 output
+    output="$( (cd "${INIT_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate 2>&1) )" || status=$?
+    if [ "${status}" -ne 0 ]; then
+        echo "  [FAIL] the configuration init generated does not validate: ${output}"
+        exit 1
+    fi
+}
+
+# A Node project with its own test and lint scripts and a tsconfig.
+init_detect_repo node \
+    'package.json={"name":"app","scripts":{"test":"vitest run","lint":"eslint ."},"devDependencies":{"vitest":"^1.0.0"}}' \
+    'tsconfig.json={}'
+assert_config_validates
+if [ "$(init_config_query '.project.defaultProfile')" != "node" ]; then
+    echo "  [FAIL] a Node repository did not get the node profile: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if [ "$(init_config_query '.profiles.node.qa.testCommand')" != "npm test" ]; then
+    echo "  [FAIL] a Node repository with a test script did not get 'npm test': $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if [ "$(init_config_query '.profiles.node.qa.lintCommand')" != "npm run lint" ]; then
+    echo "  [FAIL] a Node repository with a lint script did not get 'npm run lint': $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if [ "$(init_config_query '.profiles.node.qa.typeCheckCommand')" != "npx tsc --noEmit" ]; then
+    echo "  [FAIL] a Node repository with a tsconfig did not get a type check: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if init_config_query '.. | strings' | grep -q "pytest"; then
+    echo "  [FAIL] a Node repository was told to run pytest: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+echo "  [PASS] a Node repository gets its own scripts, and no pytest."
+
+# A Node project with no scripts at all evidences no command; an unset gate reports that it
+# could not run, which is correct. A gate running the wrong tool is not.
+init_detect_repo bare-node 'package.json={"name":"bare"}'
+assert_config_validates
+if [ "$(init_config_query '.profiles.node.qa.testCommand // "unset"')" != "unset" ]; then
+    echo "  [FAIL] a Node repository with no test script was given a test command anyway: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+echo "  [PASS] a command with no evidence behind it is left unset."
+
+# Go: the compiler type-checks, so 'no type checker' is a decision rather than a gap.
+init_detect_repo go 'go.mod=module example.com/svc'
+assert_config_validates
+if [ "$(init_config_query '.profiles.go.qa.testCommand')" != "go test ./..." ]; then
+    echo "  [FAIL] a Go repository did not get 'go test ./...': $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if [ "$(init_config_query '.profiles.go.qa.typeCheckCommand')" != "false" ]; then
+    echo "  [FAIL] a Go repository did not record that it has no separate type checker: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+echo "  [PASS] a Go repository gets go test, and records that the compiler is its type checker."
+
+# Django is not pytest, and manage.py is the evidence that distinguishes them.
+init_detect_repo django 'manage.py=#!/usr/bin/env python' 'requirements.txt=django'
+assert_config_validates
+if [ "$(init_config_query '.profiles.python.qa.testCommand')" != "python manage.py test" ]; then
+    echo "  [FAIL] a Django repository was not detected as one: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+echo "  [PASS] a Django repository gets manage.py test rather than pytest."
+
+# Nothing recognizable: a profile with no commands, and no invented ones.
+init_detect_repo plain 'README.md=# docs only'
+assert_config_validates
+if [ "$(init_config_query '.profiles | keys | length')" != "1" ]; then
+    echo "  [FAIL] an unrecognizable repository got more than one profile: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+if [ "$(init_config_query '[.profiles[].qa // {} | keys[]] | length')" != "0" ]; then
+    echo "  [FAIL] an unrecognizable repository was given commands anyway: $(cat "${INIT_CONFIG}")"
+    exit 1
+fi
+echo "  [PASS] an unrecognizable repository gets no invented commands."
+
+# Nothing init writes may assert a fact it did not read from the target.
+for forbidden in "PROJ" "trunkBranch"; do
+    if grep -qF "${forbidden}" "${INIT_CONFIG}"; then
+        echo "  [FAIL] init asserted '${forbidden}', which it cannot know: $(cat "${INIT_CONFIG}")"
+        exit 1
+    fi
+done
+echo "  [PASS] init states no issue prefix and no trunk branch it did not read."
+
+# The schema must accept the value stack-qa.sh documents for a gate a project has none of.
+SCHEMA_REPO="${INIT_ROOT}/schema-false"
+mkdir -p "${SCHEMA_REPO}"
+git -C "${SCHEMA_REPO}" init -q
+cat > "${SCHEMA_REPO}/harness.config.json" <<'SCHEMA_FALSE_EOF'
+{
+  "project": { "name": "x", "defaultProfile": "p" },
+  "profiles": { "p": { "qa": { "testCommand": "go test ./...", "typeCheckCommand": false, "lintCommand": false } } }
+}
+SCHEMA_FALSE_EOF
+SCHEMA_STATUS=0
+SCHEMA_OUTPUT="$( (cd "${SCHEMA_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" config validate 2>&1) )" || SCHEMA_STATUS=$?
+if [ "${SCHEMA_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] schema.json rejects the 'false' that stack-qa.sh documents and honours: ${SCHEMA_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] config validate accepts the documented way to declare a gate absent."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

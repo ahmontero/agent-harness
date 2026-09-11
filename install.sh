@@ -479,6 +479,206 @@ install_cli() {
     log_success "CLI binaries linked. Ensure '${bin_dest}' is in your PATH."
 }
 
+# ------------------------------------------------------------------------------
+# Project detection
+#
+# init used to copy a fixed template declaring every repository a Python "backend" running
+# pytest, with a GitHub issue prefix of PROJ and a trunk branch of main. In a Node, Go, or
+# Rust project the first command a new user ran -- `harness qa all` -- therefore invoked
+# pytest. The README already promised detection, so the claim existed and the code did not
+# honour it.
+#
+# The rule here is that every command written is evidenced by a file in the target: a
+# `test` script in package.json, `[tool.ruff]` in pyproject.toml, manage.py for Django,
+# .golangci.yml for golangci-lint. What is not evidenced is left unset, because a gate that
+# reports it could not run is correct and a gate that runs the wrong tool is not.
+#
+# One profile per ecosystem, each with its own detect block, so a polyglot repository
+# resolves the right one per directory through the mechanism the format already provides.
+# ------------------------------------------------------------------------------
+
+DETECTED_PROFILES=()
+DETECTED_UNSET=()
+
+# "<jq object>" per profile, combined into .profiles by write_detected_config.
+add_detected_profile() {
+    local name="$1" display="$2" detect_files="$3" qa_json="$4"
+    DETECTED_PROFILES+=("$(jq -nc \
+        --arg name "${name}" \
+        --arg display "${display}" \
+        --argjson files "${detect_files}" \
+        --argjson qa "${qa_json}" \
+        '{name: $name, profile: ({displayName: $display, detect: {files: $files}}
+            + (if ($qa | length) > 0 then {qa: $qa} else {} end)
+            + {rules: {invariants: "./rules/floor.md", landmines: "./rules/landmines.md", scanner: "./rules/landmines.json"}})}')")
+}
+
+note_unset_gate() {
+    DETECTED_UNSET+=("$1")
+}
+
+detect_python_profile() {
+    local target="$1"
+    local pyproject="${target}/pyproject.toml"
+    local qa='{}'
+
+    [ -f "${pyproject}" ] || [ -f "${target}/setup.py" ] || [ -f "${target}/requirements.txt" ] || return 0
+
+    if [ -f "${target}/manage.py" ]; then
+        qa="$(jq -nc '{testRunner: "django", testCommand: "python manage.py test", tddCommand: "python manage.py test {path}"}')"
+    elif grep -qs 'pytest' "${pyproject}" "${target}"/requirements*.txt 2>/dev/null || \
+         [ -f "${target}/pytest.ini" ]; then
+        qa="$(jq -nc '{testRunner: "pytest", testCommand: "pytest", tddCommand: "pytest {path}"}')"
+    else
+        note_unset_gate "qa.testCommand for the python profile: no manage.py and no pytest in the dependencies"
+    fi
+
+    if grep -qs '\[tool\.ruff' "${pyproject}" 2>/dev/null; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "ruff check ."}')"
+    else
+        note_unset_gate "qa.lintCommand for the python profile: no [tool.ruff] in pyproject.toml"
+    fi
+
+    if grep -qs '\[tool\.mypy' "${pyproject}" 2>/dev/null || [ -f "${target}/mypy.ini" ]; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {typeCheckCommand: "mypy ."}')"
+    else
+        note_unset_gate "qa.typeCheckCommand for the python profile: no [tool.mypy] and no mypy.ini"
+    fi
+
+    add_detected_profile python "Python" '["pyproject.toml","setup.py","requirements.txt"]' "${qa}"
+}
+
+detect_node_profile() {
+    local target="$1"
+    local manifest="${target}/package.json"
+    local qa='{}'
+    [ -f "${manifest}" ] || return 0
+    jq empty "${manifest}" >/dev/null 2>&1 || {
+        log_warn "${manifest} is not valid JSON, so no Node commands could be detected."
+        add_detected_profile node "Node.js" '["package.json"]' '{}'
+        return 0
+    }
+
+    if jq -e '.scripts.test // empty' "${manifest}" >/dev/null 2>&1; then
+        qa="$(jq -nc '{testCommand: "npm test"}')"
+    else
+        note_unset_gate "qa.testCommand for the node profile: package.json declares no test script"
+    fi
+
+    if jq -e '(.devDependencies // {}) + (.dependencies // {}) | has("vitest")' "${manifest}" >/dev/null 2>&1; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {testRunner: "vitest", tddCommand: "npx vitest run {path}"}')"
+    elif jq -e '(.devDependencies // {}) + (.dependencies // {}) | has("jest")' "${manifest}" >/dev/null 2>&1; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {testRunner: "jest", tddCommand: "npx jest {path}"}')"
+    else
+        note_unset_gate "qa.tddCommand for the node profile: neither vitest nor jest is a dependency"
+    fi
+
+    if jq -e '.scripts.lint // empty' "${manifest}" >/dev/null 2>&1; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "npm run lint"}')"
+    else
+        note_unset_gate "qa.lintCommand for the node profile: package.json declares no lint script"
+    fi
+
+    if jq -e '.scripts.typecheck // empty' "${manifest}" >/dev/null 2>&1; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {typeCheckCommand: "npm run typecheck"}')"
+    elif [ -f "${target}/tsconfig.json" ]; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {typeCheckCommand: "npx tsc --noEmit"}')"
+    else
+        note_unset_gate "qa.typeCheckCommand for the node profile: no typecheck script and no tsconfig.json"
+    fi
+
+    add_detected_profile node "Node.js" '["package.json"]' "${qa}"
+}
+
+# false, not unset, for the type gate: the Go and Rust compilers type-check as part of
+# building, so "this project has none" is a decision the target evidences rather than a
+# gap the user still has to fill.
+detect_go_profile() {
+    local target="$1"
+    local qa
+    [ -f "${target}/go.mod" ] || return 0
+    qa="$(jq -nc '{testRunner: "go", testCommand: "go test ./...", tddCommand: "go test -run {path} ./...", typeCheckCommand: false}')"
+    if [ -f "${target}/.golangci.yml" ] || [ -f "${target}/.golangci.yaml" ]; then
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "golangci-lint run"}')"
+    else
+        qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "go vet ./..."}')"
+    fi
+    add_detected_profile go "Go" '["go.mod"]' "${qa}"
+}
+
+detect_rust_profile() {
+    local target="$1"
+    [ -f "${target}/Cargo.toml" ] || return 0
+    add_detected_profile rust "Rust" '["Cargo.toml"]' \
+        "$(jq -nc '{testRunner: "cargo", testCommand: "cargo test", tddCommand: "cargo test {path}", lintCommand: "cargo clippy --all-targets -- -D warnings", typeCheckCommand: false}')"
+}
+
+# Read from the remote rather than assumed. The previous template asserted a GitHub issue
+# tracker with a prefix of PROJ, which is a fact about no repository in particular.
+detect_forge_block() {
+    local target="$1"
+    local remote
+    remote="$(git -C "${target}" remote get-url origin 2>/dev/null || true)"
+    case "${remote}" in
+        *github.com*) jq -nc '{ci: {provider: "github"}, issueTracker: {provider: "github"}}' ;;
+        *gitlab*)     jq -nc '{ci: {provider: "gitlab"}, issueTracker: {provider: "gitlab"}}' ;;
+        *)            printf '%s' '{}' ;;
+    esac
+}
+
+emit_detected_config() {
+    local target="$1"
+    local profiles_json='{}' default_profile forge
+
+    if [ ${#DETECTED_PROFILES[@]} -gt 0 ]; then
+        profiles_json="$(printf '%s\n' "${DETECTED_PROFILES[@]}" | jq -sc 'map({key: .name, value: .profile}) | from_entries')"
+        default_profile="$(printf '%s\n' "${DETECTED_PROFILES[0]}" | jq -r '.name')"
+    else
+        profiles_json="$(jq -nc '{default: {displayName: "Project", rules: {invariants: "./rules/floor.md", landmines: "./rules/landmines.md", scanner: "./rules/landmines.json"}}}')"
+        default_profile="default"
+    fi
+
+    forge="$(detect_forge_block "${target}")"
+    jq -n \
+        --arg schema "https://raw.githubusercontent.com/ahmontero/agent-harness/main/schema.json" \
+        --arg name "$(basename "${target}")" \
+        --arg default "${default_profile}" \
+        --argjson profiles "${profiles_json}" \
+        --argjson forge "${forge}" \
+        '{"$schema": $schema, project: {name: $name, defaultProfile: $default},
+          profiles: ($profiles | with_entries(.value = (.value + $forge)))}'
+}
+
+write_detected_config() {
+    local target="$1"
+    local destination="${target}/stack.config.json"
+    local gate
+
+    DETECTED_PROFILES=()
+    DETECTED_UNSET=()
+    detect_python_profile "${target}"
+    detect_node_profile "${target}"
+    detect_go_profile "${target}"
+    detect_rust_profile "${target}"
+
+    transaction_write_command "${destination}" 644 emit_detected_config "${target}"
+
+    if [ ${#DETECTED_PROFILES[@]} -eq 0 ]; then
+        log_warn "No Python, Node, Go, or Rust project was found in ${target}."
+        log_info "Set profiles.default.qa.testCommand, .lintCommand and .typeCheckCommand in ${destination}, or false where this project has none."
+        return 0
+    fi
+
+    log_success "Detected $(printf '%s\n' "${DETECTED_PROFILES[@]}" | jq -r '.name' | tr '\n' ' ')in ${target}."
+    if [ ${#DETECTED_UNSET[@]} -gt 0 ]; then
+        log_warn "No evidence in the target for these, so they are left unset in ${destination}:"
+        for gate in "${DETECTED_UNSET[@]}"; do
+            printf '  %s\n' "${gate}"
+        done
+        log_info "Set each to this project's command, or to false to record that it has none."
+    fi
+}
+
 GITIGNORE_MARKER="# agent-harness: installed skill surfaces"
 
 # Prints the .gitignore the target should have: whatever it already has, then the block.
@@ -615,8 +815,7 @@ install_target_repo() {
 
     # Default rules & config if missing
     if [ ! -f "${target}/stack.config.json" ]; then
-        transaction_copy "${HARNESS_ROOT}/core/templates/stack-config-template.json" "${target}/stack.config.json"
-        log_success "Created default stack.config.json in ${target}"
+        write_detected_config "${target}"
     fi
 
     transaction_ensure_directory "${target}/rules"

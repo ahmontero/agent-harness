@@ -6,6 +6,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.8.0] - 2026-09-11
+
+`harness init` copied a fixed template declaring every repository a Python "backend"
+running `pytest`, with a GitHub issue prefix of `PROJ` and a trunk branch of `main`. In a
+Node, Go, or Rust project the first command a new user ran — `harness qa all` — therefore
+invoked `pytest`. The README already promised that init detects the language and test
+runner, so the claim existed and the code did not honour it.
+
+> **Upgrade note — this changes only what a *new* `harness init` writes.** An existing
+> `stack.config.json` is left alone, as it always was. Re-run `harness init` in a
+> repository whose configuration you never edited if you want the detected one.
+
+### Changed
+
+- `harness init` writes one profile per ecosystem it finds evidence of — Python, Node, Go,
+  Rust — each with its own `detect` block, so a polyglot repository resolves the right
+  profile per directory through the mechanism the configuration format already provides.
+- Every command written is evidenced by a file in the target: a `test` script in
+  `package.json`, `[tool.ruff]` in `pyproject.toml`, `manage.py` for Django (which is not
+  pytest), `.golangci.yml` for golangci-lint. What is not evidenced is left unset, and init
+  names each one so the reader knows what to fill in.
+- Go and Rust record `"typeCheckCommand": false`. Their compilers type-check as part of
+  building, so "this project has none" is a decision the target evidences rather than a gap.
+- `ci.provider` and `issueTracker.provider` are read from the `origin` remote, or omitted.
+  The `PROJ` issue prefix is gone: it was a fact about no repository in particular.
+- `git.trunkBranch` is no longer written. Trunk detection already reads the repository at
+  runtime, and a hardcoded `main` is wrong in any repository whose trunk is `master`.
+- A target with no recognizable ecosystem gets a profile with no commands and a message
+  naming the keys to set. An unconfigured gate that reports it could not run is correct.
+
+### Fixed
+
+- `schema.json` accepts `false` as well as a string for `qa.testRunner`, `qa.testCommand`,
+  `qa.tddCommand`, `qa.lintCommand` and `qa.typeCheckCommand`. `stack-qa.sh` has documented
+  and honoured `false` since 2.5.0, but `harness config validate` rejected it as
+  "expected string, found boolean" — two parts of the harness disagreeing about what a
+  configuration may legally say.
+- The configuration validator understands a schema type expressed as a list of
+  alternatives, and names them in the message it prints.
+
+### Removed
+
+- `core/templates/stack-config-template.json`, which nothing reads once init detects the
+  project instead of asserting it.
+
 ## [2.7.1] - 2026-09-11
 
 ### Fixed
