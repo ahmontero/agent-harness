@@ -1,6 +1,6 @@
 ---
 name: harness-debt
-description: Scans and harvests technical debt and pragmatism markers (# pragmatism:, # defer:) across the codebase.
+description: Scans and harvests technical debt and pragmatism markers ("# pragmatism:", "# defer:") across the codebase.
 argument-hint: "[--json] [--path <path>]"
 ---
 

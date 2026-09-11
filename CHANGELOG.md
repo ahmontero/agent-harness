@@ -6,6 +6,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.1] - 2026-09-11
+
+### Fixed
+
+- `harness debt` reported sixteen technical debt markers in this repository, which carries
+  none. Every one was the harness describing or testing its own feature: seven in
+  documentation, five in test fixtures writing the marker into a temporary repository, two
+  in archived specs, and two in a help string and a source comment that name it.
+  `harness context` therefore told every agent entering this repository that it carried
+  sixteen items of debt — the same class of untrue signal as the rest of this series,
+  inverted: it hid nothing and invented sixteen.
+- A marker is a comment, and was being matched as a substring anywhere in a line. The
+  comment token must now begin a comment: at the start of a line, after indentation only,
+  or after whitespace on a code line. All three are how a debt marker is written, and the
+  trailing form is the most common. A marker quoted inside prose or a string literal is no
+  longer reported, so a project that documents its own convention does not inflate its own
+  count. What this gives up is a marker jammed against a preceding character, as in
+  `foo();# defer: ...` — a form nobody writes, and recognizing it cost sixteen false ones.
+- The two remaining places where this repository named the markers in running text now
+  quote them. No path is excluded and nothing is suppressed: configuration to hide a wrong
+  answer would have been worse than the wrong answer.
+
 ## [2.10.0] - 2026-09-11
 
 Four claims the project made about itself and did not back.

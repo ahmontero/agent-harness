@@ -3739,4 +3739,81 @@ fi
 echo "  [PASS] no delivered delta spec is still listed as active."
 
 echo ""
+echo "=== 41. Testing Debt Marker Anchoring ==="
+# harness debt reported sixteen markers in this repository and there were none: every one
+# was the harness describing or testing its own feature. A debt marker is a comment, and it
+# was being matched as a substring anywhere in a line.
+DEBT_REPO="${TMP_TEST_DIR}/debt-anchoring"
+mkdir -p "${DEBT_REPO}"
+git -C "${DEBT_REPO}" init -q
+git -C "${DEBT_REPO}" config user.email "tests@agent-harness.local"
+git -C "${DEBT_REPO}" config user.name "Agent Harness Tests"
+
+# The three forms a debt marker is actually written in. The comment token is passed as an
+# argument rather than written inline, so this file does not itself carry a marker -- which
+# is the very category of false positive this group exists to close.
+{
+    printf '%s pragmatism: at the start of a line\n' '#'
+    printf 'value = 1\n'
+    printf 'def inner():\n'
+    printf '    %s defer: after indentation only\n' '#'
+    printf '    return value\n'
+    printf 'total = value + 1  %s pragmatism: trailing on a code line\n' '#'
+} > "${DEBT_REPO}/code.py"
+
+# The same text quoted in prose or inside a string literal is not a debt marker.
+cat > "${DEBT_REPO}/guide.md" <<'DEBT_DOC_EOF'
+Record debt with `# pragmatism:` or `// defer:` in a comment.
+The '# defer:' form works in shell too.
+DEBT_DOC_EOF
+cat > "${DEBT_REPO}/fixture.sh" <<'DEBT_FIXTURE_EOF'
+printf '# pragmatism: written into a temporary repository\n' > marker.txt
+printf '// defer: and the slash form\n' >> marker.txt
+DEBT_FIXTURE_EOF
+
+git -C "${DEBT_REPO}" add -A
+git -C "${DEBT_REPO}" commit -q -m init
+
+DEBT_JSON="$( (cd "${DEBT_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" debt --json) )"
+DEBT_FOUND="$(printf '%s' "${DEBT_JSON}" | jq -r 'length')"
+if [ "${DEBT_FOUND}" != "3" ]; then
+    echo "  [FAIL] expected the 3 real markers, found ${DEBT_FOUND}: ${DEBT_JSON}"
+    exit 1
+fi
+for expected in "at the start of a line" "after indentation only" "trailing on a code line"; do
+    if ! printf '%s' "${DEBT_JSON}" | jq -e --arg text "${expected}" 'any(.[]; .text | contains($text))' >/dev/null; then
+        echo "  [FAIL] a real marker was missed (${expected}): ${DEBT_JSON}"
+        exit 1
+    fi
+done
+echo "  [PASS] a marker is found at the start of a line, after indentation, and trailing on a code line."
+
+for quoted in "guide.md" "fixture.sh"; do
+    if printf '%s' "${DEBT_JSON}" | jq -e --arg file "${quoted}" 'any(.[]; .file | contains($file))' >/dev/null; then
+        echo "  [FAIL] a marker quoted in ${quoted} was reported as debt: ${DEBT_JSON}"
+        exit 1
+    fi
+done
+echo "  [PASS] a marker quoted in prose or inside a string literal is not debt."
+
+# The count harness context reports comes from the same scan, so it moves with it.
+DEBT_CONTEXT="$( (cd "${DEBT_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json) )"
+if [ "$(printf '%s' "${DEBT_CONTEXT}" | jq -r '.technicalDebtMarkers')" != "3" ]; then
+    echo "  [FAIL] harness context reports a different count than harness debt: ${DEBT_CONTEXT}"
+    exit 1
+fi
+echo "  [PASS] harness context reports the same count as harness debt."
+
+# Dogfooding: the files that describe and test the feature must yield nothing. Stated per
+# file rather than as a repository total, so it stays true when real debt is recorded.
+SELF_DEBT="$( (cd "${HARNESS_ROOT}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" debt --json) )"
+for describes_itself in "README.md" "AGENTS.md" "core/skills/debt/SKILL.md" "test/test_cli.sh" "bin/harness" "core/scripts/lib/debt.sh"; do
+    if printf '%s' "${SELF_DEBT}" | jq -e --arg file "${describes_itself}" 'any(.[]; .file == $file)' >/dev/null; then
+        echo "  [FAIL] ${describes_itself} describes or tests the debt feature and was reported as carrying debt"
+        exit 1
+    fi
+done
+echo "  [PASS] the files that describe and test the marker are not reported as carrying it."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

@@ -18,10 +18,21 @@ set -eo pipefail
 
 DEBT_SCAN_UNAVAILABLE=2
 
-# Both comment syntaxes: the marker is documented as `# pragmatism:`, but the recipes ship
-# TypeScript and Go presets where no comment starts with a #.
+# Both comment syntaxes: the marker is documented with a leading hash, but the recipes ship
+# TypeScript and Go presets where no comment starts with one.
+#
+# The comment token has to begin a comment: start of line, after indentation, or after
+# whitespace on a code line. Those are the three forms a debt marker is written in, and the
+# trailing one is the most common of them. Matched as a bare substring instead, this
+# repository reported sixteen debt markers and carried none -- every one was the harness
+# describing or testing its own feature, where the token sits inside a backtick, a quote,
+# or a parenthesis. `harness context` then told every agent that entered here that there
+# were sixteen items of debt.
+#
+# What this gives up is a marker jammed against a preceding character, as in `foo();# defer:
+# ...`. That is not a form anyone writes, and recognizing it cost sixteen false ones.
 debt_pattern() {
-    printf '%s\n' '(#|//)[[:space:]]*(pragmatism|defer):'
+    printf '%s\n' '(^|[[:space:]])(#|//)[[:space:]]*(pragmatism|defer):'
 }
 
 # Prints "<path>:<line>:<text>" lines. Returns 0 whether or not anything matched, and
