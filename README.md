@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.7.1-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.8.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -122,8 +122,9 @@ harness init
 ```
 
 `harness` will automatically:
-- Detect your language and test runner (`pytest`, `vitest`, `jest`, `cargo`, `go`).
-- Generate `stack.config.json` and a starter `rules/` directory.
+- Detect the ecosystems the repository shows evidence of — Python, Node, Go, Rust — and write one profile for each, with its own `detect` block so a polyglot repository resolves the right one per directory.
+- Write only commands the target evidences: a `test` script in `package.json`, `[tool.ruff]` in `pyproject.toml`, `manage.py` for Django, `.golangci.yml` for golangci-lint. What it cannot evidence it leaves unset and names, because a gate that reports it could not run is correct and a gate that runs the wrong tool is not.
+- Generate `stack.config.json` and a starter `rules/` directory. It states no issue-key prefix and no trunk branch: neither can be read from the repository, and trunk detection already happens at runtime.
 - Install the three curated workflow bundles through `.gemini`, `.claude`, `.codex`, and `.agents`, plus runtime-specific rule directories including `.cursor/rules`.
 
 ---

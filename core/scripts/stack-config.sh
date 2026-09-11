@@ -73,7 +73,7 @@ else
     # Walks the schema and the configuration together, emitting one
     # "<level>\t<dotted path>\t<message>" line per problem.
     FINDINGS="$(jq -r -n --slurpfile schema "${SCHEMA_FILE}" --slurpfile config "${CONFIG_FILE}" '
-        def typematch($t; $v):
+        def typeone($t; $v):
             if $t == "object" then ($v | type) == "object"
             elif $t == "array" then ($v | type) == "array"
             elif $t == "string" then ($v | type) == "string"
@@ -83,10 +83,21 @@ else
             else true
             end;
 
+        # A schema type may be a list of alternatives. The qa command keys accept a string
+        # or false -- the documented way to record that a project has no such gate -- and
+        # before this the validator rejected the very value stack-qa.sh honours.
+        def typematch($t; $v):
+            if ($t | type) == "array" then ([$t[] | typeone(.; $v)] | any)
+            else typeone($t; $v)
+            end;
+
+        def typename($t):
+            if ($t | type) == "array" then ($t | join(" or ")) else $t end;
+
         def checknode($sch; $val; $path):
             if $sch == null then []
             elif ($sch.type != null) and ((typematch($sch.type; $val)) | not) then
-                [{ level: "error", path: $path, message: "expected \($sch.type), found \($val | type)" }]
+                [{ level: "error", path: $path, message: "expected \(typename($sch.type)), found \($val | type)" }]
             elif $sch.type == "object" then
                 [ (($sch.required // [])[]) as $key
                   | select(($val | has($key)) | not)

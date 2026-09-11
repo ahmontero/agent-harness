@@ -22,7 +22,9 @@
           "description": "Default active profile when not specified"
         }
       },
-      "required": ["name"]
+      "required": [
+        "name"
+      ]
     },
     "profiles": {
       "type": "object",
@@ -48,12 +50,16 @@
             "properties": {
               "files": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Files that indicate this profile is active"
               },
               "directories": {
                 "type": "array",
-                "items": { "type": "string" },
+                "items": {
+                  "type": "string"
+                },
                 "description": "Directories that indicate this profile is active"
               }
             }
@@ -93,7 +99,12 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["github", "gitlab", "jira", "linear"],
+                "enum": [
+                  "github",
+                  "gitlab",
+                  "jira",
+                  "linear"
+                ],
                 "description": "Issue tracker provider"
               },
               "defaultPrefix": {
@@ -107,24 +118,39 @@
             "description": "Test runner, linter, and type-checker commands",
             "properties": {
               "testRunner": {
-                "type": "string",
-                "description": "Test framework (pytest, vitest, jest, cargo, go)"
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "description": "Test framework (pytest, vitest, jest, cargo, go). Set to false to record that this project genuinely has no such gate."
               },
               "testCommand": {
-                "type": "string",
-                "description": "Command to run entire test suite"
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "description": "Command to run entire test suite. Set to false to record that this project genuinely has no such gate."
               },
               "tddCommand": {
-                "type": "string",
-                "description": "Command to run targeted test file ({path} placeholder)"
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "description": "Command to run targeted test file ({path} placeholder). Set to false to record that this project genuinely has no such gate."
               },
               "lintCommand": {
-                "type": "string",
-                "description": "Command to run linter (e.g. 'ruff check .' or 'eslint .')"
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "description": "Command to run linter (e.g. 'ruff check .' or 'eslint .'). Set to false to record that this project genuinely has no such gate."
               },
               "typeCheckCommand": {
-                "type": "string",
-                "description": "Command to run type checker (e.g. 'mypy .' or 'tsc --noEmit')"
+                "type": [
+                  "string",
+                  "boolean"
+                ],
+                "description": "Command to run type checker (e.g. 'mypy .' or 'tsc --noEmit'). Set to false to record that this project genuinely has no such gate."
               }
             }
           },
@@ -134,7 +160,11 @@
             "properties": {
               "provider": {
                 "type": "string",
-                "enum": ["github", "gitlab", "azure"],
+                "enum": [
+                  "github",
+                  "gitlab",
+                  "azure"
+                ],
                 "description": "CI provider"
               }
             }
@@ -147,8 +177,14 @@
                 "type": "object",
                 "description": "Model identifier per dispatched role",
                 "properties": {
-                  "implementer": { "type": "string", "description": "Model for the implementer dispatch" },
-                  "reviewer": { "type": "string", "description": "Model for the reviewer dispatch" }
+                  "implementer": {
+                    "type": "string",
+                    "description": "Model for the implementer dispatch"
+                  },
+                  "reviewer": {
+                    "type": "string",
+                    "description": "Model for the reviewer dispatch"
+                  }
                 }
               }
             }
