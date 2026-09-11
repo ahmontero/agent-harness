@@ -125,8 +125,8 @@ ${BOLD}Core Commands:${RESET}
                 harness ledger signature                (failure text on stdin)
                 harness ledger failure <run_id> [label] (failure text on stdin)
 
-  ${GREEN}ship${RESET}          Run pre-flight checks, build commit, and open Pull Request
-                harness ship [target_branch]
+  ${GREEN}ship${RESET}          Run pre-flight checks, push the branch, and open a Pull Request
+                harness ship [target_branch] [--yes] [--dry-run]
 
   ${GREEN}sync${RESET}          Report or repair drift in installed skill surfaces
                 harness sync [--target <path>] [--global] [--expert]

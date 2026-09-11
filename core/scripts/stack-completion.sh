@@ -27,7 +27,7 @@ HARNESS_COMMANDS=(
     "debt:Harvest technical debt markers"
     "receipt:Record and read private local workflow receipts"
     "ledger:Keep a durable append-only record of a workflow run"
-    "ship:Run pre-flight checks and open a Pull Request"
+    "ship:Run pre-flight checks, push the branch and open a Pull Request"
     "sync:Report or repair drift in installed skill surfaces"
     "completion:Install shell autocompletion"
     "init:Initialize the harness in a repository"

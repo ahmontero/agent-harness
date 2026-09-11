@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.9.0] - 2026-09-11
+
+`harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and
+opened a pull request from `main` into `main`. With uncommitted work it pushed a branch
+that was missing it and said nothing. It asked for no confirmation before a push, which
+this project's own branch conventions forbid an agent from performing unasked.
+
+> **Upgrade note — `harness ship` now asks before pushing.** Where there is no terminal to
+> ask on it refuses rather than publishing, so a scripted or agent invocation must pass
+> `--yes`. `--yes` is how a human confirms in advance; an agent must not pass it on its own
+> initiative. A second change can turn a previously "successful" run into a failure: a run
+> that pushed but opened no pull request now exits non-zero.
+
+### Added
+
+- `harness ship --dry-run` reports every decision — the branch, the target, the commit
+  count — and mutates nothing, matching the flag `worktree remove` already offers.
+- `harness ship --yes` confirms the push in advance.
+
+### Changed
+
+- Every guard runs before the QA suite, so a refusal costs no test run, and each refusal
+  names what it found and leaves the repository untouched. `ship` refuses to publish the
+  branch it is targeting, a detached `HEAD`, a target branch that exists neither locally
+  nor on origin, a branch with no commits ahead of its target, and uncommitted changes to
+  tracked files. Untracked files are reported rather than refused: they would not be pushed
+  either way, and blocking on a scratch file would retire the command.
+- Options are parsed rather than swallowed as a target branch. `harness ship --force`
+  targeted a branch named `--force`.
+- A run that pushed but opened no pull request exits non-zero and says which half happened,
+  instead of reporting success. A missing `gh` or `glab`, a failing `gh pr create`, and a
+  provider with no `ci.prCommand` all take that path.
+- `gh pr create` is no longer retried without `--fill`. That retry prompts, and hung
+  wherever there was no terminal.
+- The help text stops advertising a "build commit" step `ship` has never performed.
+
 ## [2.8.0] - 2026-09-11
 
 `harness init` copied a fixed template declaring every repository a Python "backend"
