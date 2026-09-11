@@ -3052,6 +3052,10 @@ git -C "${WT_REPO}" config user.name "Agent Harness Tests"
 printf '# project\n' > "${WT_REPO}/README.md"
 git -C "${WT_REPO}" add -A
 git -C "${WT_REPO}" commit -q -m init
+# The configuration harness init writes declares trunkBranch: main, so the fixture has to
+# be on main. Without this the test passed wherever init.defaultBranch was already main and
+# failed everywhere else with "fatal: invalid reference: main".
+git -C "${WT_REPO}" branch -M main
 
 HOME_FOR_WT="${WT_ROOT}/home"
 mkdir -p "${HOME_FOR_WT}"
@@ -3148,6 +3152,7 @@ git -C "${TRACKED_REPO}" config user.name "Agent Harness Tests"
 printf '# tracked\n' > "${TRACKED_REPO}/README.md"
 git -C "${TRACKED_REPO}" add -A
 git -C "${TRACKED_REPO}" commit -q -m init
+git -C "${TRACKED_REPO}" branch -M main
 (cd "${TRACKED_REPO}" && env -u STACK_PROFILE HOME="${HOME_FOR_WT}" \
     HARNESS_STATE_DIR="${WT_ROOT}/state" "${HARNESS_ROOT}/install.sh" --target "${TRACKED_REPO}") >/dev/null 2>&1
 rm -f "${TRACKED_REPO}/.gitignore"
