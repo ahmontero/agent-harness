@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.10.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.10.1-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -315,6 +315,8 @@ Transforms technical blockers or ambiguous domain decisions into structured disc
 <summary><b>11. 🌾 Debt Harvester (<code>/harness-debt [--json]</code>)</b></summary>
 
 Audits and indexes pragmatic technical debt markers (`# pragmatism:`, `# defer:`, and their `//` forms) across the codebase.
+
+A marker is a *comment*: the token has to start a line, follow only indentation, or follow whitespace on a code line. Quoted inside prose or a string literal it is not a marker and is not reported, so a project that documents its own convention — or tests it — does not inflate its own count.
 - Tracked files by default, through `git grep`, so the count does not depend on which search tool happens to be installed. `--all` includes untracked files.
 - `--json` emits a single array of `{file, line, text}`. A scan that could not complete exits non-zero rather than reporting zero markers.
 </details>

@@ -106,7 +106,7 @@ ${BOLD}Core Commands:${RESET}
                 harness commit build <type> "<message>"
                 harness commit check [commit_hash]
 
-  ${GREEN}debt${RESET}          Scan & harvest technical debt markers (# pragmatism:, # defer:)
+  ${GREEN}debt${RESET}          Scan & harvest technical debt markers ("# pragmatism:", "# defer:")
                 harness debt [--json] [--all] [--path <path>]
 
   ${GREEN}receipt${RESET}       Record private local workflow lifecycle events
