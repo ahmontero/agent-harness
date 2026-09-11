@@ -21,7 +21,7 @@ HARNESS_COMMANDS=(
     "spec:Manage Living Delta Specs"
     "qa:Run test suites, TDD loops, linters, types"
     "scan:Run the static landmine scanner"
-    "worktree:Manage git worktrees"
+    "worktree:Create, seed, list and remove git worktrees"
     "branch:Manage git branches"
     "commit:Build or check a conventional commit message"
     "debt:Harvest technical debt markers"

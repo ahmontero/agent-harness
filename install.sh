@@ -69,6 +69,7 @@ ${BOLD}Usage:${RESET}
   ./setup --cli-only          # Install only CLI binaries to ~/.local/bin
   ./setup --verify            # Verify installation health, script syntax & skill frontmatter
   ./setup --sync-only         # Re-sync skills and rules across harnesses
+  ./setup --seed-target <path> # Install skill surfaces into an existing worktree
   ./setup --rollback          # Undo the last committed installation
   ./setup --yes               # Confirm the guided installation without a prompt
 
@@ -86,6 +87,7 @@ CLI_ONLY=false
 VERIFY_MODE=false
 SYNC_ONLY=false
 SYNC_TARGET=""
+SEED_TARGET=""
 GUIDED_MODE=false
 ROLLBACK_MODE=false
 SKILL_MODE="curated"
@@ -101,6 +103,7 @@ while [[ $# -gt 0 ]]; do
         --verify) VERIFY_MODE=true; shift ;;
         --sync-only|--sync-global) SYNC_ONLY=true; shift ;;
         --sync-target) SYNC_TARGET="$2"; shift 2 ;;
+        --seed-target) SEED_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         --yes|-y) ASSUME_YES=true; shift ;;
@@ -113,7 +116,7 @@ done
 if [ "${ROLLBACK_MODE}" = true ]; then
     if [ -n "${TARGET_REPO}" ] || [ "${INSTALL_GLOBAL}" = true ] || [ "${CLI_ONLY}" = true ] || \
        [ "${SYNC_ONLY}" = true ] || [ "${VERIFY_MODE}" = true ] || [ -n "${RECIPE_NAME}" ] || \
-       [ -n "${SYNC_TARGET}" ] || \
+       [ -n "${SYNC_TARGET}" ] || [ -n "${SEED_TARGET}" ] || \
        [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ] || \
        [ "${ASSUME_YES}" = true ]; then
         log_error "--rollback cannot be combined with installation options."
@@ -171,6 +174,7 @@ fi
 # installation. Keying it on `$# -eq 0` instead meant `./setup --yes` selected no action
 # and still printed "Setup complete!", which is the failure shape this delta exists to remove.
 if [ "${GUIDED_MODE}" = false ] && [ -z "${TARGET_REPO}" ] && [ -z "${SYNC_TARGET}" ] && \
+   [ -z "${SEED_TARGET}" ] && \
    [ "${INSTALL_GLOBAL}" = false ] && [ "${CLI_ONLY}" = false ] && [ "${SYNC_ONLY}" = false ]; then
     GUIDED_MODE=true
 fi
@@ -475,6 +479,72 @@ install_cli() {
     log_success "CLI binaries linked. Ensure '${bin_dest}' is in your PATH."
 }
 
+GITIGNORE_MARKER="# agent-harness: installed skill surfaces"
+
+# Prints the .gitignore the target should have: whatever it already has, then the block.
+# A separate function because transaction_write_command runs a command and captures its
+# output, which is what keeps the file inside the installation transaction.
+emit_gitignore_with_surfaces() {
+    local existing="$1"
+    if [ -f "${existing}" ]; then
+        cat "${existing}"
+        [ -n "$(tail -c 1 "${existing}")" ] && printf '\n'
+        printf '\n'
+    fi
+    cat <<GITIGNORE_BLOCK_EOF
+${GITIGNORE_MARKER}
+# Rebuilt by 'harness sync'; 'harness worktree seed <path>' installs them into a worktree.
+# AGENTS.md, CLAUDE.md, GEMINI.md, rules/ and stack.config.json are yours -- commit those.
+.claude/skills/
+.gemini/skills/
+.codex/skills/
+.agents/skills/
+GITIGNORE_BLOCK_EOF
+}
+
+# Whether a worktree carries the harness was decided by a .gitignore the user wrote by
+# accident: init installed four surfaces and said nothing about Git, so a project that
+# happened to commit them got working worktrees and a project that happened to ignore them
+# got empty ones. The decision is now recorded, once, where Git will read it.
+#
+# The CLAUDE.md and GEMINI.md symlinks are deliberately absent from the block. They are the
+# project's own configuration, they cost nothing in Git, and committing them is what lets
+# every worktree inherit AGENTS.md without seeding anything.
+record_surfaces_in_gitignore() {
+    local target="$1"
+    local gitignore="${target}/.gitignore"
+
+    git -C "${target}" rev-parse --is-inside-work-tree >/dev/null 2>&1 || return 0
+    if [ -f "${gitignore}" ] && grep -qxF "${GITIGNORE_MARKER}" "${gitignore}"; then
+        return 0
+    fi
+
+    transaction_write_command "${gitignore}" 644 emit_gitignore_with_surfaces "${gitignore}"
+    log_success "Recorded the installed skill surfaces in ${gitignore}."
+}
+
+# Installs the skill surfaces and the AGENTS.md symlinks into a directory that is already a
+# checkout of this project, and nothing else. A worktree gets its tracked files from Git;
+# what it cannot get from Git is an installation artifact, and that is all this writes.
+seed_worktree_surfaces() {
+    local target="$1"
+
+    log_info "Seeding skill surfaces into ${BOLD}${target}${RESET}..."
+    install_skill_surface "${target}/.gemini/skills" gemini
+    install_skill_surface "${target}/.claude/skills" claude
+    install_skill_surface "${target}/.codex/skills" codex
+    install_skill_surface "${target}/.agents/skills" agents
+
+    if [ -f "${target}/AGENTS.md" ]; then
+        [ -e "${target}/CLAUDE.md" ] || transaction_symlink "AGENTS.md" "${target}/CLAUDE.md"
+        [ -e "${target}/GEMINI.md" ] || transaction_symlink "AGENTS.md" "${target}/GEMINI.md"
+    else
+        log_warn "${target} carries no AGENTS.md, so no CLAUDE.md or GEMINI.md symlink was written."
+    fi
+
+    log_success "Seeded ${target}."
+}
+
 # 2. Install into target repository
 install_target_repo() {
     local target="$1"
@@ -540,6 +610,8 @@ install_target_repo() {
 
     transaction_symlink "AGENTS.md" "${target}/CLAUDE.md"
     transaction_symlink "AGENTS.md" "${target}/GEMINI.md"
+
+    record_surfaces_in_gitignore "${target}"
 
     # Default rules & config if missing
     if [ ! -f "${target}/stack.config.json" ]; then
@@ -659,7 +731,10 @@ if [ "${CLI_ONLY}" = true ]; then
     exit 0
 fi
 
-if [ "${SYNC_ONLY}" = true ] || [ -n "${SYNC_TARGET}" ]; then
+if [ -n "${SEED_TARGET}" ]; then
+    require_skill_catalog
+    seed_worktree_surfaces "${SEED_TARGET}"
+elif [ "${SYNC_ONLY}" = true ] || [ -n "${SYNC_TARGET}" ]; then
     require_skill_catalog
     if [ -n "${SYNC_TARGET}" ]; then
         sync_scope "${SYNC_TARGET}" "$(surface_repo_list "${SYNC_TARGET}")"

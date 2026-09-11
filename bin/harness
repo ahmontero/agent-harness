@@ -94,6 +94,7 @@ ${BOLD}Core Commands:${RESET}
   ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
                 harness worktree create <type> <issue_key> <slug> [--base <branch>]
                 harness worktree list
+                harness worktree seed <path>
                 harness worktree remove <issue_key|path> [--force] [--dry-run]
 
   ${GREEN}branch${RESET}        Manage & validate issue-driven branches

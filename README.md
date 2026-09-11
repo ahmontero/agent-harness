@@ -268,6 +268,9 @@ Diagnoses environment health:
 
 Manages isolated `git worktree` directories per ticket:
 - Enables agents to work in parallel on separate features without dirtying your main workspace or switching active branches.
+- A worktree gets its tracked files from Git, but not the installed skill surfaces — those are installation artifacts. `create` therefore reports which surfaces the new worktree carries, which it lacks, and whether the global surfaces still cover it, instead of reporting only that a directory exists.
+- `harness worktree seed <path>` gives a worktree its own surfaces and `AGENTS.md` symlinks, and writes nothing else. It refuses a project that tracks its surfaces in Git, because installing over versioned bundles would rewrite them.
+- `harness init` records the surfaces it installs in the target's `.gitignore`, so whether worktrees inherit the harness stops being decided by accident. The `CLAUDE.md` and `GEMINI.md` symlinks are deliberately left committable: tracking them is what carries `AGENTS.md` into every worktree for free.
 </details>
 
 <details>

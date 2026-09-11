@@ -3038,4 +3038,141 @@ rm -f "${REFUSAL_REPO}/harness.config.json"
 echo "  [PASS] rules that were requested and cannot be read abort instead of falling back."
 
 echo ""
+echo "=== 35. Testing Worktree Surface Continuity ==="
+# `worktree create` reported that a directory existed and stopped there. Skill surfaces are
+# installation artifacts rather than tracked files, so a project that keeps them out of Git
+# got a worktree with no skills and no CLAUDE.md -- and references/worktree.md sends the
+# agent into exactly that directory as phase 2 of harness-implement.
+WT_ROOT="${TMP_TEST_DIR}/worktree-surface"
+mkdir -p "${WT_ROOT}"
+WT_REPO="${WT_ROOT}/project"
+git init -q "${WT_REPO}"
+git -C "${WT_REPO}" config user.email "tests@agent-harness.local"
+git -C "${WT_REPO}" config user.name "Agent Harness Tests"
+printf '# project\n' > "${WT_REPO}/README.md"
+git -C "${WT_REPO}" add -A
+git -C "${WT_REPO}" commit -q -m init
+
+HOME_FOR_WT="${WT_ROOT}/home"
+mkdir -p "${HOME_FOR_WT}"
+wt_install() {
+    (cd "${WT_REPO}" && env -u STACK_PROFILE HOME="${HOME_FOR_WT}" \
+        HARNESS_STATE_DIR="${WT_ROOT}/state" "${HARNESS_ROOT}/install.sh" "$@")
+}
+wt_harness() {
+    WT_STATUS=0
+    WT_OUTPUT="$( (cd "${WT_REPO}" && env -u STACK_PROFILE HOME="${HOME_FOR_WT}" \
+        HARNESS_STATE_DIR="${WT_ROOT}/state" "${HARNESS_ROOT}/bin/harness" "$@" 2>&1) )" || WT_STATUS=$?
+}
+
+wt_install --target "${WT_REPO}" >/dev/null 2>&1
+
+# init must record the surfaces it installed, and leave the symlinks committable: a tracked
+# CLAUDE.md is what carries AGENTS.md into every worktree.
+if [ ! -f "${WT_REPO}/.gitignore" ]; then
+    echo "  [FAIL] harness init installed four skill surfaces and wrote no .gitignore entry for them"
+    exit 1
+fi
+for ignored in ".claude/skills/" ".gemini/skills/" ".codex/skills/" ".agents/skills/"; do
+    if ! grep -qxF "${ignored}" "${WT_REPO}/.gitignore"; then
+        echo "  [FAIL] .gitignore does not record the installed surface ${ignored}: $(cat "${WT_REPO}/.gitignore")"
+        exit 1
+    fi
+done
+for kept in "CLAUDE.md" "GEMINI.md" "AGENTS.md"; do
+    if grep -qxF "${kept}" "${WT_REPO}/.gitignore"; then
+        echo "  [FAIL] .gitignore ignores ${kept}, which every worktree needs in order to read the floor"
+        exit 1
+    fi
+done
+GITIGNORE_BEFORE="$(cat "${WT_REPO}/.gitignore")"
+wt_install --target "${WT_REPO}" >/dev/null 2>&1
+if [ "$(cat "${WT_REPO}/.gitignore")" != "${GITIGNORE_BEFORE}" ]; then
+    echo "  [FAIL] a second harness init duplicated its .gitignore block"
+    exit 1
+fi
+echo "  [PASS] harness init records the installed surfaces in .gitignore, once, and keeps the symlinks committable."
+
+git -C "${WT_REPO}" add -A
+git -C "${WT_REPO}" commit -q -m "harness init"
+
+# With the surfaces ignored, the new worktree carries none. The command must say so.
+wt_harness worktree create feat AH-14 isolated
+if [ "${WT_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] worktree create failed: ${WT_OUTPUT}"
+    exit 1
+fi
+WT_PATH="${WT_ROOT}/project-AH-14"
+if [ ! -d "${WT_PATH}" ]; then
+    echo "  [FAIL] worktree create did not produce ${WT_PATH}: ${WT_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${WT_OUTPUT}" | grep -q "skills"; then
+    echo "  [FAIL] worktree create did not report the surfaces the new worktree lacks: ${WT_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${WT_OUTPUT}" | grep -q "worktree seed"; then
+    echo "  [FAIL] worktree create named no repair path for a worktree with no surface: ${WT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] worktree create names the surfaces the new worktree does not carry, and how to repair it."
+
+# Seeding installs the surfaces and the symlinks, and nothing else.
+wt_harness worktree seed "${WT_PATH}"
+if [ "${WT_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] worktree seed failed: ${WT_OUTPUT}"
+    exit 1
+fi
+for runtime_dir in .claude .gemini .codex .agents; do
+    if [ ! -f "${WT_PATH}/${runtime_dir}/skills/harness-implement/SKILL.md" ]; then
+        echo "  [FAIL] worktree seed did not install the ${runtime_dir} surface: ${WT_OUTPUT}"
+        exit 1
+    fi
+done
+if [ ! -L "${WT_PATH}/CLAUDE.md" ]; then
+    echo "  [FAIL] worktree seed did not link CLAUDE.md to AGENTS.md: ${WT_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(git -C "${WT_PATH}" status --porcelain)" ]; then
+    echo "  [FAIL] worktree seed left tracked changes behind: $(git -C "${WT_PATH}" status --porcelain)"
+    exit 1
+fi
+echo "  [PASS] worktree seed installs the surfaces and the AGENTS.md symlinks, and touches nothing tracked."
+
+# A project that tracks its surfaces already carries them in every worktree, and those
+# bundles hold the managed marker -- installing over them would delete versioned files.
+TRACKED_REPO="${WT_ROOT}/tracked"
+git init -q "${TRACKED_REPO}"
+git -C "${TRACKED_REPO}" config user.email "tests@agent-harness.local"
+git -C "${TRACKED_REPO}" config user.name "Agent Harness Tests"
+printf '# tracked\n' > "${TRACKED_REPO}/README.md"
+git -C "${TRACKED_REPO}" add -A
+git -C "${TRACKED_REPO}" commit -q -m init
+(cd "${TRACKED_REPO}" && env -u STACK_PROFILE HOME="${HOME_FOR_WT}" \
+    HARNESS_STATE_DIR="${WT_ROOT}/state" "${HARNESS_ROOT}/install.sh" --target "${TRACKED_REPO}") >/dev/null 2>&1
+rm -f "${TRACKED_REPO}/.gitignore"
+git -C "${TRACKED_REPO}" add -A -f
+git -C "${TRACKED_REPO}" commit -q -m "track the surfaces"
+TRACKED_STATUS=0
+TRACKED_OUTPUT="$( (cd "${TRACKED_REPO}" && env -u STACK_PROFILE HOME="${HOME_FOR_WT}" \
+    HARNESS_STATE_DIR="${WT_ROOT}/state" "${HARNESS_ROOT}/bin/harness" \
+    worktree seed "${TRACKED_REPO}" 2>&1) )" || TRACKED_STATUS=$?
+if [ "${TRACKED_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] worktree seed rewrote surfaces the project tracks in Git: ${TRACKED_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(git -C "${TRACKED_REPO}" status --porcelain)" ]; then
+    echo "  [FAIL] the refused seed still modified tracked files: $(git -C "${TRACKED_REPO}" status --porcelain)"
+    exit 1
+fi
+echo "  [PASS] worktree seed refuses a project whose surfaces are tracked, and changes nothing."
+
+wt_harness worktree seed "${WT_ROOT}/not-a-worktree"
+if [ "${WT_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] worktree seed accepted a path that is not a worktree of this repository: ${WT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] worktree seed refuses a path this repository does not own."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
