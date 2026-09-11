@@ -6,6 +6,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.4.2] - 2026-09-11
+
 ### Fixed
 - `harness commit build` read a Conventional Commit scope out of any branch carrying a version number: `chore/release-2.4.1` recorded `chore(release-2): …` and `fix/bump-node-22-1` recorded `fix(node-22): …`. The issue-key pattern accepted a lowercase word as a project prefix and left its digits unbounded on the right, so they stopped at the first dot. A key is now an uppercase prefix, a hyphen, and digits that are not followed by a dot: `AH-11` and `COMPAT-1` still scope their commits, and a version-like branch is left unscoped rather than scoped to a fragment of the version.
 
