@@ -63,6 +63,7 @@ regressions — read them first.
 - `./setup --yes` (or any run naming only modifiers) selected no action at all and still printed "Setup complete!". Guided is now the default scope, as the usage text always said.
 - `get_profile_value` returned the caller's default for any value configured as `false`: jq's `//` treats `false` as empty, so nothing could be switched off by configuration. It now selects the first key that is *present*.
 - `lib/config.sh` and `stack-scan.sh` passed configuration values to `eval`, so a configuration file containing a command substitution executed it. A leading `~` is expanded by parameter substitution instead.
+- `test/test_cli.sh` no longer rewrites the developer's own global skill surfaces. Its doctor group ran `harness doctor --fix` without isolating `HOME`, and `doctor --fix` repairs both the scopes doctor reports on -- one of which is derived from `$HOME` -- so running the suite synchronized the real `~/.claude`, `~/.gemini`, `~/.codex`, and `~/.agents` surfaces. `HOME` is now isolated for that group, and the two-scope repair is asserted inside the isolated home rather than assumed.
 - Committed transaction journals are pruned to the ten most recent. Each holds a full backup of every file its installation replaced and nothing ever removed one; the journal `--rollback` can still undo is never pruned.
 
 ### Removed

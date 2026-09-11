@@ -1600,8 +1600,23 @@ git -C "${DOCTOR_DIR}" init -q
 "${HARNESS_ROOT}/install.sh" --target "${DOCTOR_DIR}" >/dev/null
 printf '\nlocally edited\n' >> "${DOCTOR_DIR}/.claude/skills/harness-implement/SKILL.md"
 
+# HOME is isolated for the whole group. `doctor --fix` repairs both the scopes doctor
+# reports on, and the global one is derived from $HOME: without this, running the test
+# suite rewrote the developer's own global skill surfaces. The suite may not reach outside
+# its temporary directory, and a test that repairs surfaces has to be held to that hardest.
+DOCTOR_HOME="${TMP_TEST_DIR}/doctor-home"
+mkdir -p "${DOCTOR_HOME}"
+doctor_in_dir() {
+    (cd "${DOCTOR_DIR}" && env HOME="${DOCTOR_HOME}" "${HARNESS_ROOT}/bin/harness" doctor "$@" 2>&1)
+}
+
+# A drifted global surface inside the isolated home, so the two-scope repair is asserted
+# rather than merely assumed from an empty $HOME.
+env HOME="${DOCTOR_HOME}" "${HARNESS_ROOT}/install.sh" --global >/dev/null
+printf '\nlocally edited\n' >> "${DOCTOR_HOME}/.claude/skills/harness-implement/SKILL.md"
+
 DOCTOR_STATUS=0
-DOCTOR_OUTPUT="$(cd "${DOCTOR_DIR}" && "${HARNESS_ROOT}/bin/harness" doctor 2>&1)" || DOCTOR_STATUS=$?
+DOCTOR_OUTPUT="$(doctor_in_dir)" || DOCTOR_STATUS=$?
 if [ "${DOCTOR_STATUS}" -ne 0 ]; then
     echo "  [FAIL] doctor treated surface drift as an error instead of a warning"
     exit 1
@@ -1613,10 +1628,14 @@ if ! printf '%s' "${DOCTOR_OUTPUT}" | grep -q "drifted" || \
 fi
 
 DOCTOR_FIX_STATUS=0
-(cd "${DOCTOR_DIR}" && "${HARNESS_ROOT}/bin/harness" doctor --fix >/dev/null 2>&1) || DOCTOR_FIX_STATUS=$?
+doctor_in_dir --fix >/dev/null || DOCTOR_FIX_STATUS=$?
 if [ "${DOCTOR_FIX_STATUS}" -ne 0 ] || \
    ! "${HARNESS_ROOT}/bin/harness" sync --check --target "${DOCTOR_DIR}" >/dev/null 2>&1; then
     echo "  [FAIL] doctor --fix did not repair the drifted surface"
+    exit 1
+fi
+if ! env HOME="${DOCTOR_HOME}" "${HARNESS_ROOT}/bin/harness" sync --check --global >/dev/null 2>&1; then
+    echo "  [FAIL] doctor --fix did not repair the global surface it reported as drifted"
     exit 1
 fi
 
@@ -1628,7 +1647,7 @@ cat > "${DOCTOR_STUB}/jq" <<'STUB_EOF'
 exit 1
 STUB_EOF
 chmod +x "${DOCTOR_STUB}/jq"
-DOCTOR_NOJQ="$(cd "${DOCTOR_DIR}" && PATH="${DOCTOR_STUB}:${PATH}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1)" || true
+DOCTOR_NOJQ="$(cd "${DOCTOR_DIR}" && env HOME="${DOCTOR_HOME}" PATH="${DOCTOR_STUB}:${PATH}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1)" || true
 if ! printf '%s' "${DOCTOR_NOJQ}" | grep -qi "unavailable" || \
    printf '%s' "${DOCTOR_NOJQ}" | grep -q "current  "; then
     echo "  [FAIL] doctor reported a surface state without a working jq"
@@ -1990,7 +2009,9 @@ DOCTOR_CLAIMS_REPO="${TMP_TEST_DIR}/doctor-claims"
 mkdir -p "${DOCTOR_CLAIMS_REPO}"
 git -C "${DOCTOR_CLAIMS_REPO}" init -q
 "${HARNESS_ROOT}/install.sh" --target "${DOCTOR_CLAIMS_REPO}" >/dev/null
-DOCTOR_CLAIMS="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
+DOCTOR_CLAIMS_HOME="${TMP_TEST_DIR}/doctor-claims-home"
+mkdir -p "${DOCTOR_CLAIMS_HOME}"
+DOCTOR_CLAIMS="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE HOME="${DOCTOR_CLAIMS_HOME}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
 for section in "CLI Installation" "Pre-Commit Hook" "Configuration"; do
     if ! printf '%s' "${DOCTOR_CLAIMS}" | grep -q "${section}"; then
         echo "  [FAIL] doctor does not report on ${section}: ${DOCTOR_CLAIMS}"
@@ -2010,7 +2031,7 @@ esac
 mkdir -p "${FOREIGN_HOOKS}"
 printf '#!/bin/sh\nexit 0\n' > "${FOREIGN_HOOKS}/pre-commit"
 chmod +x "${FOREIGN_HOOKS}/pre-commit"
-DOCTOR_FOREIGN="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
+DOCTOR_FOREIGN="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE HOME="${DOCTOR_CLAIMS_HOME}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
 if ! printf '%s' "${DOCTOR_FOREIGN}" | grep -q "not written by agent-harness"; then
     echo "  [FAIL] doctor did not report a foreign pre-commit hook: ${DOCTOR_FOREIGN}"
     exit 1
@@ -2019,7 +2040,7 @@ fi
 # A configuration doctor cannot validate is an error, not a silent pass.
 printf '{ "project": ' > "${DOCTOR_CLAIMS_REPO}/harness.config.json"
 DOCTOR_BADCONF_STATUS=0
-(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor >/dev/null 2>&1) || DOCTOR_BADCONF_STATUS=$?
+(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE HOME="${DOCTOR_CLAIMS_HOME}" "${HARNESS_ROOT}/bin/harness" doctor >/dev/null 2>&1) || DOCTOR_BADCONF_STATUS=$?
 if [ "${DOCTOR_BADCONF_STATUS}" -eq 0 ]; then
     echo "  [FAIL] doctor exited 0 with a configuration that is not valid JSON"
     exit 1
@@ -2027,7 +2048,7 @@ fi
 echo "  [PASS] doctor checks the CLI installation, the pre-commit hook, and the configuration."
 
 # --check-auth was advertised, parsed, and read by nothing.
-DOCTOR_AUTH="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor --check-auth 2>&1 || true)"
+DOCTOR_AUTH="$(cd "${SIGNAL_REPO}" && env -u STACK_PROFILE HOME="${DOCTOR_CLAIMS_HOME}" "${HARNESS_ROOT}/bin/harness" doctor --check-auth 2>&1 || true)"
 if ! printf '%s' "${DOCTOR_AUTH}" | grep -q "Provider Authentication"; then
     echo "  [FAIL] doctor --check-auth reported nothing about provider authentication: ${DOCTOR_AUTH}"
     exit 1
