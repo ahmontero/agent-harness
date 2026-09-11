@@ -498,6 +498,19 @@ if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config
 fi
 echo "  [PASS] repository provides its canonical floor and landmine documentation."
 
+# The README badge states a version to every reader of the front page. It drifted behind
+# package.json the moment a release bumped one and not the other, so the claim is checked.
+HARNESS_VERSION="$(jq -r '.version' "${HARNESS_ROOT}/package.json")"
+if ! grep -qF "badge/version-${HARNESS_VERSION}-blue.svg" "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] README version badge does not state package.json's version (${HARNESS_VERSION})"
+    exit 1
+fi
+if ! grep -qF "## [${HARNESS_VERSION}]" "${HARNESS_ROOT}/CHANGELOG.md"; then
+    echo "  [FAIL] CHANGELOG.md has no entry for the released version ${HARNESS_VERSION}"
+    exit 1
+fi
+echo "  [PASS] the README badge and CHANGELOG agree with package.json on the version."
+
 echo ""
 echo "=== 10. Testing Public Workflow Documentation ==="
 for documented_contract in \
