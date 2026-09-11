@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.1] - 2026-09-11
+
+### Fixed
+
+- Installation no longer aborts at random on macOS with
+  `core/scripts/lib/surface.sh: line 77: printf: write error: Interrupted system call`.
+  The three digest functions wrote to a pipe with a shell builtin while child processes
+  were being reaped — `jq` in a process substitution, `basename` per reference, `cat` per
+  file — and bash on macOS does not restart a write that the arriving `SIGCHLD`
+  interrupts. A write large enough to fill the pipe buffer blocks, and a blocked write is
+  what a signal can interrupt. The payload is now assembled in a regular file, whose
+  writes are not interruptible, and the two short listings are accumulated in shell
+  variables and handed to `sort` through a here-string. The race is removed rather than
+  narrowed.
+- The bytes fed to `git hash-object` are unchanged, verified digest by digest across every
+  workflow and every installed bundle, so no existing surface manifest is invalidated and
+  nothing is reported as drifted by this change alone. A test pins that contract: the
+  source digest of a workflow equals the installed digest of the bundle published from it,
+  and both equal a digest computed by an independent command.
+
+  The failure was observed on `main` and on two branches, landing in a different matrix
+  cell each time. A red run that carries no information about the change that produced it
+  teaches everyone to ignore red runs, which is the one failure this project cannot afford.
+
 ## [2.7.0] - 2026-09-11
 
 `harness worktree create` reported that a directory existed and stopped there, whether or

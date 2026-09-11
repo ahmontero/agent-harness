@@ -3215,4 +3215,93 @@ done
 echo "  [PASS] every pull request is verified whatever it targets, and push stays scoped to the trunk."
 
 echo ""
+echo "=== 37. Testing Surface Digest Contract ==="
+# A digest is an identity claim: every surface manifest records one, and drift detection
+# compares against it. A refactor that changed the hashed bytes would report every
+# installed surface as drifted at once, so the contract is pinned rather than assumed.
+DIGEST_ROOT="${TMP_TEST_DIR}/digest-contract"
+mkdir -p "${DIGEST_ROOT}/home"
+DIGEST_TARGET="${DIGEST_ROOT}/target"
+git init -q "${DIGEST_TARGET}"
+git -C "${DIGEST_TARGET}" config user.email "tests@agent-harness.local"
+git -C "${DIGEST_TARGET}" config user.name "Agent Harness Tests"
+git -C "${DIGEST_TARGET}" commit -q --allow-empty -m init
+HOME="${DIGEST_ROOT}/home" HARNESS_STATE_DIR="${DIGEST_ROOT}/state" \
+    "${HARNESS_ROOT}/install.sh" --target "${DIGEST_TARGET}" >/dev/null 2>&1
+
+# Computed here from the documented rule -- each file's relative path, then its content,
+# ordered by relative path -- with no reference to how surface.sh does it.
+independent_digest() {
+    local bundle="$1"
+    local payload reference
+    payload="$(mktemp)"
+    {
+        printf 'SKILL.md\n'
+        cat "${bundle}/SKILL.md"
+        for reference in "${bundle}"/references/*.md; do
+            [ -f "${reference}" ] || continue
+            printf 'references/%s\n' "$(basename "${reference}")"
+            cat "${reference}"
+        done
+    } > "${payload}"
+    git hash-object --stdin < "${payload}" | cut -c 1-12
+    rm -f "${payload}"
+}
+
+DIGEST_SURFACE="${DIGEST_TARGET}/.claude/skills"
+for workflow in implement fix investigate; do
+    bundle="${DIGEST_SURFACE}/harness-${workflow}"
+    expected="$(independent_digest "${bundle}")"
+    source_digest="$( cd "${HARNESS_ROOT}" && bash -c '
+        source core/scripts/lib/utils.sh
+        source core/scripts/lib/surface.sh
+        surface_source_digest "$1"' _ "${workflow}" )"
+    installed_digest="$( cd "${HARNESS_ROOT}" && bash -c '
+        source core/scripts/lib/utils.sh
+        source core/scripts/lib/surface.sh
+        surface_installed_digest "$1"' _ "${bundle}" )"
+
+    if [ "${source_digest}" != "${installed_digest}" ]; then
+        echo "  [FAIL] ${workflow}: source digest ${source_digest} and installed digest ${installed_digest} disagree, so a fresh install would report as drifted"
+        exit 1
+    fi
+    if [ "${installed_digest}" != "${expected}" ]; then
+        echo "  [FAIL] ${workflow}: digest ${installed_digest} does not match the documented rule (${expected}); the hashed bytes have changed"
+        exit 1
+    fi
+    if [ "${#installed_digest}" -ne 12 ]; then
+        echo "  [FAIL] ${workflow}: digest '${installed_digest}' is not 12 characters"
+        exit 1
+    fi
+done
+echo "  [PASS] source and installed digests agree and match the documented byte contract."
+
+# Repeated calls must agree. The failure this group exists to keep closed was a race
+# against child-process reaping, which is exactly what a repeated call exercises.
+DIGEST_REPEATS="$( cd "${HARNESS_ROOT}" && bash -c '
+    source core/scripts/lib/utils.sh
+    source core/scripts/lib/surface.sh
+    index=0
+    while [ "${index}" -lt 12 ]; do
+        surface_source_digest implement
+        surface_installed_digest "$1"
+        index=$((index + 1))
+    done' _ "${DIGEST_SURFACE}/harness-implement" 2>&1 )"
+if printf '%s' "${DIGEST_REPEATS}" | grep -qi "write error\|Interrupted"; then
+    echo "  [FAIL] a digest computation reported an interrupted write: ${DIGEST_REPEATS}"
+    exit 1
+fi
+# A freshly installed bundle signs identically to its source -- that is what makes a
+# clean install report as current -- so all 24 lines must be the same digest.
+if [ "$(printf '%s\n' "${DIGEST_REPEATS}" | grep -c .)" -ne 24 ]; then
+    echo "  [FAIL] a digest computation produced no output, so one of the 24 calls failed: ${DIGEST_REPEATS}"
+    exit 1
+fi
+if [ "$(printf '%s\n' "${DIGEST_REPEATS}" | sort -u | grep -c .)" -ne 1 ]; then
+    echo "  [FAIL] repeated digest computations did not agree: ${DIGEST_REPEATS}"
+    exit 1
+fi
+echo "  [PASS] repeated digest computations agree and report no interrupted write."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
