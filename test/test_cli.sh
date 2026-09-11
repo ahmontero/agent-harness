@@ -3608,4 +3608,135 @@ fi
 echo "  [PASS] a push with no pull request exits non-zero and says which half happened."
 
 echo ""
+echo "=== 40. Testing Version, Upgrade And Dogfooding ==="
+# The whole drift model turns on which version is installed -- every surface manifest
+# records one -- and there was no way to ask. Upgrading was equally undiscoverable.
+VERSION_EXPECTED="$(jq -r '.version' "${HARNESS_ROOT}/package.json")"
+VERSION_STATUS=0
+VERSION_OUTPUT="$("${HARNESS_ROOT}/bin/harness" version 2>&1)" || VERSION_STATUS=$?
+if [ "${VERSION_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] harness version exited ${VERSION_STATUS}: ${VERSION_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${VERSION_OUTPUT}" | grep -qF "${VERSION_EXPECTED}"; then
+    echo "  [FAIL] harness version does not report package.json's version (${VERSION_EXPECTED}): ${VERSION_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${VERSION_OUTPUT}" | grep -qF "${HARNESS_ROOT}"; then
+    echo "  [FAIL] harness version does not name the checkout it runs from: ${VERSION_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${VERSION_OUTPUT}" | grep -qF "$(git -C "${HARNESS_ROOT}" rev-parse --short HEAD)"; then
+    echo "  [FAIL] harness version does not name the checkout's revision: ${VERSION_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] harness version reports the version, the checkout, and its revision."
+
+# Every command the dispatcher routes must be in the help. `completion` was dispatched and
+# documented in the README while absent from --help, and nothing could notice.
+HELP_OUTPUT="$("${HARNESS_ROOT}/bin/harness" --help 2>&1)"
+DISPATCHED="$(awk '
+    /^case "\$\{COMMAND\}" in$/ { inside = 1; next }
+    inside && /^esac$/ { inside = 0 }
+    inside && /^    [a-z|]+\)$/ { gsub(/[ )]/, ""); print }
+' "${HARNESS_ROOT}/bin/harness" | tr '|' '\n')"
+if [ -z "${DISPATCHED}" ]; then
+    echo "  [FAIL] could not read the dispatcher's command list from bin/harness"
+    exit 1
+fi
+while IFS= read -r command_name; do
+    [ -n "${command_name}" ] || continue
+    [ "${command_name}" = "*" ] && continue
+    if ! printf '%s' "${HELP_OUTPUT}" | grep -qE "(^|[^a-z-])${command_name}([^a-z-]|$)"; then
+        echo "  [FAIL] 'harness ${command_name}' is dispatched but absent from harness --help"
+        exit 1
+    fi
+done <<< "${DISPATCHED}"
+echo "  [PASS] every command the dispatcher routes is named in harness --help."
+
+# A name offered by the completion must be a binary that exists.
+if [ ! -e "${HARNESS_ROOT}/bin/forge" ]; then
+    if grep -q "forge" "${HARNESS_ROOT}/bin/harness" || \
+       grep -q "forge" "${HARNESS_ROOT}/core/scripts/stack-completion.sh"; then
+        echo "  [FAIL] 'forge' is still advertised although bin/forge does not exist"
+        exit 1
+    fi
+fi
+echo "  [PASS] no binary name is advertised that does not exist."
+
+# upgrade mutates a checkout, so it refuses rather than guesses.
+UPGRADE_ROOT="${TMP_TEST_DIR}/upgrade"
+mkdir -p "${UPGRADE_ROOT}"
+UPGRADE_STATUS=0
+UPGRADE_OUTPUT="$(HARNESS_TEST_CHECKOUT="${UPGRADE_ROOT}/not-a-clone" \
+    "${HARNESS_ROOT}/bin/harness" upgrade 2>&1)" || UPGRADE_STATUS=$?
+if [ "${UPGRADE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] upgrade accepted a checkout that is not a Git clone: ${UPGRADE_OUTPUT}"
+    exit 1
+fi
+
+DIRTY_CHECKOUT="${UPGRADE_ROOT}/dirty"
+git init -q "${DIRTY_CHECKOUT}"
+git -C "${DIRTY_CHECKOUT}" config user.email "tests@agent-harness.local"
+git -C "${DIRTY_CHECKOUT}" config user.name "Agent Harness Tests"
+printf 'x\n' > "${DIRTY_CHECKOUT}/tracked.txt"
+git -C "${DIRTY_CHECKOUT}" add -A
+git -C "${DIRTY_CHECKOUT}" commit -q -m init
+printf 'edited\n' > "${DIRTY_CHECKOUT}/tracked.txt"
+UPGRADE_STATUS=0
+UPGRADE_OUTPUT="$(HARNESS_TEST_CHECKOUT="${DIRTY_CHECKOUT}" \
+    "${HARNESS_ROOT}/bin/harness" upgrade 2>&1)" || UPGRADE_STATUS=$?
+if [ "${UPGRADE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] upgrade pulled over uncommitted changes: ${UPGRADE_OUTPUT}"
+    exit 1
+fi
+if [ "$(cat "${DIRTY_CHECKOUT}/tracked.txt")" != "edited" ]; then
+    echo "  [FAIL] the refused upgrade changed the working tree"
+    exit 1
+fi
+echo "  [PASS] upgrade refuses a checkout that is not a clone, and one with uncommitted changes."
+
+# Compared before and after rather than against a clean tree: the suite runs from a
+# checkout that may legitimately carry work in progress.
+UPGRADE_BEFORE="$(git -C "${HARNESS_ROOT}" status --porcelain)"
+UPGRADE_HEAD_BEFORE="$(git -C "${HARNESS_ROOT}" rev-parse HEAD)"
+UPGRADE_STATUS=0
+UPGRADE_OUTPUT="$("${HARNESS_ROOT}/bin/harness" upgrade --check 2>&1)" || UPGRADE_STATUS=$?
+if [ "${UPGRADE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] upgrade --check is a report and must not refuse; it exited ${UPGRADE_STATUS}: ${UPGRADE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${UPGRADE_OUTPUT}" | grep -qF "${VERSION_EXPECTED}"; then
+    echo "  [FAIL] upgrade --check does not report the installed version: ${UPGRADE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${UPGRADE_OUTPUT}" | grep -qF "Nothing was changed"; then
+    echo "  [FAIL] upgrade --check does not say that it changed nothing: ${UPGRADE_OUTPUT}"
+    exit 1
+fi
+if [ "$(git -C "${HARNESS_ROOT}" status --porcelain)" != "${UPGRADE_BEFORE}" ] || \
+   [ "$(git -C "${HARNESS_ROOT}" rev-parse HEAD)" != "${UPGRADE_HEAD_BEFORE}" ]; then
+    echo "  [FAIL] upgrade --check changed the checkout"
+    exit 1
+fi
+echo "  [PASS] upgrade --check reports the installed version and mutates nothing."
+
+# The two commands this project asks every user to trust are the two it never ran on itself.
+CI_WORKFLOW="${HARNESS_ROOT}/.github/workflows/ci.yml"
+for dogfood in "harness scan --all" "harness config validate"; do
+    if ! grep -qF "${dogfood}" "${CI_WORKFLOW}"; then
+        echo "  [FAIL] CI does not run '${dogfood}' against this repository"
+        exit 1
+    fi
+done
+echo "  [PASS] CI runs this repository's own scanner and configuration validator."
+
+# A delivered spec left active makes harness context overstate what is in flight.
+if [ -f "${HARNESS_ROOT}/specs/delta-AH-11-truthful-core-hardening.md" ]; then
+    echo "  [FAIL] the AH-11 delta spec was delivered in 7ea3705 and is still active"
+    exit 1
+fi
+echo "  [PASS] no delivered delta spec is still listed as active."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

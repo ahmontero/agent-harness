@@ -31,6 +31,8 @@ HARNESS_COMMANDS=(
     "sync:Report or repair drift in installed skill surfaces"
     "completion:Install shell autocompletion"
     "init:Initialize the harness in a repository"
+    "version:Report the installed version, checkout and revision"
+    "upgrade:Update the checkout and re-sync every managed surface"
 )
 
 command_names() {
@@ -45,7 +47,7 @@ install_zsh() {
     local entry
     mkdir -p "${zsh_dir}"
     {
-        printf '#compdef harness agh agent-harness forge\n\n'
+        printf '#compdef harness agh agent-harness\n\n'
         printf '_harness() {\n'
         printf '    local -a commands\n'
         printf '    commands=(\n'
@@ -82,7 +84,7 @@ install_bash() {
         printf '        done < <(compgen -W "${commands}" -- "${current}")\n'
         printf '    fi\n'
         printf '}\n'
-        printf 'complete -F _harness_complete harness agh agent-harness forge\n'
+        printf 'complete -F _harness_complete harness agh agent-harness\n'
     } > "${bash_dir}/harness"
     log_success "Bash completion written to ${bash_dir}/harness"
     log_info "Add 'source ${bash_dir}/harness' to your ~/.bashrc, or install bash-completion to load it automatically."

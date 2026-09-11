@@ -6,6 +6,40 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.0] - 2026-09-11
+
+Four claims the project made about itself and did not back.
+
+### Added
+
+- `harness version` reports the installed version, the checkout it is running from, and
+  that checkout's revision. The whole drift model turns on which version is installed —
+  every surface manifest records one and `harness sync` compares against it — and there was
+  no way to ask. The checkout is named because a CLI symlink can point anywhere, and the
+  revision because a released version and a working checkout on the same version number are
+  not the same thing.
+- `harness upgrade` fast-forwards the checkout and re-synchronizes every managed surface.
+  It refuses a checkout that is not a Git clone, one with a detached `HEAD`, one tracking no
+  upstream, and one with uncommitted changes to tracked files. `--check` is a report rather
+  than a gate: it names whatever it could not determine and still exits `0`.
+- CI runs `harness scan --all` and `harness config validate` against this repository. The
+  two commands the project asks every user to trust were the two it never exercised on
+  itself.
+
+### Changed
+
+- `harness --help` lists `completion`, `version`, `upgrade`, and the `pr` alias of `ship`.
+  A test now asserts that every command the dispatcher routes appears in the help, so the
+  two cannot drift apart again — it found the undocumented `pr` alias on its first run.
+- `specs/delta-AH-11-truthful-core-hardening.md` is archived. It was delivered in
+  `7ea3705`, and an active spec for shipped work made `harness context` overstate what was
+  in flight.
+
+### Removed
+
+- `forge` is no longer accepted by the dispatcher or offered by the shell completion. No
+  such binary has ever existed.
+
 ## [2.9.0] - 2026-09-11
 
 `harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and
