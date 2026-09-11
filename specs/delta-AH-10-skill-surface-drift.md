@@ -1,0 +1,81 @@
+# Delta Spec: AH-10 — skill-surface-drift
+
+## 1. Intent & Context
+- **Issue / Ticket:** AH-10
+- **Summary:** The installer copies each public workflow bundle into every runtime surface, and nothing afterwards can tell whether those copies are still current. There is no version stamp, no digest, and no check, so an upgraded checkout leaves every already-initialized surface silently frozen at the release it was installed with. This is not hypothetical: at the time of writing, `~/.claude/skills/harness-implement` and all four surfaces in this repository still carry the 2.1.0 `/harness-implement`, missing the AH-8 stagnation breaker, and `harness-orchestrate` — shipped in 2.1.0 — was never installed anywhere. An agent reading the harness's own workflow is reading a protocol two releases old and cannot know it. `harness sync` does not close this: it runs `install_global` only, so no repository surface is reachable, and because it never passes `--expert` it also *removes* the expert primitives from a surface that had them, silently downgrading an expert installation to curated. This delta gives every installed surface a recorded identity, makes drift a question that can be answered offline, and makes `harness sync` do what its help text already claims.
+- **Target Module / Layer:** `install.sh`, `core/scripts/stack-doctor.sh`, `bin/harness`, `core/scripts/stack-completion.sh`, `test/test_cli.sh`, `test/e2e/test_install_matrix.sh`, `README.md`, `docs/ARCHITECTURE.md`, `CHANGELOG.md`, `package.json`.
+
+## 2. Requirements & Domain Floor Invariants
+
+### Every installed surface records what it is
+- [ ] Installing a skill surface writes one manifest, `.agent-harness-surface.json`, into the surface directory. It records `schemaVersion`, the catalog `namespace`, the `harnessVersion` taken from `package.json`, the installed `mode` (`curated` or `expert`), the `runtime` label, and a `skills` array of `{name, kind, digest}` entries.
+- [ ] `kind` is `bundle` for a copied public workflow and `symlink` for an expert primitive. A symlink resolves to the source tree and therefore cannot drift; recording it distinguishes "absent because curated" from "absent because it was lost".
+- [ ] `digest` is the first 12 characters of `git hash-object --stdin` over the bundle's source content: `SKILL.md` followed by each reference file in sorted order, each preceded by its relative path, so that a rename registers as a change. Symlink entries carry no digest.
+- [ ] The manifest is written through the existing transaction primitives, so a failed install rolls it back with everything else and never records a surface that was not installed.
+- [ ] The per-bundle `.agent-harness-managed` marker is unchanged. `remove_managed_skill` is the only thing standing between the installer and a user's own directory, and this delta does not touch that contract.
+
+### Drift is a question the CLI can answer
+- [ ] `harness sync --check` reports, for every surface it can identify, whether it is current, drifted, or unmanaged, and exits non-zero when any surface is drifted. It performs no mutation, so it is safe in CI and in a read-only workflow.
+- [ ] A surface is **drifted** when its manifest is absent, its `schemaVersion` is unrecognized, its `harnessVersion` differs from the running checkout, any recorded digest differs from the recomputed source digest, a skill the catalog requires for that runtime is missing, or a skill the catalog no longer publishes is still present.
+- [ ] An installation predating this delta has no manifest and is reported as drifted with the reason `no recorded version`, not as an error. Every existing installation is in that state, so the first run after upgrading must explain itself rather than look broken.
+- [ ] Reasons are reported per surface and per skill. "Drifted" without a reason is a prompt to re-run blindly; the point is to say what changed.
+- [ ] Digests are recomputed from the source tree only. No network access, and no dependency on the installed copy being inside a Git repository — `git hash-object --stdin` needs Git but not a repository, which is the same assumption AH-8 already makes.
+
+### `harness sync` reaches every surface it claims to
+- [ ] `harness sync` synchronizes the global surfaces and, when the current repository carries a managed surface, that repository's surfaces too. The command's existing help text already promises "across all installed agent harnesses"; today it reaches only the global half.
+- [ ] `harness sync` repairs; it never initializes. It writes only to surfaces that already exist and are managed, and it never creates one that is absent — that is `harness init`. This bounds the blast radius of the flagless command to directories agent-harness created itself, which is the reason a repository is in scope at all.
+- [ ] The run enumerates every surface it is about to write to, before writing to any of them, and names each one again in its result. A command that modifies a repository must say which repository and which paths, not report a count.
+- [ ] `harness sync --target <path>` synchronizes one repository explicitly, and `harness sync --global` restricts the run to the global surfaces. With neither flag the behavior above applies.
+- [ ] Synchronizing a surface preserves the mode recorded in its manifest. An expert surface stays expert without the caller repeating `--expert`. Today `harness sync` removes every managed primitive and reinstalls none, which silently downgrades an expert installation; that is a defect this requirement closes.
+- [ ] A surface whose manifest is absent is synchronized in `curated` mode unless `--expert` is passed, and the run says which mode it chose and why. Guessing silently is what produced the downgrade.
+- [ ] A path the installer refuses to touch — an unmanaged file or directory occupying a published skill name — makes the run report failure with a non-zero exit rather than warning and reporting success. A sync that could not synchronize is not a successful sync.
+- [ ] `harness sync` remains transactional and reversible through `./setup --rollback`, on the same terms as any other installation.
+
+### `harness doctor` reports drift
+- [ ] `harness doctor` gains a surface section listing each identified surface with its state and, when drifted, its reasons.
+- [ ] Drift is a **warning**, not an error. A stale surface still works; it is out of date, not broken. Doctor's existing contract — warnings exit `0`, errors exit `1` — is unchanged.
+- [ ] `harness doctor --fix` synchronizes the drifted surfaces it found, then re-reports. This is the same self-healing shape doctor already applies to a missing `AGENTS.md`.
+- [ ] Doctor reports the drift check as unavailable, rather than as "no drift", when `jq` is missing. A check that did not run must never read as a check that passed.
+
+### Invariants
+- [ ] Invariant: the change must not violate `rules/floor.md`. In particular, a drift check that cannot run reports that fact and never reports success.
+- [ ] Invariant: no new runtime dependency. Bash, Git, and the already-required `jq` only.
+- [ ] Invariant: the catalog schema in `core/skills/catalog.json` is unchanged. This delta records what was installed; it does not change what may be installed.
+- [ ] Invariant: the installed skill content is unchanged. A synchronized surface must be byte-identical to a freshly installed one, which the compatibility matrix already asserts for a fresh install.
+- [ ] Invariant: per-runtime gating from AH-7 is respected. A surface for a runtime that must not receive `harness-orchestrate` is current *because* that workflow is absent, and reporting it as drifted would be a false positive.
+- [ ] Invariant: no manifest field carries a prompt, a file path outside the surface, a secret, or free-form text. The manifest describes an installation, and it is the only new artifact this delta writes outside `.git`.
+- [ ] Invariant: `install.sh`, `core/scripts/stack-doctor.sh`, and `bin/harness` pass `shellcheck -S warning` through `npm run lint`.
+- [ ] Invariant: portable across the macOS and Ubuntu runners. AH-9 was merged after CI proved a guard that behaved differently on GNU and BSD tooling; any comparison introduced here must be asserted on both runners rather than reasoned about.
+
+## 3. Implementation Plan
+1. [ ] RED — extend `test/test_cli.sh` with a manifest group: a fresh curated install writes a manifest naming the runtime, mode, version, and one entry per installed skill; an expert install records its primitives as `symlink` with no digest; digests change when a reference file changes and when one is renamed; and a failed install leaves no manifest behind.
+2. [ ] RED — extend `test/test_cli.sh` with a drift group: a current surface reports current and exits `0`; editing an installed `SKILL.md` reports drifted naming that skill; deleting an installed workflow reports drifted; a surface with no manifest reports drifted with `no recorded version`; a runtime correctly missing a gated workflow reports current; and `--check` mutates nothing.
+3. [ ] RED — extend `test/test_cli.sh` with a sync group: `harness sync --target` restores a drifted repository surface to byte-identical content; an expert surface stays expert across a sync with no flag; an unmanaged path occupying a published skill name makes the run exit non-zero; and the run stays reversible with `./setup --rollback`.
+4. [ ] RED — extend `test/test_cli.sh` with a doctor group: drift is reported as a warning with exit `0`; `--fix` synchronizes and re-reports current; and the check reports unavailable rather than clean when `jq` is absent.
+5. [ ] GREEN — add manifest writing and the source-digest helper to `install.sh`, reusing `transaction_write_command` so the manifest is journaled.
+6. [ ] GREEN — implement `--check`, `--target`, and `--global` for the sync path, including mode preservation and the fail-closed treatment of a refused path.
+7. [ ] GREEN — add the surface section and `--fix` behavior to `core/scripts/stack-doctor.sh`.
+8. [ ] Wire the new flags into `bin/harness` help and `core/scripts/stack-completion.sh`, and make `test/e2e/test_install_matrix.sh` assert the manifest for the scope and mode it just installed.
+9. [ ] Update `README.md` and `docs/ARCHITECTURE.md`, add the `CHANGELOG.md` entry, and bump `package.json` to the next unreleased minor.
+10. [ ] Run `npm run lint`, `./setup --verify`, `harness scan --diff`, `harness spec verify`, the full suite, the compatibility matrix, and the two-axis review.
+
+## 4. Verification & QA
+- **Automated Test Command:** `env -u STACK_PROFILE npm test && npm run lint && ./setup --verify`
+- **Pre-flight Command:** `./bin/harness qa all`
+- **Spec Verification:** `./bin/harness spec verify specs/delta-AH-10-skill-surface-drift.md`
+- **Expected Outcome:** The four new `test/test_cli.sh` groups pass and the existing nineteen stay green; the transaction suites stay green; the compatibility matrix passes in all eight cells with manifest assertions added; `shellcheck -S warning` is clean; and this repository's own four surfaces plus the five global ones report current after one `harness sync`.
+
+## 5. Non-Goals
+- Automatic synchronization. No command synchronizes as a side effect of doing something else, and nothing runs on a timer. Drift is reported; repairing it stays an explicit act, because a surface is a directory in the user's home and in their repository.
+- A read path for receipts and ledgers (`harness receipt list|stats|prune`, `harness ledger list`). It is the other half of the same observability gap — a ledger exists to survive a compacted context, and today recovering one requires the run ID that the compaction destroyed — but it shares no code with surface drift and belongs in its own delta.
+- Uninstallation. `./setup --rollback` undoes the last transaction; there is still no way to remove agent-harness from a repository or from the home directory, and adding one is a larger decision about what "installed" means.
+- Widening `harness doctor` beyond the surface section: validating configuration against `schema.json`, checking the pre-commit hook, or implementing the inert `--check-auth`. Each is worth doing and none of them is drift.
+- The remaining defects recorded in the AH-9 investigation and its non-goals: the positional `--base` in `harness branch create` and `harness worktree create`, the unanchored issue-key regex in `harness commit build`, `config.example.json` as a live configuration fallback, `eval` on config-supplied paths, the unimplemented `harness debt --all`, the advertised-but-absent bash completion, the swallowed `git push` failure in `harness ship`, and `harness context` counting archived specs as active.
+- The scanner's remaining fail-open case, recorded during AH-9: without `jq` the rule loop is skipped entirely and the scan prints "passed with 0 errors". This delta adopts the same rule for its own check — unavailable is not clean — but fixing the scanner's instance of it is a separate change to a file this delta does not touch.
+- Changing how skills are installed. Copies stay copies and expert symlinks stay symlinks. Making every surface a symlink would eliminate bundle drift outright, and is the obvious alternative to this delta, but it would make a surface follow an in-progress edit of the source checkout — an agent would read a half-written protocol — and it cannot work where the source tree is not readable from the surface.
+
+## 6. Open Questions
+- **Release numbering.** AH-9 shipped as `2.3.0`, so this is cut as `2.4.0`. Every existing installation reports drifted on first run after the upgrade, which is accurate but will look alarming; the CHANGELOG entry must lead with that and name `harness sync` as the one-command answer.
+- **Whether `harness sync` with no flag should touch the current repository — resolved.** It does. The alternative, leaving the bare command global and requiring `--target .`, was considered and rejected on four counts: the help text's existing claim would stay false and would have to be narrowed instead; `harness doctor --fix` would either become more capable than the command it delegates to or would need a flag of its own, gutting the self-heal; `harness init` already writes to `$(pwd)` with no flag, so refusing here would make the two commands disagree; and with no registry of initialized repositories, per-repository drift would persist until each one was visited *and* the flag remembered.
+  The real cost of this reading is recorded rather than dismissed: `install.sh` never writes `.gitignore`, so an initialized repository carries `.claude/`, `.codex/`, `.gemini/`, `.agents/`, and `rules/` as untracked paths, and a team that committed them would see a sync modify tracked files. The two guards above — repair-never-initialize, and enumerate-before-writing — are what make that cost acceptable: the command can only touch directories agent-harness itself created, it says which ones first, `--check` answers the same question without mutating anything, and the whole run is reversible through `./setup --rollback`.
+- **Digest scope.** The digest covers the bundle's own source content only. It deliberately does not cover `catalog.json`, so a catalog edit that changes *which* skills a bundle carries is caught by the missing-or-extra-skill check rather than by a digest mismatch. Folding the catalog into every digest would make one catalog edit re-stamp every bundle in every surface and lose that distinction.
