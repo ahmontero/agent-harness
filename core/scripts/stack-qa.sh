@@ -164,7 +164,10 @@ case "${ACTION}" in
             record_gate "${gate_name}" "${status}"
         }
 
-        run_gate "scan" "${SCRIPT_DIR}/stack-scan.sh" --diff
+        # --branch, not --diff. The aggregate suite is what runs before a branch is
+        # published, and at that moment the working tree is clean: --diff read an empty set
+        # and reported a passing scan over a branch whose commits were never inspected.
+        run_gate "scan" "${SCRIPT_DIR}/stack-scan.sh" --branch
         run_gate "lint" gate_lint
         run_gate "types" gate_types
         run_gate "tests" gate_test

@@ -82,13 +82,14 @@ ${BOLD}Core Commands:${RESET}
   ${GREEN}qa${RESET}            Run test suites, TDD loops, linters, and type checkers
                 harness qa test [path] [args...]
                 harness qa tdd  <test_path>
-                harness qa scan [--staged|--diff|--all]
+                harness qa scan [--staged|--diff|--branch|--all]
                 harness qa lint
                 harness qa types
                 harness qa all
 
   ${GREEN}scan${RESET}          Run JSON-driven static Landmine & Security scanner
-                harness scan [--staged|--diff|--all] [--install-hook]
+                harness scan [--staged|--diff|--branch|--all] [--base <ref>]
+                harness scan --install-hook [--force]
 
   ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
                 harness worktree create <type> <issue_key> <slug> [--base <branch>]

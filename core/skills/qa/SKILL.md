@@ -15,3 +15,7 @@ harness qa lint              # Run project linter (ruff, eslint, etc.)
 harness qa types             # Run type checker (mypy, tsc, etc.)
 harness qa all               # Run full pipeline (Scan + Lint + Types + Tests)
 ```
+
+`qa all` scans in `--branch` mode: everything the branch changes since its merge base
+with the trunk, committed work included. A range it cannot resolve is reported as a
+gate that could not run, never as a scan that passed.

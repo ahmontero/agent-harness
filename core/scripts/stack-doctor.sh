@@ -32,7 +32,11 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            shift
+            # `harness doctor --fixx` used to run the diagnosis and repair nothing, while
+            # reading as though --fix had been honoured.
+            log_error "Unknown doctor option: $1"
+            echo "Usage: harness doctor [--fix] [--check-auth]"
+            exit 1
             ;;
     esac
 done

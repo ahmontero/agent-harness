@@ -6,6 +6,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.6.0] - 2026-09-11
+
+Three places where the scanner reported a passing scan having verified nothing. All three
+are the AH-9 shape the rest of the harness already closed: a check that could not run must
+never read as a check that passed. One of them can turn a previously green run red, and it
+is a correction rather than a regression — read it first.
+
+> **Upgrade note — the scan gate inside `harness qa all` now reads the branch, not the
+> working tree.** It ran in `--diff` mode, which compares the working tree against `HEAD`.
+> On a finished branch that set is empty, so a secret committed three commits earlier was
+> reported as "No files to scan", the aggregate suite printed "All required QA gates
+> passed", and `harness ship` pushed it. `qa all` now scans in `--branch` mode: everything
+> the branch changes since its merge base with the trunk. A branch that was already
+> carrying a finding will fail on the next run — that finding was always there.
+
+### Added
+
+- `harness scan --branch` scans every change the current branch makes since its merge base
+  with the trunk: committed work, tracked files edited but not committed, and new files
+  already staged. Untracked files stay out, because the branch does not carry them.
+- `harness scan --base <ref>` names that base explicitly, for a shallow CI clone where the
+  trunk ref is not present locally (`--base origin/main`).
+- Exit status `2` — "the scan could not run" — distinct from `1`, "the scan ran and found
+  something". It is the status `stack-qa.sh` already aggregates as `GATE_UNRUNNABLE`, so an
+  unresolvable range, an unreadable rule file, and an uncompilable rule are all reported by
+  `harness qa all` as a gate that could not run.
+
+### Changed
+
+- `harness qa all` runs its scan gate as `--branch` rather than `--diff`.
+- "No files to scan" now names the selection that was empty (`the branch selection is
+  empty`), so a truthful zero can be told apart from the wrong question.
+
+### Fixed
+
+- A `--rules <file>` path, or a configured `profiles.<p>.rules.scanner`, that does not
+  resolve now aborts the scan naming the file it could not read. It was silently replaced
+  by the built-in template, so a project whose `rules/landmines.json` had been renamed was
+  scanned by rules nobody there wrote and told it passed. A missing template made the scan
+  exit `0` outright.
+- `harness scan`, `harness context`, and `harness doctor` refuse an option they do not
+  define instead of discarding it. `harness scan --al` scanned the staged set — empty on a
+  clean tree — and exited `0`; `harness context --jsonn` printed prose to a caller parsing
+  JSON; `harness doctor --fixx` diagnosed and repaired nothing while reading as though
+  `--fix` had been honoured.
+- `--base` without `--branch` and `--force` without `--install-hook` are refused rather
+  than accepted and ignored.
+
 ## [2.5.0] - 2026-09-11
 
 An audit of the installed harness found twenty-six defects, and almost every one was the
