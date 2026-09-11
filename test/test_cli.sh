@@ -2852,4 +2852,177 @@ fi
 echo "  [PASS] receipt prune keeps the newest terminal receipts and never prunes an open run."
 
 echo ""
+echo "=== 33. Testing Branch-Range Scanning ==="
+# The scan gate inside `qa all` ran in --diff mode, which reads the working tree against
+# HEAD. On a finished branch that set is empty, so a secret committed two commits earlier
+# was reported as "No files to scan." and the aggregate suite printed that every gate
+# passed -- the exact moment before `harness ship` pushes it.
+RANGE_REPO="${TMP_TEST_DIR}/scan-range"
+mkdir -p "${RANGE_REPO}"
+git -C "${RANGE_REPO}" init -q
+git -C "${RANGE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${RANGE_REPO}" config user.name "Agent Harness Tests"
+
+write_range_config() {
+    cat > "${RANGE_REPO}/harness.config.json" <<RANGE_CONFIG_EOF
+{
+  "project": { "defaultProfile": "range" },
+  "profiles": {
+    "range": {
+      "git": { "trunkBranch": "$1" },
+      "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false }
+    }
+  }
+}
+RANGE_CONFIG_EOF
+}
+
+write_range_config "main"
+git -C "${RANGE_REPO}" add -A
+git -C "${RANGE_REPO}" commit -q -m "init"
+git -C "${RANGE_REPO}" branch -M main
+git -C "${RANGE_REPO}" checkout -q -b feat/AH-13-leak
+printf 'api_key = "ABCDEFGHIJKLMNOP0123"\n' > "${RANGE_REPO}/leak.py"
+git -C "${RANGE_REPO}" add -A
+git -C "${RANGE_REPO}" commit -q -m "add leak"
+
+range_harness() {
+    RANGE_STATUS=0
+    RANGE_OUTPUT="$( (cd "${RANGE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>&1) )" || RANGE_STATUS=$?
+}
+
+range_harness qa all
+if [ "${RANGE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] qa all passed with a secret committed on the branch: ${RANGE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${RANGE_OUTPUT}" | grep -q "SEC-001"; then
+    echo "  [FAIL] the qa scan gate did not read the branch's committed change: ${RANGE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] qa all scans everything the branch changes, not only the working tree."
+
+range_harness scan --branch
+if [ "${RANGE_STATUS}" -ne 1 ]; then
+    echo "  [FAIL] scan --branch did not fail on a committed finding (status ${RANGE_STATUS}): ${RANGE_OUTPUT}"
+    exit 1
+fi
+range_harness scan --branch --base main
+if [ "${RANGE_STATUS}" -ne 1 ]; then
+    echo "  [FAIL] scan --branch --base did not fail on a committed finding (status ${RANGE_STATUS}): ${RANGE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] scan --branch reads the range, and --base names it explicitly."
+
+# What the branch changes is committed work plus everything already on its way into a
+# commit: a tracked file edited but not committed, and a new file staged. An untracked file
+# is deliberately outside that set -- it will not be pushed, so flagging it would fail a
+# branch for a scratch file it does not carry.
+printf 'ok = 1\n' > "${RANGE_REPO}/edited.py"
+git -C "${RANGE_REPO}" add -A
+git -C "${RANGE_REPO}" commit -q -m "add a clean tracked file"
+printf 'auth_token = "ZYXWVUTSRQPONMLK9876"\n' > "${RANGE_REPO}/edited.py"
+printf 'secret_key = "MLKJIHGFEDCBA9876543"\n' > "${RANGE_REPO}/staged.py"
+git -C "${RANGE_REPO}" add staged.py
+printf 'bearer = "QQQQWWWWEEEERRRRTTTT"\n' > "${RANGE_REPO}/untracked.py"
+range_harness scan --branch
+for expected in "edited.py" "staged.py"; do
+    if ! printf '%s' "${RANGE_OUTPUT}" | grep -q "${expected}"; then
+        echo "  [FAIL] scan --branch did not read ${expected}: ${RANGE_OUTPUT}"
+        exit 1
+    fi
+done
+if printf '%s' "${RANGE_OUTPUT}" | grep -q "untracked.py"; then
+    echo "  [FAIL] scan --branch flagged an untracked file the branch does not carry: ${RANGE_OUTPUT}"
+    exit 1
+fi
+git -C "${RANGE_REPO}" rm -q --cached staged.py >/dev/null
+rm -f "${RANGE_REPO}/staged.py" "${RANGE_REPO}/untracked.py"
+git -C "${RANGE_REPO}" checkout -q -- edited.py
+echo "  [PASS] scan --branch covers committed, edited, and staged work, and stops there."
+
+# A range that cannot be resolved is a gate that could not run, which stack-qa.sh reports
+# as such. Reporting it as a clean scan is the defect this group exists to keep closed.
+range_harness scan --branch --base no/such/ref
+if [ "${RANGE_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] an unresolvable base did not exit 2 (status ${RANGE_STATUS}): ${RANGE_OUTPUT}"
+    exit 1
+fi
+write_range_config "no-such-trunk"
+range_harness qa all
+if [ "${RANGE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] qa all passed while its scan gate could not resolve a range: ${RANGE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${RANGE_OUTPUT}" | grep -q "could not run"; then
+    echo "  [FAIL] qa all did not report the scan gate as unrunnable: ${RANGE_OUTPUT}"
+    exit 1
+fi
+write_range_config "main"
+echo "  [PASS] an unresolvable range reports a gate that could not run, never a clean scan."
+
+echo ""
+echo "=== 34. Testing Scanner Argument Refusals ==="
+# `harness scan --al` scanned the empty staged set and exited 0, and a rules path that did
+# not resolve was replaced by the built-in template. Both answered a question nobody asked
+# and called the answer a pass.
+REFUSAL_REPO="${TMP_TEST_DIR}/argument-refusals"
+mkdir -p "${REFUSAL_REPO}"
+git -C "${REFUSAL_REPO}" init -q
+git -C "${REFUSAL_REPO}" config user.email "tests@agent-harness.local"
+git -C "${REFUSAL_REPO}" config user.name "Agent Harness Tests"
+printf 'api_key = "ABCDEFGHIJKLMNOP0123"\n' > "${REFUSAL_REPO}/leak.py"
+git -C "${REFUSAL_REPO}" add -A
+git -C "${REFUSAL_REPO}" commit -q -m "init"
+
+assert_refuses() {
+    local label="$1"
+    shift
+    local status=0 output
+    output="$( (cd "${REFUSAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>&1) )" || status=$?
+    if [ "${status}" -eq 0 ]; then
+        echo "  [FAIL] ${label} accepted '$2' instead of refusing it: ${output}"
+        exit 1
+    fi
+    if ! printf '%s' "${output}" | grep -qF -- "$2"; then
+        echo "  [FAIL] ${label} refused '$2' without naming it: ${output}"
+        exit 1
+    fi
+}
+
+assert_refuses "harness scan" scan --al
+assert_refuses "harness context" context --jsonn
+assert_refuses "harness doctor" doctor --fixx
+echo "  [PASS] scan, context, and doctor refuse an option they do not define."
+
+assert_refuses "harness scan" scan --force
+echo "  [PASS] scan refuses --force without the --install-hook it modifies."
+
+REFUSAL_STATUS=0
+REFUSAL_OUTPUT="$( (cd "${REFUSAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" \
+    scan --all --rules "${TMP_TEST_DIR}/no-such-rules.json" 2>&1) )" || REFUSAL_STATUS=$?
+if [ "${REFUSAL_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] a --rules path that does not resolve did not abort (status ${REFUSAL_STATUS}): ${REFUSAL_OUTPUT}"
+    exit 1
+fi
+cat > "${REFUSAL_REPO}/harness.config.json" <<'REFUSAL_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "refusal" },
+  "profiles": { "refusal": { "rules": { "scanner": "./rules/renamed-away.json" } } }
+}
+REFUSAL_CONFIG_EOF
+REFUSAL_STATUS=0
+REFUSAL_OUTPUT="$( (cd "${REFUSAL_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || REFUSAL_STATUS=$?
+if [ "${REFUSAL_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] a configured rules.scanner that does not resolve did not abort (status ${REFUSAL_STATUS}): ${REFUSAL_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${REFUSAL_OUTPUT}" | grep -q "renamed-away.json"; then
+    echo "  [FAIL] the refusal did not name the rule file it could not read: ${REFUSAL_OUTPUT}"
+    exit 1
+fi
+rm -f "${REFUSAL_REPO}/harness.config.json"
+echo "  [PASS] rules that were requested and cannot be read abort instead of falling back."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

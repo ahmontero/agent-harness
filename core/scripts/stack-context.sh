@@ -33,7 +33,11 @@ while [[ $# -gt 0 ]]; do
             exit 0
             ;;
         *)
-            shift
+            # An unrecognised option used to be discarded, so `harness context --jsonn`
+            # printed the human report and an agent parsing JSON got prose.
+            log_error "Unknown context option: $1"
+            echo "Usage: harness context [--json]"
+            exit 1
             ;;
     esac
 done

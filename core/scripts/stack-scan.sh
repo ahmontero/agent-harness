@@ -3,8 +3,19 @@
 # agent-harness: core/scripts/stack-scan.sh
 # JSON-Driven Static Landmine & Security Scanner
 # ==============================================================================
+#
+# Exit status:
+#   0  the scan ran and found no error-level finding
+#   1  the scan ran and found at least one
+#   2  the scan could not run: no rules could be read, or no range could be resolved
+#
+# 2 is the same status stack-qa.sh reports as GATE_UNRUNNABLE, so a scanner that could not
+# determine what to read is aggregated as "could not run" rather than as a gate that
+# passed. Every refusal below exits 2 for that reason.
 
 set -eo pipefail
+
+SCAN_UNRUNNABLE=2
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/utils.sh"
@@ -23,6 +34,8 @@ Usage:
 Options:
   --staged        Scan only staged changes (Default)
   --diff          Scan current working tree diff vs HEAD
+  --branch        Scan everything this branch changes since its merge base with the trunk
+  --base <ref>    With --branch, name the base revision instead of detecting the trunk
   --all           Scan all tracked source files
   --rules <file>  Path to custom landmines.json rules file
   --install-hook  Install scanner as git pre-commit hook in target repo
@@ -35,19 +48,45 @@ SCAN_MODE="staged"
 CUSTOM_RULES=""
 INSTALL_HOOK=false
 FORCE_HOOK=false
+RANGE_BASE=""
+BASE_GIVEN=false
 
+# An option this scanner does not define used to be discarded, so `harness scan --al`
+# scanned the staged set -- empty on a clean tree -- and exited 0. A mistyped flag must
+# never quietly become a different, passing question.
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --staged) SCAN_MODE="staged"; shift ;;
         --diff) SCAN_MODE="diff"; shift ;;
+        --branch) SCAN_MODE="branch"; shift ;;
         --all) SCAN_MODE="all"; shift ;;
-        --rules) CUSTOM_RULES="$2"; shift 2 ;;
+        --base)
+            [ -n "${2:-}" ] || { log_error "--base requires a git revision."; exit 1; }
+            RANGE_BASE="$2"
+            BASE_GIVEN=true
+            shift 2
+            ;;
+        --rules)
+            [ -n "${2:-}" ] || { log_error "--rules requires a path."; exit 1; }
+            CUSTOM_RULES="$2"
+            shift 2
+            ;;
         --install-hook) INSTALL_HOOK=true; shift ;;
         --force) FORCE_HOOK=true; shift ;;
         -h|--help) usage; exit 0 ;;
-        *) shift ;;
+        *) log_error "Unknown scan option: $1"; usage; exit 1 ;;
     esac
 done
+
+# A modifier that modifies nothing was accepted and ignored, which reads as if it applied.
+if [ "${BASE_GIVEN}" = true ] && [ "${SCAN_MODE}" != "branch" ]; then
+    log_error "--base names the base of a branch range and only applies with --branch."
+    exit 1
+fi
+if [ "${FORCE_HOOK}" = true ] && [ "${INSTALL_HOOK}" != true ]; then
+    log_error "--force replaces a foreign pre-commit hook and only applies with --install-hook."
+    exit 1
+fi
 
 # The marker is what makes "our hook" a decidable question. Without it the installer
 # cannot tell an idempotent re-run from silently destroying a hook the project depends on,
@@ -106,22 +145,43 @@ if ! jq --version >/dev/null 2>&1; then
     exit 1
 fi
 
-RULES_FILE="${CUSTOM_RULES}"
-if [ -z "${RULES_FILE}" ]; then
-    RULES_FILE="$(get_profile_value "rules.scanner" "")"
-    if [ -n "${RULES_FILE}" ]; then
-        RULES_FILE="$(expand_config_path "${RULES_FILE}")"
+# Rules that were asked for and cannot be read abort the scan. They used to be replaced by
+# the built-in template, so a project whose rules/landmines.json had been renamed was
+# scanned by rules nobody there wrote and told it passed -- and a missing template made the
+# scan exit 0 outright. The template is the default for a project that requested nothing,
+# never a stand-in for a request that could not be honoured.
+#
+# A --rules path stays relative to the caller's working directory, the way a path typed on
+# a command line is; a configured one is relative to the repository it configures.
+RULES_FILE=""
+RULES_SOURCE=""
+if [ -n "${CUSTOM_RULES}" ]; then
+    RULES_FILE="$(expand_config_path "${CUSTOM_RULES}")"
+    RULES_SOURCE="--rules"
+else
+    CONFIGURED_RULES="$(get_profile_value "rules.scanner" "")"
+    if [ -n "${CONFIGURED_RULES}" ]; then
+        RULES_FILE="$(expand_config_path "${CONFIGURED_RULES}")"
         [[ "${RULES_FILE}" != /* ]] && RULES_FILE="${REPO_DIR}/${RULES_FILE}"
+        RULES_SOURCE="profiles.${ACTIVE_PROFILE}.rules.scanner"
     fi
 fi
 
-if [ -z "${RULES_FILE}" ] || [ ! -f "${RULES_FILE}" ]; then
-    RULES_FILE="$(get_harness_root)/core/templates/landmines-template.json"
+if [ -n "${RULES_FILE}" ] && [ ! -f "${RULES_FILE}" ]; then
+    log_error "The rule file named by ${RULES_SOURCE} does not exist: ${RULES_FILE}"
+    log_error "A scan whose rules could not be read is not a passing scan."
+    log_info "Restore the file, correct ${RULES_SOURCE}, or pass --rules <file> explicitly."
+    exit "${SCAN_UNRUNNABLE}"
 fi
 
-if [ ! -f "${RULES_FILE}" ]; then
-    log_warn "No landmines.json found. Skipping static scan."
-    exit 0
+if [ -z "${RULES_FILE}" ]; then
+    RULES_FILE="$(get_harness_root)/core/templates/landmines-template.json"
+    RULES_SOURCE="the built-in template"
+    if [ ! -f "${RULES_FILE}" ]; then
+        log_error "No rule file is configured and the built-in template is missing: ${RULES_FILE}"
+        log_error "A scan whose rules could not be read is not a passing scan."
+        exit "${SCAN_UNRUNNABLE}"
+    fi
 fi
 
 log_info "Running Landmine Scanner [${SCAN_MODE}] using rules: ${RULES_FILE}..."
@@ -208,7 +268,9 @@ validate_rule_patterns() {
     fi
 }
 
-validate_rule_patterns
+# A rule that cannot be used is the same class as a rule file that cannot be read, so it
+# leaves through the same status and `qa all` aggregates both as "could not run".
+validate_rule_patterns || exit "${SCAN_UNRUNNABLE}"
 
 ERRORS_FOUND=0
 WARNINGS_FOUND=0
@@ -216,7 +278,46 @@ WARNINGS_FOUND=0
 FILES_TO_SCAN=()
 cd "${REPO_DIR}"
 
-if [ "${SCAN_MODE}" = "staged" ]; then
+# The commit this branch grew from. --diff answers "what have I not committed yet", which
+# is empty on a finished branch and was therefore the wrong question for a pre-flight gate:
+# a secret committed three commits ago was reported as nothing to scan. --branch answers
+# "what does this branch change", from the merge base to the working tree, so committed and
+# uncommitted work are both read.
+#
+# A base that cannot be resolved exits 2 rather than scanning an empty set: on a shallow CI
+# clone the trunk ref is often absent, and that is precisely when a silent zero would be
+# read as a clean branch.
+resolve_branch_base() {
+    local base_ref base_commit
+    if [ -n "${RANGE_BASE}" ]; then
+        base_ref="${RANGE_BASE}"
+    else
+        base_ref="$(get_trunk_branch "${REPO_DIR}")"
+    fi
+
+    if ! git rev-parse --verify --quiet "${base_ref}^{commit}" >/dev/null 2>&1; then
+        log_error "Cannot scan this branch: '${base_ref}' is not a revision in this repository."
+        log_info "Name the base with --base <ref>, set profiles.${ACTIVE_PROFILE}.git.trunkBranch, or scan the whole tree with --all."
+        return "${SCAN_UNRUNNABLE}"
+    fi
+
+    base_commit="$(git merge-base "${base_ref}" HEAD 2>/dev/null)" || base_commit=""
+    if [ -z "${base_commit}" ]; then
+        log_error "Cannot scan this branch: HEAD and '${base_ref}' share no common ancestor."
+        log_info "Name the base with --base <ref>, or scan the whole tree with --all."
+        return "${SCAN_UNRUNNABLE}"
+    fi
+
+    printf '%s\n' "${base_commit}"
+}
+
+if [ "${SCAN_MODE}" = "branch" ]; then
+    BRANCH_BASE="$(resolve_branch_base)" || exit $?
+    log_info "Scanning every change this branch makes since ${BRANCH_BASE}..."
+    while IFS= read -r f; do
+        [ -n "$f" ] && [ -f "$f" ] && FILES_TO_SCAN+=("$f")
+    done < <(git diff --name-only --diff-filter=ACMR "${BRANCH_BASE}" 2>/dev/null || true)
+elif [ "${SCAN_MODE}" = "staged" ]; then
     # No -f filter here: a path staged as an addition and then deleted from disk is still
     # part of the next commit, and the index is where its content lives.
     while IFS= read -r f; do
@@ -233,7 +334,9 @@ else
 fi
 
 if [ ${#FILES_TO_SCAN[@]} -eq 0 ]; then
-    log_success "No files to scan."
+    # Named so the zero can be judged. "No files to scan" alone reads the same whether the
+    # selection is genuinely empty or the mode was the wrong question to ask.
+    log_success "No files to scan: the ${SCAN_MODE} selection is empty."
     exit 0
 fi
 

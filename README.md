@@ -235,7 +235,10 @@ Enforces the Red-Green-Refactor protocol:
 Scans code against custom JSON regex rules (`rules/landmines.json`):
 - Detects unindexed queries, raw SQL, client-side secret leaks, and unhandled promise rejections.
 - `--staged` reads staged content from the Git index, so it judges the commit rather than the working tree.
+- `--branch` reads everything the branch changes since its merge base with the trunk — committed work included — which is what `harness qa all` and `harness ship` gate on. `--base <ref>` names that base for a shallow CI clone where the trunk ref is absent.
 - A rule whose pattern `grep -E` cannot compile aborts the scan instead of silently never matching.
+- Rules that were requested and cannot be read abort too. The built-in template is the default for a project that configured nothing, never a stand-in for a `rules/landmines.json` that has been renamed away.
+- A scan that could not determine its rules or its range exits `2`, which `harness qa all` reports as a gate that **could not run**. It is never reported as a scan that passed.
 - Install as a pre-commit hook via `harness scan --install-hook`.
 </details>
 
