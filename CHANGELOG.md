@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.7.0] - 2026-09-11
+
+`harness worktree create` reported that a directory existed and stopped there, whether or
+not the directory carried the harness. Skill surfaces are installation artifacts rather
+than tracked files, so a project that keeps them out of Git got a worktree with no
+`.claude/skills` and no `CLAUDE.md` — and `references/worktree.md` sends the agent into
+exactly that directory as phase 2 of `harness-implement`.
+
+### Added
+
+- `harness worktree seed <path>` installs the four skill surfaces and the `AGENTS.md`
+  symlinks into an existing worktree of the repository, and writes nothing else. It
+  refuses a path this repository does not own, and refuses a project that tracks its
+  surfaces in Git: those bundles carry the managed marker, so installing over them would
+  delete and rewrite versioned files.
+- `./setup --seed-target <path>` is the installer mode behind it, transactional and
+  reversible through `./setup --rollback` like any other installation.
+
+### Changed
+
+- `harness worktree create` now names the surfaces the new worktree carries and the ones
+  it does not, says whether the global surfaces still cover it, and prints the one command
+  that gives it its own. A worktree with no surface is a fact the reader can act on; the
+  previous "Worktree created" alone was not.
+- `harness init` records the skill surfaces it installs in the target's `.gitignore`,
+  idempotently and inside the installation transaction, and names the files it expects to
+  be committed instead. Whether a project's worktrees inherit the harness used to be
+  decided by a `.gitignore` its owner wrote by accident.
+- The `CLAUDE.md` and `GEMINI.md` symlinks are deliberately **not** ignored. They cost
+  nothing in Git, and committing them is what carries `AGENTS.md` into every worktree
+  without seeding anything.
+
 ## [2.6.0] - 2026-09-11
 
 Three places where the scanner reported a passing scan having verified nothing. All three
