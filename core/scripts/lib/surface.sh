@@ -55,43 +55,60 @@ surface_workflow_allowed() {
 # Reads "<relative path>\t<absolute path>" lines, already sorted by relative path, and
 # hashes the concatenation of each path followed by its content. Prefixing the path is
 # what makes a rename register: content republished under a new name signs differently.
+#
+# The payload is assembled in a regular file rather than written straight into a pipe. The
+# loop below spawns and reaps a `cat` per file, and on macOS bash does not restart a write
+# the arriving SIGCHLD interrupts: the builtin printf failed with "write error: Interrupted
+# system call", which aborted the installation mid-way and rolled it back. Writes to a
+# regular file are not interruptible, so the race is removed rather than narrowed.
+#
+# A shell variable would not do. Command substitution strips trailing newlines and
+# truncates at a NUL, and either would silently change a digest every manifest records.
 surface_digest_stream() {
-    local relative absolute
+    local relative absolute payload digest
+    payload="$(mktemp "${TMPDIR:-/tmp}/harness-digest.XXXXXX")"
     while IFS=$'\t' read -r relative absolute; do
-        printf '%s\n' "${relative}"
-        cat "${absolute}"
-    done | git hash-object --stdin | cut -c "1-${SURFACE_DIGEST_LENGTH}"
+        printf '%s\n' "${relative}" >> "${payload}"
+        cat "${absolute}" >> "${payload}"
+    done
+    digest="$(git hash-object --stdin < "${payload}" | cut -c "1-${SURFACE_DIGEST_LENGTH}")"
+    rm -f "${payload}"
+    printf '%s\n' "${digest}"
 }
 
 # LC_ALL=C on every sort in this file. The two digests below must agree byte for byte on
 # both CI runners, and a locale-dependent collation would make one bundle sign two ways
 # depending on where it was installed -- the AH-9 lesson about tooling that differs
 # between GNU and BSD, applied before it can bite.
+# Both listings are accumulated in a shell variable and handed to sort through a here-string
+# rather than written into a pipe, for the reason given above surface_digest_stream: the
+# loops reap children -- jq in a process substitution here, basename per reference below --
+# and a builtin write racing SIGCHLD is what aborted installations on macOS. These listings
+# are short lines this file composes itself, so holding them in a variable is safe in a way
+# that holding file content would not be.
 surface_source_digest() {
     local workflow="$1"
-    local root primitive
+    local root primitive listing
     root="$(get_harness_root)/core/skills"
-    {
-        printf 'SKILL.md\t%s/%s/SKILL.md\n' "${root}" "${workflow}"
-        while IFS= read -r primitive; do
-            printf 'references/%s.md\t%s/%s/SKILL.md\n' "${primitive}" "${root}" "${primitive}"
-        done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "$(surface_catalog_path)")
-    } | LC_ALL=C sort -t"$(printf '\t')" -k1,1 | surface_digest_stream
+    listing="SKILL.md	${root}/${workflow}/SKILL.md"
+    while IFS= read -r primitive; do
+        listing="${listing}"$'\n'"references/${primitive}.md	${root}/${primitive}/SKILL.md"
+    done < <(jq -r --arg workflow "${workflow}" '.public[$workflow][]' "$(surface_catalog_path)")
+    LC_ALL=C sort -t"$(printf '\t')" -k1,1 <<< "${listing}" | surface_digest_stream
 }
 
 surface_installed_digest() {
     local bundle="$1"
-    local reference
+    local reference listing
     [ -f "${bundle}/SKILL.md" ] || return 1
-    {
-        printf 'SKILL.md\t%s/SKILL.md\n' "${bundle}"
-        if [ -d "${bundle}/references" ]; then
-            for reference in "${bundle}"/references/*.md; do
-                [ -f "${reference}" ] || continue
-                printf 'references/%s\t%s\n' "$(basename "${reference}")" "${reference}"
-            done
-        fi
-    } | LC_ALL=C sort -t"$(printf '\t')" -k1,1 | surface_digest_stream
+    listing="SKILL.md	${bundle}/SKILL.md"
+    if [ -d "${bundle}/references" ]; then
+        for reference in "${bundle}"/references/*.md; do
+            [ -f "${reference}" ] || continue
+            listing="${listing}"$'\n'"references/$(basename "${reference}")	${reference}"
+        done
+    fi
+    LC_ALL=C sort -t"$(printf '\t')" -k1,1 <<< "${listing}" | surface_digest_stream
 }
 
 # The published names a runtime should carry in a given mode, as "<name>\t<kind>" lines.
