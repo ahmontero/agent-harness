@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.8.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.9.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -456,6 +456,26 @@ harness sync             # repair the global surfaces and the current repository
 ```
 
 `harness sync` repairs; it never installs a new surface — that is `harness init`. It writes only to surfaces that already exist and are managed, names every one of them before writing, preserves the mode each was installed in (an expert surface stays expert), and is undone by `./setup --rollback` like any other installation. `--target <path>` acts on one repository and `--global` on the global surfaces alone.
+
+### 🚢 Publishing a branch (`harness ship`)
+
+```bash
+harness ship                 # QA, ask, push, open a pull request into the trunk
+harness ship release/5.30    # …into another branch
+harness ship --dry-run       # report every decision and change nothing
+harness ship --yes           # confirm the push in advance
+```
+
+Publication is outward-facing and effectively irreversible, so `ship` decides what it is
+about to publish before it publishes anything. It refuses to publish the branch it is
+targeting, a detached `HEAD`, a branch with no commits ahead of its target, and uncommitted
+changes to tracked files that a push would not carry — naming what it found and leaving the
+repository untouched. Untracked files are reported rather than refused.
+
+It asks before pushing, and refuses where there is no terminal to ask on; `--yes` is how a
+human confirms in advance. An agent must not pass it on its own initiative. `ship` creates
+no commits. If the push succeeds but no pull request is opened, it exits non-zero and says
+which half happened rather than reporting a completed ship.
 
 ### 🐚 Shell Autocompletion (Zsh & Bash)
 

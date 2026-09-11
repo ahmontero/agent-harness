@@ -3453,4 +3453,159 @@ fi
 echo "  [PASS] config validate accepts the documented way to declare a gate absent."
 
 echo ""
+echo "=== 39. Testing Ship Guards ==="
+# `harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and
+# opened a pull request from main into main; with uncommitted work it pushed a branch
+# missing it and said nothing; and it asked for no confirmation before a push, which this
+# project's own conventions forbid an agent from performing unasked.
+SHIP_ROOT="${TMP_TEST_DIR}/ship-guards"
+mkdir -p "${SHIP_ROOT}"
+git init -q --bare "${SHIP_ROOT}/remote.git"
+SHIP_REPO="${SHIP_ROOT}/work"
+git init -q "${SHIP_REPO}"
+git -C "${SHIP_REPO}" config user.email "tests@agent-harness.local"
+git -C "${SHIP_REPO}" config user.name "Agent Harness Tests"
+git -C "${SHIP_REPO}" remote add origin "${SHIP_ROOT}/remote.git"
+cat > "${SHIP_REPO}/harness.config.json" <<'SHIP_CONFIG_EOF'
+{
+  "project": { "name": "ship", "defaultProfile": "ship" },
+  "profiles": {
+    "ship": {
+      "git": { "trunkBranch": "main" },
+      "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false },
+      "ci": { "provider": "custom", "prCommand": "echo PULL-REQUEST-OPENED" }
+    }
+  }
+}
+SHIP_CONFIG_EOF
+git -C "${SHIP_REPO}" add -A
+git -C "${SHIP_REPO}" commit -q -m init
+git -C "${SHIP_REPO}" branch -M main
+
+ship() {
+    SHIP_STATUS=0
+    SHIP_OUTPUT="$( (cd "${SHIP_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship "$@" </dev/null 2>&1) )" || SHIP_STATUS=$?
+}
+remote_branches() {
+    git -C "${SHIP_ROOT}/remote.git" for-each-ref --format='%(refname:short)' refs/heads
+}
+
+# On the trunk there is nothing to open a pull request about, and pushing it is publication.
+ship --yes
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship published the trunk branch: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(remote_branches)" ]; then
+    echo "  [FAIL] ship pushed while refusing: $(remote_branches)"
+    exit 1
+fi
+echo "  [PASS] ship refuses to publish the branch it is targeting, and pushes nothing."
+
+git -C "${SHIP_REPO}" checkout -q -b feat/AH-18-demo
+
+# A branch with no commits of its own has nothing to propose.
+ship --yes
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship opened a pull request for a branch with no commits: ${SHIP_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] ship refuses a branch with no commits ahead of its target."
+
+printf 'shipped = 1\n' > "${SHIP_REPO}/feature.txt"
+git -C "${SHIP_REPO}" add -A
+git -C "${SHIP_REPO}" commit -q -m "add the feature"
+
+# Uncommitted work would not be pushed, and the previous command said nothing about it.
+printf 'shipped = 2\n' > "${SHIP_REPO}/feature.txt"
+ship --yes
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship pushed a branch that is missing uncommitted work: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(remote_branches)" ]; then
+    echo "  [FAIL] ship pushed while refusing a dirty tree: $(remote_branches)"
+    exit 1
+fi
+git -C "${SHIP_REPO}" checkout -q -- feature.txt
+echo "  [PASS] ship refuses uncommitted changes to tracked files."
+
+# An option is an option, not a branch name.
+ship --no-such-flag
+if [ "${SHIP_STATUS}" -eq 0 ] || ! printf '%s' "${SHIP_OUTPUT}" | grep -qF -- "--no-such-flag"; then
+    echo "  [FAIL] ship accepted an unknown option as a target branch: ${SHIP_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] ship refuses an option it does not define instead of targeting a branch named after it."
+
+# Publication needs a confirmation, and there is no terminal here to ask on.
+ship
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship published without a confirmation: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(remote_branches)" ]; then
+    echo "  [FAIL] ship pushed without confirmation: $(remote_branches)"
+    exit 1
+fi
+echo "  [PASS] ship refuses to publish unasked when there is no terminal to confirm on."
+
+# --dry-run reports the decision and changes nothing.
+ship --dry-run --yes
+if [ "${SHIP_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] a dry run failed: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if [ -n "$(remote_branches)" ]; then
+    echo "  [FAIL] a dry run pushed: $(remote_branches)"
+    exit 1
+fi
+if ! printf '%s' "${SHIP_OUTPUT}" | grep -q "feat/AH-18-demo"; then
+    echo "  [FAIL] a dry run did not name the branch it would publish: ${SHIP_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] --dry-run names what it would publish and mutates nothing."
+
+# The confirmed path: QA, push, then the configured pull-request command.
+ship --yes
+if [ "${SHIP_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] a confirmed ship failed: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if ! remote_branches | grep -qx "feat/AH-18-demo"; then
+    echo "  [FAIL] a confirmed ship did not push the branch: $(remote_branches)"
+    exit 1
+fi
+if ! printf '%s' "${SHIP_OUTPUT}" | grep -q "PULL-REQUEST-OPENED"; then
+    echo "  [FAIL] a confirmed ship did not run the configured pull request command: ${SHIP_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] a confirmed ship runs QA, pushes, and opens the pull request."
+
+# A run that pushed and opened nothing has not shipped, and must not report that it did.
+git -C "${SHIP_REPO}" checkout -q -b feat/AH-18-nopr
+printf 'more = 1\n' > "${SHIP_REPO}/second.txt"
+git -C "${SHIP_REPO}" add -A
+git -C "${SHIP_REPO}" commit -q -m "second"
+python3 - "${SHIP_REPO}/harness.config.json" <<'STRIP_PR_EOF'
+import json, sys
+path = sys.argv[1]
+config = json.load(open(path))
+config["profiles"]["ship"]["ci"] = {"provider": "custom"}
+json.dump(config, open(path, "w"), indent=2)
+STRIP_PR_EOF
+git -C "${SHIP_REPO}" add -A
+git -C "${SHIP_REPO}" commit -q -m "drop the pr command"
+ship --yes
+if [ "${SHIP_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship reported success having opened no pull request: ${SHIP_OUTPUT}"
+    exit 1
+fi
+if ! remote_branches | grep -qx "feat/AH-18-nopr"; then
+    echo "  [FAIL] ship did not push before reporting that it opened nothing: $(remote_branches)"
+    exit 1
+fi
+echo "  [PASS] a push with no pull request exits non-zero and says which half happened."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
