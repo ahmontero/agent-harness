@@ -1635,5 +1635,62 @@ if ! printf '%s' "${DOCTOR_NOJQ}" | grep -qi "unavailable" || \
     exit 1
 fi
 echo "  [PASS] doctor warns on drift, repairs with --fix, and reports an unrunnable check as unavailable."
+
+echo ""
+echo "=== 24. Testing Commit Scope Derivation ==="
+# A version number in a branch name is not an issue key. Reading one out of
+# chore/release-2.4.1 records chore(release-2): ..., a scope that points at no issue and
+# that no reader can trace back to one.
+COMMIT_DIR="${TMP_TEST_DIR}/commit-scope"
+mkdir -p "${COMMIT_DIR}"
+git -C "${COMMIT_DIR}" init -q
+git -C "${COMMIT_DIR}" config user.email "tests@agent-harness.local"
+git -C "${COMMIT_DIR}" config user.name "Agent Harness Tests"
+echo "fixture" > "${COMMIT_DIR}/fixture.txt"
+git -C "${COMMIT_DIR}" add fixture.txt
+git -C "${COMMIT_DIR}" commit -qm "commit scope fixture"
+# Keeps the builder inside the fixture: with no local config it resolves the example
+# profile's targetRepoPath and would commit into whatever happens to live there.
+cat > "${COMMIT_DIR}/harness.config.json" <<'COMMIT_CONFIG_EOF'
+{
+  "project": { "name": "commit-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Commit scope fixture" } }
+}
+COMMIT_CONFIG_EOF
+
+# commit_subject <branch> <type> <message> -> prints the recorded commit subject
+commit_subject() {
+    local branch="$1" type="$2" message="$3"
+    git -C "${COMMIT_DIR}" checkout -q -B "${branch}"
+    printf '%s\n' "${branch}" > "${COMMIT_DIR}/fixture.txt"
+    git -C "${COMMIT_DIR}" add fixture.txt
+    (cd "${COMMIT_DIR}" && "${HARNESS_ROOT}/bin/harness" commit build "${type}" "${message}" >/dev/null 2>&1)
+    git -C "${COMMIT_DIR}" log -1 --pretty=%s
+}
+
+COMMIT_RELEASE_SUBJECT="$(commit_subject "chore/release-2.4.1" chore "release 2.4.1")"
+if [ "${COMMIT_RELEASE_SUBJECT}" != "chore: release 2.4.1" ]; then
+    echo "  [FAIL] commit build read an issue key out of a release version: ${COMMIT_RELEASE_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_BUMP_SUBJECT="$(commit_subject "fix/bump-node-22-1" fix "bump node to 22.1")"
+if [ "${COMMIT_BUMP_SUBJECT}" != "fix: bump node to 22.1" ]; then
+    echo "  [FAIL] commit build read an issue key out of a version bump: ${COMMIT_BUMP_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_TASK_SUBJECT="$(commit_subject "task/AH-11-slug" feat "keep the real key")"
+if [ "${COMMIT_TASK_SUBJECT}" != "feat(AH-11): keep the real key" ]; then
+    echo "  [FAIL] commit build dropped the issue key of a task branch: ${COMMIT_TASK_SUBJECT}"
+    exit 1
+fi
+
+COMMIT_COMPAT_SUBJECT="$(commit_subject "fix/COMPAT-1-slug" fix "keep a single-digit key")"
+if [ "${COMMIT_COMPAT_SUBJECT}" != "fix(COMPAT-1): keep a single-digit key" ]; then
+    echo "  [FAIL] commit build dropped a single-digit issue key: ${COMMIT_COMPAT_SUBJECT}"
+    exit 1
+fi
+echo "  [PASS] commit build scopes real issue keys and leaves version-like branches unscoped."
 echo ""
 echo "All automated tests passed successfully! [100%]"
