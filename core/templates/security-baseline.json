@@ -1,0 +1,31 @@
+[
+  {
+    "id": "SEC-010",
+    "name": "Hardcoded credential assignment",
+    "level": "error",
+    "ignoreCase": true,
+    "pattern": "(password|passwd|pwd|secret|token|api[_-]?key|access[_-]?key|auth[_-]?token|client[_-]?secret)[[:space:]]*[:=][[:space:]]*['\"`][^${<%#][A-Za-z0-9_/+=.~-]{11,}['\"`]",
+    "message": "A credential appears to be written into the source. Read it from the environment or a secret manager, and rotate the value that was committed. If this is not a secret, mark the line with 'harness-ignore: SEC-010'."
+  },
+  {
+    "id": "SEC-011",
+    "name": "Provider-issued token",
+    "level": "error",
+    "pattern": "(gh[pousr]_[A-Za-z0-9]{36}|github_pat_[A-Za-z0-9_]{22,}|AKIA[0-9A-Z]{16}|xox[abprs]-[A-Za-z0-9-]{10,}|sk-[A-Za-z0-9]{20,}|AIza[0-9A-Za-z_-]{35})",
+    "message": "This matches the issued shape of a GitHub, AWS, OpenAI, Slack or Google credential. Revoke it at the provider before anything else: it is valid until you do, and it is now in the repository's history."
+  },
+  {
+    "id": "SEC-012",
+    "name": "Credentials embedded in a URL or DSN",
+    "level": "error",
+    "pattern": "[a-zA-Z][a-zA-Z0-9+.-]*://[^/[:space:]:@]+:[^/[:space:]:@${]+@",
+    "message": "A connection string carries a username and password inline. Move the credential to the environment and reference it, so the DSN can be logged without leaking it."
+  },
+  {
+    "id": "SEC-013",
+    "name": "Private key block",
+    "level": "error",
+    "pattern": "-----BEGIN ([A-Z]+ )*PRIVATE KEY-----",
+    "message": "A PEM private key is committed as file content. Remove it, rotate the key pair, and keep key material in a secret manager. SEC-003 catches it by filename; this catches it wherever it was pasted."
+  }
+]

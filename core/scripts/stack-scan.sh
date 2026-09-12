@@ -184,7 +184,68 @@ if [ -z "${RULES_FILE}" ]; then
     fi
 fi
 
-log_info "Running Landmine Scanner [${SCAN_MODE}] using rules: ${RULES_FILE}..."
+# One trap for every temporary path this scan creates. There used to be a single
+# `trap ... EXIT` for the staged-content directory; a second trap would have silently
+# replaced it and leaked the first, because a shell keeps one handler per signal.
+SCAN_TEMP_PATHS=()
+scan_cleanup() {
+    [ ${#SCAN_TEMP_PATHS[@]} -eq 0 ] || rm -rf "${SCAN_TEMP_PATHS[@]}"
+}
+trap scan_cleanup EXIT
+
+# The security baseline is applied on top of whatever rule file was resolved, because the
+# scanner resolves exactly one rule file and `harness init` copies the template into the
+# project. Improving the template therefore reached new repositories only: every project
+# that had already run init kept its copy of the rules for good, and choosing a recipe
+# substituted a different and equally partial set. A baseline the scanner always applies is
+# the only shape that reaches an installed project, and it keeps one copy of the security
+# rules rather than one per template and recipe.
+#
+# A project rule whose id matches a baseline rule replaces it. That is the per-rule escape
+# hatch: redefining SEC-010 with your own pattern or a level of "warning" is how a project
+# disagrees with one baseline rule without giving up the rest.
+BASELINE_FILE="$(get_harness_root)/core/templates/security-baseline.json"
+BASELINE_ENABLED="$(get_profile_value "rules.securityBaseline" "true")"
+BASELINE_NOTE=""
+# The path a reader can open. RULES_FILE becomes a temporary merged file below, and naming
+# that in the report would tell them nothing they can act on.
+RULES_SOURCE_PATH="${RULES_FILE}"
+
+if [ "${BASELINE_ENABLED}" = "false" ]; then
+    BASELINE_NOTE=" (security baseline disabled by profiles.${ACTIVE_PROFILE}.rules.securityBaseline)"
+else
+    # A baseline that could not be read is not a baseline that found nothing, for the same
+    # reason a rule file that could not be read is not a passing scan.
+    if [ ! -f "${BASELINE_FILE}" ] || ! jq empty "${BASELINE_FILE}" >/dev/null 2>&1; then
+        log_error "The security baseline is missing or unreadable: ${BASELINE_FILE}"
+        log_error "A scan whose baseline could not be read is not a passing scan."
+        log_info "Disable it deliberately with profiles.${ACTIVE_PROFILE}.rules.securityBaseline: false."
+        exit "${SCAN_UNRUNNABLE}"
+    fi
+
+    EFFECTIVE_RULES="$(mktemp "${TMPDIR:-/tmp}/harness-rules.XXXXXX")"
+    SCAN_TEMP_PATHS+=("${EFFECTIVE_RULES}")
+    if ! jq -s '
+            .[0] as $baseline
+            | .[1] as $project
+            | ($project | map(.id)) as $overridden
+            | ($baseline | map(select(.id as $id | ($overridden | index($id)) == null))) + $project
+        ' "${BASELINE_FILE}" "${RULES_FILE}" > "${EFFECTIVE_RULES}"; then
+        log_error "The security baseline could not be combined with ${RULES_FILE}."
+        exit "${SCAN_UNRUNNABLE}"
+    fi
+    # Both counts are read off the merged file, so they cannot disagree with the merge. The
+    # baseline's contribution is the difference: a project that overrides SEC-010 sees "3 of
+    # the security baseline's rules", which is the override reporting itself.
+    PROJECT_RULE_COUNT="$(jq -r 'length' "${RULES_SOURCE_PATH}")"
+    TOTAL_RULE_COUNT="$(jq -r 'length' "${EFFECTIVE_RULES}")"
+    BASELINE_NOTE=" + $(( TOTAL_RULE_COUNT - PROJECT_RULE_COUNT )) of the security baseline's rules (${TOTAL_RULE_COUNT} rules in force)"
+    RULES_FILE="${EFFECTIVE_RULES}"
+fi
+
+RULES_DISPLAY="${RULES_SOURCE_PATH}${BASELINE_NOTE}"
+
+log_info "Running Landmine Scanner [${SCAN_MODE}] using rules: ${RULES_DISPLAY}..."
 
 # A rule says what it matches: file content through "pattern", or the repository-relative
 # path through "pathPattern". Exactly one, because a rule that names both or neither has no
@@ -212,14 +273,14 @@ validate_rule_expression() {
 
     case "${expression}" in
         *'(?'*)
-            log_error "[${rule_id}] Unusable ${kind} in ${RULES_FILE}: '(?' is a PCRE construct and grep -E has no lookaround."
+            log_error "[${rule_id}] Unusable ${kind} in ${RULES_DISPLAY}: '(?' is a PCRE construct and grep -E has no lookaround."
             return 1
             ;;
     esac
 
     printf '' | grep -Eq -- "${expression}" >/dev/null 2>&1 || compile_status=$?
     if [ "${compile_status}" -ge 2 ]; then
-        log_error "[${rule_id}] Unusable ${kind} in ${RULES_FILE}: grep -E cannot compile it."
+        log_error "[${rule_id}] Unusable ${kind} in ${RULES_DISPLAY}: grep -E cannot compile it."
         return 1
     fi
 }
@@ -239,18 +300,24 @@ validate_rule_patterns() {
         rule_path_pattern=$(jq -r ".[${index}].pathPattern // \"\"" "${RULES_FILE}")
 
         if [ -z "${rule_id}" ]; then
-            log_error "Rule ${index} in ${RULES_FILE} has no id."
+            log_error "Rule ${index} in ${RULES_DISPLAY} has no id."
             invalid=$((invalid + 1))
             continue
         fi
 
         if [ "${has_pattern}${has_path_pattern}" = "00" ]; then
-            log_error "[${rule_id}] Rule in ${RULES_FILE} names neither 'pattern' nor 'pathPattern', so it can never match."
+            log_error "[${rule_id}] Rule in ${RULES_DISPLAY} names neither 'pattern' nor 'pathPattern', so it can never match."
             invalid=$((invalid + 1))
             continue
         fi
         if [ "${has_pattern}${has_path_pattern}" = "11" ]; then
-            log_error "[${rule_id}] Rule in ${RULES_FILE} names both 'pattern' and 'pathPattern'; a rule matches content or paths, not both."
+            log_error "[${rule_id}] Rule in ${RULES_DISPLAY} names both 'pattern' and 'pathPattern'; a rule matches content or paths, not both."
+            invalid=$((invalid + 1))
+            continue
+        fi
+
+        if [ "$(jq -r "if .[${index}] | has(\"ignoreCase\") then (.[${index}].ignoreCase | type) else \"boolean\" end" "${RULES_FILE}")" != "boolean" ]; then
+            log_error "[${rule_id}] ignoreCase in ${RULES_DISPLAY} must be true or false."
             invalid=$((invalid + 1))
             continue
         fi
@@ -348,7 +415,7 @@ fi
 SCAN_SOURCES=()
 if [ "${SCAN_MODE}" = "staged" ]; then
     STAGED_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/harness-scan.XXXXXX")"
-    trap 'rm -rf "${STAGED_ROOT}"' EXIT
+    SCAN_TEMP_PATHS+=("${STAGED_ROOT}")
     staged_index=0
     for file in "${FILES_TO_SCAN[@]}"; do
         staged_blob="${STAGED_ROOT}/$(printf '%06d' "${staged_index}")"
@@ -431,6 +498,7 @@ for (( i=0; i<RULE_COUNT; i++ )); do
     PATTERN=$(jq -r ".[$i].pattern // \"\"" "${RULES_FILE}")
     PATH_PATTERN=$(jq -r ".[$i].pathPattern // \"\"" "${RULES_FILE}")
     LEVEL=$(jq -r ".[$i].level // \"error\"" "${RULES_FILE}")
+    IGNORE_CASE=$(jq -r ".[$i].ignoreCase // false" "${RULES_FILE}")
     MSG=$(jq -r ".[$i].message" "${RULES_FILE}")
     EXTS=$(jq -r ".[$i].fileExtensions[]? // empty" "${RULES_FILE}")
 
@@ -447,8 +515,11 @@ for (( i=0; i<RULE_COUNT; i++ )); do
             continue
         fi
 
+        GREP_FLAGS=(-E -I)
+        [ "${IGNORE_CASE}" = "true" ] && GREP_FLAGS+=(-i)
+
         if [ -n "${PATH_PATTERN}" ]; then
-            if printf '%s' "${file}" | grep -Eq -- "${PATH_PATTERN}"; then
+            if printf '%s' "${file}" | grep "${GREP_FLAGS[@]}" -q -- "${PATH_PATTERN}"; then
                 report_finding "${LEVEL}" "${ID}" "${NAME}" "${file}" "${file}" "${MSG}"
             fi
             continue
@@ -466,7 +537,7 @@ for (( i=0; i<RULE_COUNT; i++ )); do
         fi
         [ "${MATCH_EXT}" = true ] || continue
 
-        RAW_MATCHES=$(grep -En -- "${PATTERN}" "${source_path}" 2>/dev/null || true)
+        RAW_MATCHES=$(grep "${GREP_FLAGS[@]}" -n -- "${PATTERN}" "${source_path}" 2>/dev/null || true)
         [ -n "${RAW_MATCHES}" ] || continue
 
         KEPT_MATCHES=""

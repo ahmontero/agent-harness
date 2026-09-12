@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.11.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.12.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -397,6 +397,47 @@ value = legacy_call()  # harness-ignore: NO_RAW_SQL
 The marker works on the matching line or the line directly above it, and it silences only
 the rule it names. Without an escape hatch the only way past a false positive is
 `--no-verify`, which retires the whole gate rather than one line.
+
+`ignoreCase: true` makes one rule case-insensitive. `grep -E` has no inline `(?i)` — the
+validator rejects PCRE constructs — so a rule that should match `API_KEY`, `Api_Key` and
+`api_key` alike declares it as a field. Leave it off where the case carries meaning: an AWS
+key id is `AKIA`, a GitHub token is `ghp_`, and matching those case-insensitively would only
+add false positives.
+
+Binary files are never scanned. A finding inside one would arrive with no line number, and a
+rule can only be exempted on a line.
+
+#### The security baseline
+
+Beneath whatever rules a project configures, the scanner always applies a built-in security
+baseline: a case-insensitive credential assignment (`SEC-010`), provider-issued tokens for
+GitHub, AWS, OpenAI, Slack and Google (`SEC-011`), credentials embedded in a URL or DSN
+(`SEC-012`), and a PEM private-key block found by content rather than by filename
+(`SEC-013`). It is deliberately quiet about interpolated values and placeholders —
+`"${DB_PASSWORD}"`, `"{{ vault_token }}"`, `"<your-key>"` — because a gate that cries wolf is
+answered with `--no-verify`.
+
+The baseline exists because the scanner resolves exactly one rule file and `harness init`
+copies the template into the project. Without it, improving the default rules would reach new
+repositories only, and every project that had already run `init` would keep its original copy
+for good.
+
+A project disagrees with it at three grains:
+
+```jsonc
+// one line, in the source itself
+password = os.environ["DB_PASSWORD"]  // harness-ignore: SEC-010
+
+// one rule, by redefining its id in your own rules file
+{ "id": "SEC-010", "name": "…", "level": "warning", "pattern": "…", "message": "…" }
+
+// all of it, as a recorded decision
+{ "profiles": { "app": { "rules": { "securityBaseline": false } } } }
+```
+
+Every scan names which of the two it read, so `using rules: ./rules/landmines.json + the
+security baseline (8 rules in force)` and `(security baseline disabled by …)` are both
+visible in the output rather than assumed.
 
 The shipped rules and every recipe include a `pathPattern` rule refusing `.env` files,
 private keys, and certificate bundles, with `*.example` and `*.sample` exempted.

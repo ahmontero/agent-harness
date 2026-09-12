@@ -6,6 +6,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.0] - 2026-09-12
+
+The scanner has always been described as a security scanner. Measured against a file
+carrying an AWS key id, a `password` assignment, a GitHub token, a `postgres://` DSN with
+its credentials inline, and a PEM block, the shipped ruleset reported none of them.
+
+> **Upgrade note — every scan now applies a security baseline.** A repository that has been
+> passing may start failing, which is the point: the rules below were not being applied
+> before. A finding you disagree with can be answered at three grains — `harness-ignore:
+> <RULE_ID>` on the line, redefining that rule's `id` in your own rules file, or
+> `profiles.<p>.rules.securityBaseline: false` to record that this project scans without it.
+
+### Added
+
+- A built-in security baseline the scanner applies on top of whatever rule file it resolved:
+  a case-insensitive credential assignment (`SEC-010`), provider-issued tokens for GitHub,
+  AWS, OpenAI, Slack and Google (`SEC-011`), credentials embedded in a URL or DSN
+  (`SEC-012`), and a PEM private-key block found by content rather than filename (`SEC-013`).
+  `SEC-003` has always caught key material by filename; `SEC-013` catches it wherever it was
+  pasted.
+- The baseline is a baseline rather than a better template because the scanner resolves
+  exactly one rule file and `harness init` copies the template into the project. Improving
+  the template would have reached new repositories only: every project that had already run
+  `init` would have kept its four-rule copy for good, and choosing a recipe substituted a
+  different and equally partial set. It is also one copy of the security rules rather than
+  one per template and recipe — the arrangement 2.11.0 has just finished deleting for the
+  same reason.
+- A rule may declare `ignoreCase: true`, and the scanner passes `-i` to grep for that rule
+  alone. `grep -E` has no inline `(?i)` and the validator rejects PCRE constructs, so
+  case-insensitivity had to become a field. Provider-token rules deliberately do not set it:
+  `AKIA`, `ghp_` and `AIza` are literal, and matching them case-insensitively would only add
+  false positives. A non-boolean `ignoreCase` aborts the scan rather than quietly running
+  case-sensitively.
+- `profiles.<p>.rules.securityBaseline`, described in `schema.json`, follows the
+  `qa.lintCommand: false` idiom for recording that something is deliberately absent.
+
+### Fixed
+
+- The scanner skips binary files. No rule had ever been applied to one, because every rule
+  shipped so far carried `fileExtensions` — and baseline rules cannot, since secrets live in
+  `.yaml`, `.tf` and `.env` as readily as in `.py`. Without that restriction a binary that
+  matched made `grep -En` print `Binary file <path> matches` with no line number, which
+  reached the suppression check as a line number and produced `sed: invalid command code B`
+  and `[: … integer expression expected` in the middle of a scan. The finding it left behind
+  had no line, and therefore no way to be suppressed: `harness-ignore:` needs a line to
+  annotate, so the only remaining escape was `--no-verify`, which retires the whole gate.
+- Scanner diagnostics name a file the reader can open. With a baseline applied, the rules the
+  scan runs are a merged temporary file, and every validator error would otherwise have cited
+  that path.
+- The scan's temporary paths are removed by one handler. A shell keeps one handler per
+  signal, so the second `trap … EXIT` this change would have needed silently replaced the
+  first and leaked what it was meant to clean up.
+
+### Changed
+
+- Three test fixtures that wrote a secret-shaped string inline now assemble it from
+  arguments. The content they write is byte-identical; what changes is that this repository
+  no longer carries three secrets of its own, and passes its own baseline with no
+  suppressions and no path exclusions.
+
 ## [2.11.0] - 2026-09-12
 
 Four more claims the project made and did not honour, and one command that swallowed its
