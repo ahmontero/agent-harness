@@ -69,13 +69,14 @@ A malformed return is re-dispatched exactly once with the shape restated. A seco
 
 ## Bounded Review Loop
 
-The loop is per item and it never runs unbounded.
+The loop is per item and it never runs unbounded. Its rules live in `references/loop.md`;
+load it before the first round. It owns the cap, the failure signature, the adjudication and
+the rulings, and this workflow does not restate them.
 
-- **Minor findings never enter the loop.** Record each with `harness ledger append "$RUN_ID" deferred "<one-liner>"` and report them at hand-off.
-- **Critical and Important findings enter the loop.** One round is one implementer dispatch plus one reviewer dispatch scoped to the amended code. After each round, record `harness ledger append "$RUN_ID" phase "item <N> round <R>/3 (<X> addressed, <Y> open)"`.
-- **Three rounds is the cap.** Do not open a fourth. A loop that survives three rounds has a structural problem that another round will not solve.
-- **At the cap, adjudicate every open finding individually.** Either park it with `harness ledger append "$RUN_ID" parked "<finding> — Ruling: <why the code stands>"`, or classify it as load-bearing.
-- **A load-bearing finding at the cap ends the workflow as blocked.** Record `harness ledger append "$RUN_ID" ruling "<finding> — blocked: <what the user must decide>"`, call `harness receipt finish "$RUN_ID" blocked`, and hand the decision to the user.
+One round here is one implementer dispatch plus one reviewer dispatch scoped to the amended
+code, and the round label the protocol asks for is `item <N> round <R>/3`. The signature step
+is not optional here either: a dispatched run that keeps failing the same way would otherwise
+spend all three rounds re-deriving one failure before it adjudicates.
 
 ## 🛑 Anti-Rationalization Gate (Banned LLM Excuses)
 

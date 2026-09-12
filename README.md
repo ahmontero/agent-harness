@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.12.1-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.13.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -176,7 +176,7 @@ Receipts live under `.git/agent-harness/runs/`, are shared across the repository
 
 ### Progress ledger and the bounded review loop
 
-A receipt is a closed schema, so anything that needs words goes to the run's ledger instead. `/harness-implement` opens one at start, keyed by the same run ID, and uses it to survive a compacted context and to record every decision it took on your behalf.
+A receipt is a closed schema, so anything that needs words goes to the run's ledger instead. Every workflow opens one at start, keyed by the same run ID, and uses it to survive a compacted context. `/harness-implement`, `/harness-fix` and `/harness-orchestrate` also use it to record every decision they took on your behalf; `/harness-investigate` keeps only the memory, because it is read-only and has no correction to re-review.
 
 ```bash
 harness ledger start "${run_id}"
@@ -185,7 +185,7 @@ harness ledger append "${run_id}" parked "reviewer disputed the awk filter — R
 harness ledger rulings "${run_id}"
 ```
 
-The ledger makes the review gate terminate. Minor findings never enter the fix loop; Critical and Important ones do, for at most three rounds. At the cap the agent must adjudicate every finding still open, either parking it with a recorded ruling or declaring it load-bearing, in which case the run ends `blocked` rather than reporting success over a known defect. Discarding a finding without a ledger line is forbidden, and `harness ledger rulings` is reproduced in full in the agent's final message.
+The bounded review loop itself lives in one place — `references/loop.md`, bundled into the three workflows that run it — because two hand-maintained copies of one protocol drift, and these two had: the dispatched copy had quietly lost its stagnation breaker. The ledger is what makes that gate terminate. Minor findings never enter the fix loop; Critical and Important ones do, for at most three rounds. At the cap the agent must adjudicate every finding still open, either parking it with a recorded ruling or declaring it load-bearing, in which case the run ends `blocked` rather than reporting success over a known defect. Discarding a finding without a ledger line is forbidden, and `harness ledger rulings` is reproduced in full in the agent's final message.
 
 The cap is not the only exit. A loop whose verification keeps failing the same way stops early:
 
@@ -343,6 +343,12 @@ Audits generated code to strip speculative abstractions, shallow wrappers, dead 
 <summary><b>15. 💬 Socratic Requirement Interrogator (<code>/harness-interview [topic]</code>)</b></summary>
 
 Resolves architectural ambiguity by asking exactly **one structured multiple-choice question at a time** with a recommended option before drafting specs.
+</details>
+
+<details>
+<summary><b>16. 🔁 Bounded Review Loop (<code>/harness-loop &lt;run_id&gt;</code>)</b></summary>
+
+Bounds a review phase so it terminates without dropping a finding: three rounds at most, every failed round signed so an unconverging loop exits early, and every finding still open at the cap either parked with a recorded ruling or declared load-bearing. Bundled into `/harness-implement`, `/harness-fix` and `/harness-orchestrate`, which reference it rather than restating it.
 </details>
 
 ---
