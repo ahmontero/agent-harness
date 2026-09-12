@@ -3656,6 +3656,35 @@ if ! printf '%s' "${INIT_SUBDIR_OUTPUT}" | grep -qF "${INIT_SUBDIR_REPO}"; then
 fi
 echo "  [PASS] init from a subdirectory initializes the repository root and names it."
 
+# init created .gemini/rules, .claude/rules, .codex/rules, .cursor/rules and .agents/rules
+# and never wrote a byte into any of them. No runtime reads those paths -- the four agents
+# read AGENTS.md, and the quality floor and landmines live in rules/ at the root, named by
+# AGENTS.md and by stack.config.json -- so the five were empty directories that Git cannot
+# even carry. The compatibility matrix asserted they existed, which certified the emptiness
+# across eight cells, and the README's own table advertised them as the way each runtime
+# receives the quality floor.
+for dead_rules_dir in .gemini/rules .claude/rules .codex/rules .cursor/rules .agents/rules; do
+    if [ -d "${INIT_SUBDIR_REPO}/${dead_rules_dir}" ]; then
+        echo "  [FAIL] init created ${dead_rules_dir}, which nothing reads and nothing fills"
+        exit 1
+    fi
+done
+for floor_file in rules/floor.md rules/landmines.md rules/landmines.json; do
+    if [ ! -f "${INIT_SUBDIR_REPO}/${floor_file}" ]; then
+        echo "  [FAIL] init did not install ${floor_file}, where the rules actually live"
+        exit 1
+    fi
+done
+for overclaim in '`.cursor/rules`' '`.claude/rules`' '`.gemini/rules`' '`.codex/rules`' '`.agents/rules`'; do
+    for claiming_document in "README.md" "docs/ARCHITECTURE.md"; do
+        if grep -Fq "${overclaim}" "${HARNESS_ROOT}/${claiming_document}"; then
+            echo "  [FAIL] ${claiming_document} still advertises ${overclaim}, which init no longer creates"
+            exit 1
+        fi
+    done
+done
+echo "  [PASS] init installs the rules where they are read and advertises no directory nothing fills."
+
 echo ""
 echo "=== 39. Testing Ship Guards ==="
 # `harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and

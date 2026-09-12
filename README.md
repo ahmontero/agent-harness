@@ -72,11 +72,11 @@ Autonomous AI coding agents are exceptionally capable, but without a strict engi
 
 | AI Runtime / IDE | Auto-Linked Skills | Quality Floor & Rules | Pre-Commit Scanner | Worktree Isolation | Sub-Second Context (<1s) |
 | :--- | :---: | :---: | :---: | :---: | :---: |
-| **Google Antigravity** | ✅ (`.gemini/skills`) | ✅ (`.gemini/rules`) | ✅ | ✅ | ✅ (`harness context`) |
-| **Claude Code** | ✅ (`.claude/skills`) | ✅ (`.claude/rules`) | ✅ | ✅ | ✅ (`harness context`) |
-| **Cursor Agent** | ✅ (`.agents/skills`) | ✅ (`.cursor/rules`) | ✅ | ✅ | ✅ (`harness context`) |
-| **OpenAI Codex** | ✅ (`.codex/skills`) | ✅ (`.codex/rules`) | ✅ | ✅ | ✅ (`harness context`) |
-| **Generic (.agents)** | ✅ (`.agents/skills`) | ✅ (`.agents/rules`) | ✅ | ✅ | ✅ (`harness context`) |
+| **Google Antigravity** | ✅ (`.gemini/skills`) | ✅ (`rules/` via `AGENTS.md`) | ✅ | ✅ | ✅ (`harness context`) |
+| **Claude Code** | ✅ (`.claude/skills`) | ✅ (`rules/` via `AGENTS.md`) | ✅ | ✅ | ✅ (`harness context`) |
+| **Cursor Agent** | ✅ (`.agents/skills`) | ✅ (`rules/` via `AGENTS.md`) | ✅ | ✅ | ✅ (`harness context`) |
+| **OpenAI Codex** | ✅ (`.codex/skills`) | ✅ (`rules/` via `AGENTS.md`) | ✅ | ✅ | ✅ (`harness context`) |
+| **Generic (.agents)** | ✅ (`.agents/skills`) | ✅ (`rules/` via `AGENTS.md`) | ✅ | ✅ | ✅ (`harness context`) |
 
 The installation contract is exercised as an eight-cell Ubuntu/macOS matrix covering target and global installation in both default and expert modes. See [Verified Compatibility](docs/COMPATIBILITY.md) for the exact assertions, evidence artifacts, and reproducible commands.
 
@@ -125,7 +125,7 @@ harness init
 - Detect the ecosystems the repository shows evidence of — Python, Node, Go, Rust — and write one profile for each, with its own `detect` block so a polyglot repository resolves the right one per directory.
 - Write only commands the target evidences: a `test` script in `package.json`, `[tool.ruff]` in `pyproject.toml`, `manage.py` for Django, `.golangci.yml` for golangci-lint. What it cannot evidence it leaves unset and names, because a gate that reports it could not run is correct and a gate that runs the wrong tool is not.
 - Generate `stack.config.json` and a starter `rules/` directory. It states no issue-key prefix and no trunk branch: neither can be read from the repository, and trunk detection already happens at runtime.
-- Install the three curated workflow bundles through `.gemini`, `.claude`, `.codex`, and `.agents`, plus runtime-specific rule directories including `.cursor/rules`.
+- Install the curated workflow bundles through `.gemini`, `.claude`, `.codex`, and `.agents`. The quality floor and the landmines are not copied per runtime: they live once in `rules/`, named by `AGENTS.md` and by `stack.config.json`, and every runtime reads them from there.
 
 ---
 

@@ -796,15 +796,13 @@ install_target_repo() {
     local codex_skills="${target}/.codex/skills"
     local agents_skills="${target}/.agents/skills"
     
-    local gemini_rules="${target}/.gemini/rules"
-    local claude_rules="${target}/.claude/rules"
-    local codex_rules="${target}/.codex/rules"
-    local cursor_rules="${target}/.cursor/rules"
-    local agents_rules="${target}/.agents/rules"
-
+    # There were five more directories here -- .gemini/rules, .claude/rules, .codex/rules,
+    # .cursor/rules and .agents/rules -- created on every install and never written into.
+    # No runtime reads them: the four agents read AGENTS.md, and the quality floor and the
+    # landmines live in rules/ at the root, named there and in stack.config.json. Git does
+    # not carry an empty directory either, so they did not even survive a clone.
     local target_directory
-    for target_directory in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}" \
-                            "${gemini_rules}" "${claude_rules}" "${codex_rules}" "${cursor_rules}" "${agents_rules}"; do
+    for target_directory in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
         transaction_ensure_directory "${target_directory}"
     done
 
