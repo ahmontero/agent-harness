@@ -39,6 +39,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   wrong mode explicitly would have left the same hole in the file every new project starts
   from. `harness scan --diff` itself is unchanged and still documented in the scanner's own
   flag reference: the mode was never wrong, the instruction to gate on it was.
+- `harness context` reported a repository that was not there. Run in a directory that is not
+  a Git checkout it answered `branch: "HEAD"`, `dirty: false`, `trunkBranch: "main"`, zero
+  active delta specs and zero debt markers, and exited `0`. Each of those comes from a helper
+  degrading sensibly on its own — `get_current_branch` falls back to `HEAD` the way it does
+  for a detached head, `is_working_tree_dirty` reads a failed `git status` as no output and
+  therefore as clean, `get_trunk_branch` defaults to `main`, and both counts legitimately
+  reach zero — but composed with no repository the five of them produced one confident
+  document, in the command whose whole purpose is to brief an agent that cannot check any of
+  it, and which every workflow runs first.
+- It was the only command that reads repository facts without asserting a repository exists:
+  `spec`, `debt`, `scan`, `branch`, `commit`, `qa`, `worktree`, `receipt`, `ledger` and
+  `ship` all refuse, and the remaining commands — `config`, `version`, `completion`, `sync`,
+  `upgrade` — read the configuration or the checkout rather than a repository. `context` now
+  refuses too. The check is in the command and not in the helpers, because having a
+  repository is a precondition of the whole report rather than of any one line of it, and
+  because `harness upgrade` deliberately relies on those same fallbacks behind its own
+  repository check. It sits after the argument loop, so `harness context --help` still
+  answers where no repository exists yet — which is where that question gets asked.
 
 ## [2.10.1] - 2026-09-11
 
