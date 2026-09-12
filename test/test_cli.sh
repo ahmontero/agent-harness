@@ -2308,6 +2308,64 @@ if ! env HOME="${PRUNE_HOME}" HARNESS_STATE_DIR="${PRUNE_STATE}" \
 fi
 echo "  [PASS] Transaction journals are pruned and the latest stays rollbackable."
 
+# `spec create` for a key and slug that already have a spec truncated it through the
+# redirection that renders the template, replacing a spec someone had written with an empty
+# one, and then reported "Created Delta Spec". A delta spec is the record of what a change
+# is for; re-running the command that creates it is not a request to discard it.
+#
+# Both the template branch and the no-template fallback wrote with '>', so the refusal is
+# asserted at the command, which is the one place that covers both.
+SPEC_OVERWRITE_REPO="${TMP_TEST_DIR}/spec-overwrite"
+mkdir -p "${SPEC_OVERWRITE_REPO}"
+git -C "${SPEC_OVERWRITE_REPO}" init -q
+git -C "${SPEC_OVERWRITE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${SPEC_OVERWRITE_REPO}" config user.name "Agent Harness Tests"
+git -C "${SPEC_OVERWRITE_REPO}" commit -q --allow-empty -m init
+
+harness_in_spec_overwrite() {
+    (cd "${SPEC_OVERWRITE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>&1)
+}
+
+harness_in_spec_overwrite spec create AH-60 ordering >/dev/null
+SPEC_OVERWRITE_FILE="${SPEC_OVERWRITE_REPO}/specs/delta-AH-60-ordering.md"
+if [ ! -f "${SPEC_OVERWRITE_FILE}" ]; then
+    echo "  [FAIL] spec create did not create the fixture spec"
+    exit 1
+fi
+printf '\n## 5. Decision log\nThe queue was chosen over the cron job because ordering matters.\n' \
+    >> "${SPEC_OVERWRITE_FILE}"
+SPEC_OVERWRITE_BEFORE="$(git hash-object "${SPEC_OVERWRITE_FILE}")"
+
+SPEC_OVERWRITE_STATUS=0
+SPEC_OVERWRITE_OUTPUT="$(harness_in_spec_overwrite spec create AH-60 ordering)" || SPEC_OVERWRITE_STATUS=$?
+if [ "${SPEC_OVERWRITE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] spec create exited 0 for a spec that already exists"
+    exit 1
+fi
+if [ "$(git hash-object "${SPEC_OVERWRITE_FILE}")" != "${SPEC_OVERWRITE_BEFORE}" ]; then
+    echo "  [FAIL] spec create overwrote an existing delta spec: ${SPEC_OVERWRITE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${SPEC_OVERWRITE_OUTPUT}" | grep -q "delta-AH-60-ordering.md"; then
+    echo "  [FAIL] spec create did not name the spec it refused to replace: ${SPEC_OVERWRITE_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${SPEC_OVERWRITE_OUTPUT}" | grep -q "Created Delta Spec"; then
+    echo "  [FAIL] spec create reported creating a spec it did not create: ${SPEC_OVERWRITE_OUTPUT}"
+    exit 1
+fi
+
+# The refusal is about this one spec, not about the command.
+if ! harness_in_spec_overwrite spec create AH-60 batching >/dev/null; then
+    echo "  [FAIL] spec create refused a spec that does not exist yet"
+    exit 1
+fi
+if [ ! -f "${SPEC_OVERWRITE_REPO}/specs/delta-AH-60-batching.md" ]; then
+    echo "  [FAIL] spec create did not create a spec whose path is free"
+    exit 1
+fi
+echo "  [PASS] spec create refuses to replace an existing delta spec and preserves it."
+
 echo ""
 echo "=== 29. Testing Advertised Flags ==="
 
