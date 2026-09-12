@@ -3032,6 +3032,43 @@ fi
 write_range_config "main"
 echo "  [PASS] an unresolvable range reports a gate that could not run, never a clean scan."
 
+# The review protocol named `harness scan --diff` as its static gate and the quality floor
+# repeated it. --diff answers "what have I not committed yet", and review runs after the
+# work is committed -- `harness ship` refuses to publish a branch with uncommitted tracked
+# changes -- so the gate the protocol prescribed was structurally unable to read the code
+# it was reviewing. It is the same fail-open `qa all` was moved off above: the aggregation
+# was corrected there and the prose an agent actually follows was left naming the old mode.
+#
+# The two assertions below are the evidence and the rule. The evidence has to hold for the
+# rule to mean anything, so it is checked rather than asserted in a comment.
+range_harness scan --diff
+if [ "${RANGE_STATUS}" -ne 0 ] || ! printf '%s' "${RANGE_OUTPUT}" | grep -q "the diff selection is empty"; then
+    echo "  [FAIL] scan --diff did not read an empty set on a clean tree (status ${RANGE_STATUS}): ${RANGE_OUTPUT}"
+    exit 1
+fi
+range_harness scan --branch
+if [ "${RANGE_STATUS}" -ne 1 ]; then
+    echo "  [FAIL] scan --branch did not read the finding the same clean tree carries: ${RANGE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] on a committed branch --diff reads nothing while --branch reads the change."
+
+for gate_document in \
+    "core/skills/review/SKILL.md" \
+    "rules/floor.md" \
+    "core/templates/AGENTS-template.md" \
+    "AGENTS.md"; do
+    if grep -Fq "scan --diff" "${HARNESS_ROOT}/${gate_document}"; then
+        echo "  [FAIL] ${gate_document} prescribes scan --diff, which reads nothing at review time"
+        exit 1
+    fi
+    if ! grep -Fq "scan --branch" "${HARNESS_ROOT}/${gate_document}"; then
+        echo "  [FAIL] ${gate_document} gates on a scan without naming the mode that reads the branch"
+        exit 1
+    fi
+done
+echo "  [PASS] every protocol that gates on a scan names the mode that reads the branch."
+
 echo ""
 echo "=== 34. Testing Scanner Argument Refusals ==="
 # `harness scan --al` scanned the empty staged set and exited 0, and a rules path that did
