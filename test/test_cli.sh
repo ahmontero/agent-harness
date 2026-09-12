@@ -4049,4 +4049,81 @@ done
 echo "  [PASS] the files that describe and test the marker are not reported as carrying it."
 
 echo ""
+echo "=== 42. Testing Branch Convention Checking ==="
+# `harness branch check [branch]` was advertised as validating issue-driven branches. It
+# printed the current branch, discarded its argument, and exited 0 on any name at all -- a
+# check that cannot fail, which is the same shape as a gate that cannot run.
+BRANCH_CHECK_REPO="${TMP_TEST_DIR}/branch-check"
+mkdir -p "${BRANCH_CHECK_REPO}"
+git -C "${BRANCH_CHECK_REPO}" init -q
+git -C "${BRANCH_CHECK_REPO}" config user.email "tests@agent-harness.local"
+git -C "${BRANCH_CHECK_REPO}" config user.name "Agent Harness Tests"
+cat > "${BRANCH_CHECK_REPO}/harness.config.json" <<'BRANCH_CHECK_CONFIG_EOF'
+{
+  "project": { "name": "branch-check", "defaultProfile": "b" },
+  "profiles": { "b": { "git": { "trunkBranch": "main", "releaseBranchPrefix": "release/" } } }
+}
+BRANCH_CHECK_CONFIG_EOF
+git -C "${BRANCH_CHECK_REPO}" add -A
+git -C "${BRANCH_CHECK_REPO}" commit -q -m init
+git -C "${BRANCH_CHECK_REPO}" branch -M main
+
+branch_check() {
+    BRANCH_CHECK_STATUS=0
+    BRANCH_CHECK_OUTPUT="$( (cd "${BRANCH_CHECK_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch check "$@" 2>&1) )" || BRANCH_CHECK_STATUS=$?
+}
+
+# The argument is the branch to check. Reading the current branch instead is what made the
+# command unable to answer the question it was asked.
+git -C "${BRANCH_CHECK_REPO}" checkout -q -b feat/AH-12-add-auth
+branch_check "totally/bogus--name"
+if [ "${BRANCH_CHECK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] branch check accepted a name that follows no convention: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "feat/AH-12-add-auth"; then
+    echo "  [FAIL] branch check reported the current branch instead of its argument: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "harness branch create"; then
+    echo "  [FAIL] branch check refused without naming how to make a conforming branch: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check validates the branch it was given and refuses a non-conforming name."
+
+# With no argument it checks the branch that is checked out, and reports the issue key that
+# harness commit build will derive from it.
+branch_check
+if [ "${BRANCH_CHECK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] branch check rejected a branch harness branch create produces: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "AH-12"; then
+    echo "  [FAIL] branch check did not report the issue key it derived: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check accepts a conforming branch and names the issue key it carries."
+
+# The trunk and a release branch are legitimate names that are not issue branches, and a
+# check that called them violations would fail on every repository's default branch.
+for legitimate in "main" "release/2.11.0"; do
+    branch_check "${legitimate}"
+    if [ "${BRANCH_CHECK_STATUS}" -ne 0 ]; then
+        echo "  [FAIL] branch check rejected '${legitimate}': ${BRANCH_CHECK_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] branch check accepts the trunk and a release branch without calling them issue branches."
+
+# There is no branch to check on a detached HEAD, and answering anyway is what the rest of
+# this suite exists to stop.
+git -C "${BRANCH_CHECK_REPO}" checkout -q --detach
+branch_check
+if [ "${BRANCH_CHECK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] branch check answered on a detached HEAD: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check refuses a detached HEAD instead of inventing a branch."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

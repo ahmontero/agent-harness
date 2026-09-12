@@ -45,8 +45,53 @@ case "${ACTION}" in
         git branch --list
         ;;
     check)
-        CURR="$(get_current_branch "${REPO_DIR}")"
-        log_info "Current branch: ${CURR}"
+        # This printed the current branch, discarded its argument, and exited 0 on any name
+        # at all, while the dispatcher advertised it as validating issue-driven branches. A
+        # check that cannot fail is the same shape as a gate that cannot run.
+        #
+        # What makes a branch an issue branch is that `harness commit build` can derive a key
+        # from it, so the shape checked here is the shape `branch create` writes and
+        # `commit build` reads -- including the bare-number key `normalize_issue_key` yields
+        # when no issueTracker.defaultPrefix is configured.
+        #
+        # The trunk and a release branch are legitimate names that are simply not issue
+        # branches. Calling them violations would fail on every repository's default branch.
+        BRANCH_TO_CHECK="${1:-}"
+        [ $# -le 1 ] || { log_error "branch check takes one branch name, not two."; exit 1; }
+
+        if [ -z "${BRANCH_TO_CHECK}" ]; then
+            BRANCH_TO_CHECK="$(get_current_branch "${REPO_DIR}")"
+            if [ -z "${BRANCH_TO_CHECK}" ] || [ "${BRANCH_TO_CHECK}" = "HEAD" ]; then
+                log_error "HEAD is detached, so there is no branch to check."
+                log_info "Check one out, or name the branch: harness branch check <branch>."
+                exit 1
+            fi
+        fi
+
+        TRUNK="$(get_trunk_branch "${REPO_DIR}")"
+        RELEASE_PREFIX="$(get_profile_value "git.releaseBranchPrefix" "release/")"
+        BRANCH_TYPES="chore|feat|fix|spike"
+
+        if [ "${BRANCH_TO_CHECK}" = "${TRUNK}" ]; then
+            log_success "'${BRANCH_TO_CHECK}' is the trunk, not an issue branch."
+            log_info "Create one before changing behavior: harness branch create <type> <issue_key> <slug>"
+            exit 0
+        fi
+
+        if [ -n "${RELEASE_PREFIX}" ] && [ "${BRANCH_TO_CHECK}" != "${BRANCH_TO_CHECK#"${RELEASE_PREFIX}"}" ]; then
+            log_success "'${BRANCH_TO_CHECK}' is a release branch, not an issue branch."
+            exit 0
+        fi
+
+        if [[ "${BRANCH_TO_CHECK}" =~ ^(${BRANCH_TYPES})/([A-Z][A-Z0-9]*-[0-9]+|[0-9]+)-(.+)$ ]]; then
+            log_success "'${BRANCH_TO_CHECK}' is an issue branch: type '${BASH_REMATCH[1]}', issue key '${BASH_REMATCH[2]}', slug '${BASH_REMATCH[3]}'."
+            exit 0
+        fi
+
+        log_error "'${BRANCH_TO_CHECK}' does not follow the branch convention."
+        log_info "Expected <type>/<ISSUE-KEY>-<slug>, with type one of: ${BRANCH_TYPES//|/, }."
+        log_info "Create one with: harness branch create <type> <issue_key> <slug>"
+        exit 1
         ;;
     *)
         echo "Usage: harness branch <create|list|check> [args...]"
