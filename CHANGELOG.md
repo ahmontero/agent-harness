@@ -6,6 +6,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.14.0] - 2026-09-12
+
+`harness spec archive` has existed, worked and been tested since specs did. Nothing an agent
+reads mentioned it.
+
+### Added
+
+- `harness ship` reports any delta spec still active before it publishes, naming the paths.
+  It does not refuse, for the reason it already gives about untracked files: a project may
+  legitimately carry one spec across several pull requests, and refusing would retire the
+  command rather than catch the mistake.
+
+### Changed
+
+- The `spec` primitive documents `archive`, lists it in its `argument-hint`, and states when
+  it is called — at hand-off, once the workflow has produced a reviewed and verified tree.
+  The hint listed `status | create | verify`, so an agent working from the bundle had no way
+  to learn the command existed. That is why three consecutive deltas in this repository were
+  archived by hand rather than by protocol.
+- `/harness-implement` phase 7 and `/harness-orchestrate` phase 5 archive the spec they
+  worked from. A spec left in `specs/` is counted by `harness context` as work in flight, and
+  `harness context` is the first command every workflow runs — so one nobody archived makes
+  every later run start from a false statement about the repository.
+- The suite has carried an assertion that one specific file, `delta-AH-11-truthful-core-
+  hardening.md`, is not active, with a comment explaining that a delivered spec left active
+  makes `harness context` overstate what is in flight. That assertion is a scar from the
+  spec that was forgotten, and it can only ever catch that one. It stays exactly as it is;
+  what changes is that the step it guards is now part of the protocol.
+
+### Fixed
+
+- The README said living specs are written to `specs/<issue>-<slug>/harness-spec.md`. They
+  have always been written to `specs/delta-<issue_key>-<slug>.md`, which is also the only
+  shape `harness spec status`, `harness context` and `harness spec archive` recognise.
+
 ## [2.13.0] - 2026-09-12
 
 The Bounded Review Loop is what stops a review phase from ending when the agent gets tired

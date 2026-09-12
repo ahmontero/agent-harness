@@ -34,7 +34,7 @@ The ledger is the run's memory. A compacted context or a resumed session recover
 4. **GREEN** — Continue the protocol in `references/tdd.md` with the minimal production change that makes the targeted test pass.
 5. **REFACTOR** — Complete `references/tdd.md`, then apply `references/simplify.md` to the diff. Remove duplication and accidental complexity while keeping tests green.
 6. **Validate** — Apply `references/qa.md`. Every required gate must pass; a missing configured gate must be reported, not represented as success.
-7. **Review and hand off** — Apply `references/review.md` against the delta spec and quality floor, then run the Bounded Review Loop below until it exits. Summarize changed behavior, evidence, remaining risks, and the exact working-tree location.
+7. **Review and hand off** — Apply `references/review.md` against the delta spec and quality floor, then run the Bounded Review Loop below until it exits. Archive the delta spec with `harness spec archive`: its work is no longer in flight, and `harness context` counts what is left in `specs/` as work that is. Summarize changed behavior, evidence, remaining risks, and the exact working-tree location.
 
 For multiple acceptance criteria, repeat phases 3–5 in small vertical slices instead of implementing the whole feature before testing.
 
