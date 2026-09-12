@@ -2636,6 +2636,34 @@ if ! printf '%s' "${EMPTY_INDEX_OUTPUT}" | grep -q "Nothing is staged"; then
 fi
 echo "  [PASS] commit build refuses an empty index."
 
+# An option whose value was left off consumed the next argument -- which was not there --
+# and `shift 2` failed under `set -e`. The command exited 1 having printed nothing at all,
+# so `install.sh --target` with the path forgotten was indistinguishable from a crash. The
+# scanner's own options have said what they require since they were written; these had not.
+for missing_value_option in --target --recipe --sync-target --seed-target; do
+    MISSING_STATUS=0
+    MISSING_OUTPUT="$("${HARNESS_ROOT}/install.sh" "${missing_value_option}" 2>&1)" || MISSING_STATUS=$?
+    if [ "${MISSING_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] install.sh ${missing_value_option} with no value exited 0"
+        exit 1
+    fi
+    if ! printf '%s' "${MISSING_OUTPUT}" | grep -q -- "${missing_value_option} requires"; then
+        echo "  [FAIL] install.sh ${missing_value_option} with no value said nothing: '${MISSING_OUTPUT}'"
+        exit 1
+    fi
+done
+SYNC_MISSING_STATUS=0
+SYNC_MISSING_OUTPUT="$(harness_in_flags sync --target)" || SYNC_MISSING_STATUS=$?
+if [ "${SYNC_MISSING_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] sync --target with no value exited 0"
+    exit 1
+fi
+if ! printf '%s' "${SYNC_MISSING_OUTPUT}" | grep -q -- "--target requires"; then
+    echo "  [FAIL] sync --target with no value said nothing: '${SYNC_MISSING_OUTPUT}'"
+    exit 1
+fi
+echo "  [PASS] an option missing its value names what it requires instead of exiting silently."
+
 echo ""
 echo "=== 30. Testing Drift Of Unrecorded Surfaces ==="
 # The drift check only ever compared the manifest against the catalog, so an entry that
@@ -3592,6 +3620,71 @@ if [ "${SCHEMA_STATUS}" -ne 0 ]; then
 fi
 echo "  [PASS] config validate accepts the documented way to declare a gate absent."
 
+# `harness init` passed $(pwd), so running it from a subdirectory installed a whole second
+# harness inside that subdirectory -- its own AGENTS.md, CLAUDE.md and GEMINI.md symlinks,
+# rules/, stack.config.json, a second .gitignore and four skill surfaces -- and said nothing
+# about where any of it went. Initializing a repository means initializing its root.
+INIT_SUBDIR_REPO="${TMP_TEST_DIR}/init-subdir"
+mkdir -p "${INIT_SUBDIR_REPO}/src/deep"
+git -C "${INIT_SUBDIR_REPO}" init -q
+git -C "${INIT_SUBDIR_REPO}" config user.email "tests@agent-harness.local"
+git -C "${INIT_SUBDIR_REPO}" config user.name "Agent Harness Tests"
+printf 'print("x")\n' > "${INIT_SUBDIR_REPO}/src/deep/app.py"
+git -C "${INIT_SUBDIR_REPO}" add -A
+git -C "${INIT_SUBDIR_REPO}" commit -q -m init
+
+INIT_SUBDIR_OUTPUT="$( (cd "${INIT_SUBDIR_REPO}/src/deep" \
+    && env -u STACK_PROFILE HOME="${INIT_ROOT}/home" HARNESS_STATE_DIR="${INIT_ROOT}/state" \
+       "${HARNESS_ROOT}/bin/harness" init 2>&1) )"
+
+for stray in AGENTS.md CLAUDE.md GEMINI.md stack.config.json .gitignore rules .claude .gemini .codex .agents .cursor; do
+    if [ -e "${INIT_SUBDIR_REPO}/src/deep/${stray}" ] || [ -L "${INIT_SUBDIR_REPO}/src/deep/${stray}" ]; then
+        echo "  [FAIL] init from a subdirectory wrote ${stray} into it: ${INIT_SUBDIR_OUTPUT}"
+        exit 1
+    fi
+done
+for expected in AGENTS.md stack.config.json rules; do
+    if [ ! -e "${INIT_SUBDIR_REPO}/${expected}" ]; then
+        echo "  [FAIL] init from a subdirectory did not initialize the repository root: ${INIT_SUBDIR_OUTPUT}"
+        exit 1
+    fi
+done
+# Writing somewhere other than the working directory has to be said out loud.
+if ! printf '%s' "${INIT_SUBDIR_OUTPUT}" | grep -qF "${INIT_SUBDIR_REPO}"; then
+    echo "  [FAIL] init did not name the root it resolved to: ${INIT_SUBDIR_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] init from a subdirectory initializes the repository root and names it."
+
+# init created .gemini/rules, .claude/rules, .codex/rules, .cursor/rules and .agents/rules
+# and never wrote a byte into any of them. No runtime reads those paths -- the four agents
+# read AGENTS.md, and the quality floor and landmines live in rules/ at the root, named by
+# AGENTS.md and by stack.config.json -- so the five were empty directories that Git cannot
+# even carry. The compatibility matrix asserted they existed, which certified the emptiness
+# across eight cells, and the README's own table advertised them as the way each runtime
+# receives the quality floor.
+for dead_rules_dir in .gemini/rules .claude/rules .codex/rules .cursor/rules .agents/rules; do
+    if [ -d "${INIT_SUBDIR_REPO}/${dead_rules_dir}" ]; then
+        echo "  [FAIL] init created ${dead_rules_dir}, which nothing reads and nothing fills"
+        exit 1
+    fi
+done
+for floor_file in rules/floor.md rules/landmines.md rules/landmines.json; do
+    if [ ! -f "${INIT_SUBDIR_REPO}/${floor_file}" ]; then
+        echo "  [FAIL] init did not install ${floor_file}, where the rules actually live"
+        exit 1
+    fi
+done
+for overclaim in '`.cursor/rules`' '`.claude/rules`' '`.gemini/rules`' '`.codex/rules`' '`.agents/rules`'; do
+    for claiming_document in "README.md" "docs/ARCHITECTURE.md"; do
+        if grep -Fq "${overclaim}" "${HARNESS_ROOT}/${claiming_document}"; then
+            echo "  [FAIL] ${claiming_document} still advertises ${overclaim}, which init no longer creates"
+            exit 1
+        fi
+    done
+done
+echo "  [PASS] init installs the rules where they are read and advertises no directory nothing fills."
+
 echo ""
 echo "=== 39. Testing Ship Guards ==="
 # `harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and
@@ -3954,6 +4047,83 @@ for describes_itself in "README.md" "AGENTS.md" "core/skills/debt/SKILL.md" "tes
     fi
 done
 echo "  [PASS] the files that describe and test the marker are not reported as carrying it."
+
+echo ""
+echo "=== 42. Testing Branch Convention Checking ==="
+# `harness branch check [branch]` was advertised as validating issue-driven branches. It
+# printed the current branch, discarded its argument, and exited 0 on any name at all -- a
+# check that cannot fail, which is the same shape as a gate that cannot run.
+BRANCH_CHECK_REPO="${TMP_TEST_DIR}/branch-check"
+mkdir -p "${BRANCH_CHECK_REPO}"
+git -C "${BRANCH_CHECK_REPO}" init -q
+git -C "${BRANCH_CHECK_REPO}" config user.email "tests@agent-harness.local"
+git -C "${BRANCH_CHECK_REPO}" config user.name "Agent Harness Tests"
+cat > "${BRANCH_CHECK_REPO}/harness.config.json" <<'BRANCH_CHECK_CONFIG_EOF'
+{
+  "project": { "name": "branch-check", "defaultProfile": "b" },
+  "profiles": { "b": { "git": { "trunkBranch": "main", "releaseBranchPrefix": "release/" } } }
+}
+BRANCH_CHECK_CONFIG_EOF
+git -C "${BRANCH_CHECK_REPO}" add -A
+git -C "${BRANCH_CHECK_REPO}" commit -q -m init
+git -C "${BRANCH_CHECK_REPO}" branch -M main
+
+branch_check() {
+    BRANCH_CHECK_STATUS=0
+    BRANCH_CHECK_OUTPUT="$( (cd "${BRANCH_CHECK_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch check "$@" 2>&1) )" || BRANCH_CHECK_STATUS=$?
+}
+
+# The argument is the branch to check. Reading the current branch instead is what made the
+# command unable to answer the question it was asked.
+git -C "${BRANCH_CHECK_REPO}" checkout -q -b feat/AH-12-add-auth
+branch_check "totally/bogus--name"
+if [ "${BRANCH_CHECK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] branch check accepted a name that follows no convention: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "feat/AH-12-add-auth"; then
+    echo "  [FAIL] branch check reported the current branch instead of its argument: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "harness branch create"; then
+    echo "  [FAIL] branch check refused without naming how to make a conforming branch: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check validates the branch it was given and refuses a non-conforming name."
+
+# With no argument it checks the branch that is checked out, and reports the issue key that
+# harness commit build will derive from it.
+branch_check
+if [ "${BRANCH_CHECK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] branch check rejected a branch harness branch create produces: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${BRANCH_CHECK_OUTPUT}" | grep -q "AH-12"; then
+    echo "  [FAIL] branch check did not report the issue key it derived: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check accepts a conforming branch and names the issue key it carries."
+
+# The trunk and a release branch are legitimate names that are not issue branches, and a
+# check that called them violations would fail on every repository's default branch.
+for legitimate in "main" "release/2.11.0"; do
+    branch_check "${legitimate}"
+    if [ "${BRANCH_CHECK_STATUS}" -ne 0 ]; then
+        echo "  [FAIL] branch check rejected '${legitimate}': ${BRANCH_CHECK_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] branch check accepts the trunk and a release branch without calling them issue branches."
+
+# There is no branch to check on a detached HEAD, and answering anyway is what the rest of
+# this suite exists to stop.
+git -C "${BRANCH_CHECK_REPO}" checkout -q --detach
+branch_check
+if [ "${BRANCH_CHECK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] branch check answered on a detached HEAD: ${BRANCH_CHECK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch check refuses a detached HEAD instead of inventing a branch."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"

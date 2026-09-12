@@ -201,13 +201,26 @@ verify_target_contracts() {
         verify_skill_surface "${path}" "${mode}" "${allow_user}" "${runtime}" || return 1
     done
 
+    # This asserted that five runtime rules directories existed. It never asserted they held
+    # anything, and they never did: no runtime reads those paths, so the matrix certified an
+    # empty directory in every cell. What the installation owes the target is the rules
+    # themselves, at the root, where AGENTS.md and stack.config.json name them.
+    for path in \
+        "${target}/rules/floor.md" \
+        "${target}/rules/landmines.md" \
+        "${target}/rules/landmines.json"; do
+        assert_file "${path}" || return 1
+    done
     for path in \
         "${target}/.gemini/rules" \
         "${target}/.claude/rules" \
         "${target}/.codex/rules" \
         "${target}/.cursor/rules" \
         "${target}/.agents/rules"; do
-        [ -d "${path}" ] || { echo "Missing runtime rules directory: ${path}" >&2; return 1; }
+        if [ -d "${path}" ]; then
+            echo "Installed a runtime rules directory nothing reads: ${path}" >&2
+            return 1
+        fi
     done
     assert_file "${target}/AGENTS.md" || return 1
     [ -L "${target}/CLAUDE.md" ] || { echo "Missing CLAUDE.md link" >&2; return 1; }

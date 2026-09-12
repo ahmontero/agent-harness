@@ -96,14 +96,25 @@ ASSUME_YES=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --guided|-i) GUIDED_MODE=true; shift ;;
-        --target) TARGET_REPO="$2"; shift 2 ;;
-        --recipe) RECIPE_NAME="$2"; shift 2 ;;
+        # Each of these consumed the next argument without checking there was one. With the
+        # value left off, `shift 2` failed under `set -e` and the installer exited 1 having
+        # printed nothing, so a forgotten path looked exactly like a crash.
+        --target)
+            [ -n "${2:-}" ] || { log_error "--target requires a path to a repository."; exit 1; }
+            TARGET_REPO="$2"; shift 2 ;;
+        --recipe)
+            [ -n "${2:-}" ] || { log_error "--recipe requires a recipe name."; exit 1; }
+            RECIPE_NAME="$2"; shift 2 ;;
         --global) INSTALL_GLOBAL=true; shift ;;
         --cli-only) CLI_ONLY=true; shift ;;
         --verify) VERIFY_MODE=true; shift ;;
         --sync-only|--sync-global) SYNC_ONLY=true; shift ;;
-        --sync-target) SYNC_TARGET="$2"; shift 2 ;;
-        --seed-target) SEED_TARGET="$2"; shift 2 ;;
+        --sync-target)
+            [ -n "${2:-}" ] || { log_error "--sync-target requires a path to a repository."; exit 1; }
+            SYNC_TARGET="$2"; shift 2 ;;
+        --seed-target)
+            [ -n "${2:-}" ] || { log_error "--seed-target requires a path to a worktree."; exit 1; }
+            SEED_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         --yes|-y) ASSUME_YES=true; shift ;;
@@ -785,15 +796,13 @@ install_target_repo() {
     local codex_skills="${target}/.codex/skills"
     local agents_skills="${target}/.agents/skills"
     
-    local gemini_rules="${target}/.gemini/rules"
-    local claude_rules="${target}/.claude/rules"
-    local codex_rules="${target}/.codex/rules"
-    local cursor_rules="${target}/.cursor/rules"
-    local agents_rules="${target}/.agents/rules"
-
+    # There were five more directories here -- .gemini/rules, .claude/rules, .codex/rules,
+    # .cursor/rules and .agents/rules -- created on every install and never written into.
+    # No runtime reads them: the four agents read AGENTS.md, and the quality floor and the
+    # landmines live in rules/ at the root, named there and in stack.config.json. Git does
+    # not carry an empty directory either, so they did not even survive a clone.
     local target_directory
-    for target_directory in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}" \
-                            "${gemini_rules}" "${claude_rules}" "${codex_rules}" "${cursor_rules}" "${agents_rules}"; do
+    for target_directory in "${gemini_skills}" "${claude_skills}" "${codex_skills}" "${agents_skills}"; do
         transaction_ensure_directory "${target_directory}"
     done
 

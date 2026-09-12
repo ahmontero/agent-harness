@@ -6,6 +6,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.11.0] - 2026-09-12
+
+Four more claims the project made and did not honour, and one command that swallowed its
+own error.
+
+> **Upgrade note — `harness init` now initializes the repository root.** Run from a
+> subdirectory it used to install into that subdirectory. If you have a repository whose
+> harness was installed from `src/` or similar, the artefacts are still there; move them to
+> the root or re-run `harness init`. An explicit `--target <path>` is unchanged and is still
+> taken exactly as given.
+>
+> **`harness init` no longer creates `.gemini/rules`, `.claude/rules`, `.codex/rules`,
+> `.cursor/rules` or `.agents/rules`.** They were always empty. Existing ones are left
+> alone; delete them at your leisure.
+
+### Changed
+
+- `harness init` resolves the repository root instead of passing the working directory, and
+  says so when the two differ. Run from a subdirectory it installed a whole second harness
+  inside it — its own `AGENTS.md`, `CLAUDE.md` and `GEMINI.md` symlinks, `rules/`,
+  `stack.config.json`, a second `.gitignore` and four skill surfaces — and reported success
+  without mentioning where any of it had gone. Initializing a repository means initializing
+  its root: that is where every one of those belongs and where the skill surfaces are found.
+- `harness branch check` validates the branch instead of describing it. It printed the
+  current branch, discarded the argument it was given, and exited `0` on any name at all,
+  while the dispatcher advertised it as validating issue-driven branches — a check that
+  cannot fail, which is the shape of a gate that cannot run. It now checks the name it was
+  given, reports the type, issue key and slug it derived, accepts the trunk and a release
+  branch as the legitimate non-issue branches they are, refuses a detached `HEAD`, and exits
+  non-zero on a name that follows no convention. The shape it checks is the shape
+  `harness branch create` writes and `harness commit build` reads, so a branch that passes
+  is one whose issue key a commit will actually carry.
+
+### Removed
+
+- The five per-runtime rules directories. `harness init` created `.gemini/rules`,
+  `.claude/rules`, `.codex/rules`, `.cursor/rules` and `.agents/rules` on every installation
+  and never wrote a byte into any of them. No runtime reads those paths: the four agents
+  read `AGENTS.md`, and the quality floor and the landmines live once in `rules/` at the
+  root, named there and in `stack.config.json`. Git does not carry an empty directory, so
+  they did not survive a clone either.
+- The README's compatibility table advertised them as the way each runtime receives the
+  quality floor, `docs/ARCHITECTURE.md` repeated it, and `test/e2e/test_install_matrix.sh`
+  asserted the directories existed — which certified their emptiness across all eight cells
+  of the matrix the README points at as evidence. The table now names `rules/` via
+  `AGENTS.md`, which is what every runtime actually reads, and the matrix asserts the three
+  rule files are installed and that no runtime rules directory is.
+
+### Fixed
+
+- `install.sh --target`, `--recipe`, `--sync-target`, `--seed-target` and
+  `harness sync --target` each consumed the next argument without checking there was one.
+  With the value left off, `shift 2` failed under `set -e` and the command exited `1` having
+  printed nothing at all, so a forgotten path was indistinguishable from a crash. Each now
+  names what it requires, the way the scanner's own options have since they were written.
+
 ## [2.10.2] - 2026-09-12
 
 ### Fixed

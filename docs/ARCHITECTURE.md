@@ -48,7 +48,7 @@ flowchart TD
 - Keeps startup and installation overhead small by relying on standard system tooling.
 
 ### 2. Universal Multi-Harness Federation
-- Installs `harness-implement`, `harness-fix`, and `harness-investigate` across `.gemini/skills`, `.claude/skills`, `.codex/skills`, and `.agents/skills`, plus runtime-specific rule directories such as `.cursor/rules`.
+- Installs `harness-implement`, `harness-fix`, and `harness-investigate` across `.gemini/skills`, `.claude/skills`, `.codex/skills`, and `.agents/skills`. Rules are not federated per runtime: `rules/floor.md`, `rules/landmines.md` and `rules/landmines.json` are written once at the repository root, where `AGENTS.md` and `stack.config.json` name them.
 - The catalog's `harness` namespace is applied to every published directory and `SKILL.md` name; `--expert` exposes primitives through the same namespace.
 - Each workflow bundle carries its required private protocol references, while the canonical catalog remains the single source of truth for public, internal, and removed skills.
 

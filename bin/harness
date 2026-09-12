@@ -210,7 +210,21 @@ case "${COMMAND}" in
         exec "${SCRIPTS_DIR}/stack-upgrade.sh" "$@"
         ;;
     init)
-        exec "${HARNESS_ROOT}/install.sh" --target "$(pwd)" "$@"
+        # Initializing a repository means initializing its root: AGENTS.md, the CLAUDE.md and
+        # GEMINI.md symlinks, rules/, stack.config.json and the .gitignore entry all belong
+        # there, and the skill surfaces are only found there. This passed $(pwd), so running
+        # it from a subdirectory installed a whole second harness inside that subdirectory --
+        # a second .gitignore included -- and said nothing about where any of it went.
+        #
+        # Outside a repository get_repo_root returns the directory it was given, so nothing
+        # changes for a target that is not a checkout; install.sh reports that separately.
+        # An explicit --target still arrives after this one and wins, as it always did.
+        INIT_CWD="$(pwd -P)"
+        INIT_TARGET="$(get_repo_root "${INIT_CWD}")"
+        if [ "${INIT_TARGET}" != "${INIT_CWD}" ]; then
+            log_info "Initializing the repository root rather than this directory: ${INIT_TARGET}"
+        fi
+        exec "${HARNESS_ROOT}/install.sh" --target "${INIT_TARGET}" "$@"
         ;;
     *)
         # Check custom commands directory if configured
