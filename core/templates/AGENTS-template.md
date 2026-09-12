@@ -9,7 +9,7 @@ Synchronized across **Google Antigravity**, **Claude Code**, **OpenAI Codex**, *
 
 1. **Test-Driven Discipline**: Never write implementation code without a failing test first. Use the `/harness-tdd` or `/harness-bug` skill.
 2. **Deterministic Debugging**: Never guess or patch blindly. Follow the 6-phase debugging loop (`/harness-bug`).
-3. **Domain Landmines**: Before making changes, inspect `rules/landmines.md` and ensure `harness scan` passes.
+3. **Domain Landmines**: Before making changes, inspect `rules/landmines.md` and ensure `harness scan --branch` passes. `--branch` reads everything the branch changes; the default `--staged` reads nothing once the work is committed.
 4. **Living Specs**: Document significant features and architectural changes in `specs/delta-*.md` before implementation (`/harness-spec` or `/harness-task`).
 5. **Clean Workspaces**: Use `harness worktree` to isolate changes without polluting the main working tree.
 6. **Simplicity First**: Remove speculative abstractions and dead code before shipping (`/harness-simplify`).

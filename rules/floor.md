@@ -12,6 +12,6 @@ These invariants apply to every change in this repository.
 Before completion, run:
 
 ```bash
-harness scan --diff
+harness scan --branch
 bash test/test_cli.sh
 ```

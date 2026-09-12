@@ -24,6 +24,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   away, and a flag that discards a spec is the behaviour this fixes, spelled differently.
   `harness spec archive` has refused an occupied destination since it was written; create
   now answers the same question the same way.
+- The review protocol prescribed `harness scan --diff` as its static gate, and the quality
+  floor repeated it. `--diff` answers "what have I not committed yet", and review runs after
+  the work is committed — `harness ship` refuses to publish a branch with uncommitted
+  tracked changes — so the gate an agent was told to run had selected the empty set before
+  it started. On a branch carrying a committed secret, `scan --diff` exits `0` with "No
+  files to scan: the diff selection is empty" while `scan --branch` exits `1` on the same
+  clean tree. This is the fail-open that 2.9.0 moved `qa all` off; the aggregation was
+  corrected then and the prose an agent actually follows was left naming the old mode.
+- Every protocol that gates on a scan now names `--branch`, not only the two that named
+  `--diff`. `AGENTS.md` and the `AGENTS.md` template shipped into every initialized project
+  said "ensure `harness scan` passes", and a bare `harness scan` is `--staged`, which is
+  equally empty once the work is committed. Patching only the two sites that named the
+  wrong mode explicitly would have left the same hole in the file every new project starts
+  from. `harness scan --diff` itself is unchanged and still documented in the scanner's own
+  flag reference: the mode was never wrong, the instruction to gate on it was.
 
 ## [2.10.1] - 2026-09-11
 
