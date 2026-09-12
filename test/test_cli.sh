@@ -2636,6 +2636,34 @@ if ! printf '%s' "${EMPTY_INDEX_OUTPUT}" | grep -q "Nothing is staged"; then
 fi
 echo "  [PASS] commit build refuses an empty index."
 
+# An option whose value was left off consumed the next argument -- which was not there --
+# and `shift 2` failed under `set -e`. The command exited 1 having printed nothing at all,
+# so `install.sh --target` with the path forgotten was indistinguishable from a crash. The
+# scanner's own options have said what they require since they were written; these had not.
+for missing_value_option in --target --recipe --sync-target --seed-target; do
+    MISSING_STATUS=0
+    MISSING_OUTPUT="$("${HARNESS_ROOT}/install.sh" "${missing_value_option}" 2>&1)" || MISSING_STATUS=$?
+    if [ "${MISSING_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] install.sh ${missing_value_option} with no value exited 0"
+        exit 1
+    fi
+    if ! printf '%s' "${MISSING_OUTPUT}" | grep -q -- "${missing_value_option} requires"; then
+        echo "  [FAIL] install.sh ${missing_value_option} with no value said nothing: '${MISSING_OUTPUT}'"
+        exit 1
+    fi
+done
+SYNC_MISSING_STATUS=0
+SYNC_MISSING_OUTPUT="$(harness_in_flags sync --target)" || SYNC_MISSING_STATUS=$?
+if [ "${SYNC_MISSING_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] sync --target with no value exited 0"
+    exit 1
+fi
+if ! printf '%s' "${SYNC_MISSING_OUTPUT}" | grep -q -- "--target requires"; then
+    echo "  [FAIL] sync --target with no value said nothing: '${SYNC_MISSING_OUTPUT}'"
+    exit 1
+fi
+echo "  [PASS] an option missing its value names what it requires instead of exiting silently."
+
 echo ""
 echo "=== 30. Testing Drift Of Unrecorded Surfaces ==="
 # The drift check only ever compared the manifest against the catalog, so an entry that

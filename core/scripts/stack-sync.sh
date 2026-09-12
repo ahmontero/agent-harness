@@ -40,7 +40,11 @@ EXPERT_MODE=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --check) CHECK_ONLY=true; shift ;;
-        --target) EXPLICIT_TARGET="$2"; shift 2 ;;
+        --target)
+            [ -n "${2:-}" ] || { log_error "--target requires a path to a repository."; exit 1; }
+            EXPLICIT_TARGET="$2"
+            shift 2
+            ;;
         --global) GLOBAL_ONLY=true; shift ;;
         --expert) EXPERT_MODE=true; shift ;;
         -h|--help) usage; exit 0 ;;
