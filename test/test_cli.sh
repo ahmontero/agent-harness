@@ -3026,7 +3026,7 @@ git -C "${RANGE_REPO}" add -A
 git -C "${RANGE_REPO}" commit -q -m "init"
 git -C "${RANGE_REPO}" branch -M main
 git -C "${RANGE_REPO}" checkout -q -b feat/AH-13-leak
-printf 'api_key = "ABCDEFGHIJKLMNOP0123"\n' > "${RANGE_REPO}/leak.py"
+printf '%s = "%s"\n' "api_key" "ABCDEFGHIJKLMNOP0123" > "${RANGE_REPO}/leak.py"
 git -C "${RANGE_REPO}" add -A
 git -C "${RANGE_REPO}" commit -q -m "add leak"
 
@@ -3065,7 +3065,7 @@ echo "  [PASS] scan --branch reads the range, and --base names it explicitly."
 printf 'ok = 1\n' > "${RANGE_REPO}/edited.py"
 git -C "${RANGE_REPO}" add -A
 git -C "${RANGE_REPO}" commit -q -m "add a clean tracked file"
-printf 'auth_token = "ZYXWVUTSRQPONMLK9876"\n' > "${RANGE_REPO}/edited.py"
+printf '%s = "%s"\n' "auth_token" "ZYXWVUTSRQPONMLK9876" > "${RANGE_REPO}/edited.py"
 printf 'secret_key = "MLKJIHGFEDCBA9876543"\n' > "${RANGE_REPO}/staged.py"
 git -C "${RANGE_REPO}" add staged.py
 printf 'bearer = "QQQQWWWWEEEERRRRTTTT"\n' > "${RANGE_REPO}/untracked.py"
@@ -3152,7 +3152,7 @@ mkdir -p "${REFUSAL_REPO}"
 git -C "${REFUSAL_REPO}" init -q
 git -C "${REFUSAL_REPO}" config user.email "tests@agent-harness.local"
 git -C "${REFUSAL_REPO}" config user.name "Agent Harness Tests"
-printf 'api_key = "ABCDEFGHIJKLMNOP0123"\n' > "${REFUSAL_REPO}/leak.py"
+printf '%s = "%s"\n' "api_key" "ABCDEFGHIJKLMNOP0123" > "${REFUSAL_REPO}/leak.py"
 git -C "${REFUSAL_REPO}" add -A
 git -C "${REFUSAL_REPO}" commit -q -m "init"
 
@@ -4124,6 +4124,145 @@ if [ "${BRANCH_CHECK_STATUS}" -eq 0 ]; then
     exit 1
 fi
 echo "  [PASS] branch check refuses a detached HEAD instead of inventing a branch."
+
+echo ""
+echo "=== 43. Testing Security Baseline ==="
+# The default ruleset found one of five textbook secrets: only the lowercase api_key
+# assignment. API_KEY in capitals was missed because grep -E is case-sensitive and the
+# validator forbids the PCRE (?i); password was missed because the rule never named it; a
+# GitHub token, a credential inside a DSN and an inline PEM block had no rule at all.
+#
+# Every secret below is assembled from parts, so this suite carries no secret of its own --
+# the technique AH-20 used for the debt marker. Suppressing them per line would have hidden
+# a real string; assembling them means there is nothing to hide.
+BASELINE_REPO="${TMP_TEST_DIR}/security-baseline"
+mkdir -p "${BASELINE_REPO}"
+git -C "${BASELINE_REPO}" init -q
+git -C "${BASELINE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${BASELINE_REPO}" config user.name "Agent Harness Tests"
+
+{
+    printf '%s = "%s%s"\n' "API_KEY" "AKIAIOSFODNN7" "EXAMPLE12"
+    printf '%s = "%s"\n' "password" "hunter2-hunter2-hunter2"
+    printf '%s = "%s%s"\n' "GITHUB_TOKEN" "ghp_" "0123456789abcdefghijklmnopqrstuvwxyzAB"
+    printf '%s = "%s%s%s"\n' "DATABASE_URL" "postgres://admin:" "S3cretPassw0rd" "@db.internal:5432/app"
+    printf -- '-----%s RSA PRIVATE KEY-----\n' "BEGIN"
+    printf '%s\n' "MIIEowIBAAKCAQEAx0123456789abcdefghijklmnopqrstuvwxyz"
+    printf -- '-----%s RSA PRIVATE KEY-----\n' "END"
+} > "${BASELINE_REPO}/leak.py"
+
+# What a correctly configured project looks like. None of these is a secret, and a gate that
+# reports them is answered with --no-verify, which retires the gate rather than one line.
+{
+    printf '%s = "%s"\n' "password" '${DB_PASSWORD}'
+    printf '%s = "%s"\n' "api_key" '{{ vault_token }}'
+    printf '%s = "%s"\n' "token" '<your-token-here>'
+    printf '%s = "%s"\n' "secret" '%s'
+    printf '%s = %s\n' "password" 'os.environ["DB_PASSWORD"]'
+} > "${BASELINE_REPO}/config.py"
+
+git -C "${BASELINE_REPO}" add -A
+git -C "${BASELINE_REPO}" commit -q -m "fixtures"
+
+BASELINE_STATUS=0
+BASELINE_OUTPUT="$( (cd "${BASELINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || BASELINE_STATUS=$?
+
+if [ "${BASELINE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the baseline scan passed a file carrying five secrets: ${BASELINE_OUTPUT}"
+    exit 1
+fi
+for baseline_rule in SEC-010 SEC-011 SEC-012 SEC-013; do
+    if ! printf '%s' "${BASELINE_OUTPUT}" | grep -q "${baseline_rule}"; then
+        echo "  [FAIL] the baseline did not report ${baseline_rule}: ${BASELINE_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] the security baseline reports a credential, a provider token, a DSN and a PEM block."
+
+if printf '%s' "${BASELINE_OUTPUT}" | grep -q "config.py"; then
+    echo "  [FAIL] the baseline fired on an interpolated or placeholder value: ${BASELINE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] the baseline does not fire on interpolated values or placeholders."
+
+# The baseline is applied on top of whatever rule file was resolved, so the scan has to name
+# both. A scan is a claim about the rules it read as much as about the files.
+if ! printf '%s' "${BASELINE_OUTPUT}" | grep -qi "baseline"; then
+    echo "  [FAIL] the scan did not say it applied a security baseline: ${BASELINE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] the scan names the security baseline it applied."
+
+# Every rule shipped before this one carried fileExtensions, so no rule had ever been
+# applied to a binary. Baseline rules cannot carry them -- secrets live in .yaml, .tf and
+# .env as readily as in .py -- and with the restriction gone a binary that matches made grep
+# print "Binary file <path> matches" with no line number. That string reached
+# line_is_suppressed as a line number and produced raw sed and test errors mid-scan, a
+# finding with no line, and a finding harness-ignore could not suppress: there is no line to
+# annotate, so the only remaining escape was --no-verify, which retires the whole gate.
+printf '\000\001\002%s = "%s"\000\377' "password" "hunter2-hunter2-hunter2" > "${BASELINE_REPO}/blob.bin"
+git -C "${BASELINE_REPO}" add -A
+git -C "${BASELINE_REPO}" commit -q -m "binary"
+BINARY_OUTPUT="$( (cd "${BASELINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || true
+if printf '%s' "${BINARY_OUTPUT}" | grep -q "blob.bin"; then
+    echo "  [FAIL] the scanner raised a finding in a binary file, which no line can suppress: ${BINARY_OUTPUT}"
+    exit 1
+fi
+for shell_error in "invalid command code" "integer expression expected" "se esperaba un entero"; do
+    if printf '%s' "${BINARY_OUTPUT}" | grep -qF "${shell_error}"; then
+        echo "  [FAIL] the scanner leaked a shell error while reading a binary: ${BINARY_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] the scanner skips binary files instead of reporting an unsuppressable finding."
+
+# A project disagrees with one baseline rule by redefining its id. That is the escape hatch
+# that keeps the baseline from being all-or-nothing, and the reason the merge is by id.
+cat > "${BASELINE_REPO}/override.json" <<'BASELINE_OVERRIDE_EOF'
+[
+  {
+    "id": "SEC-010",
+    "name": "Local credential rule",
+    "level": "error",
+    "pattern": "zzz-this-never-matches-zzz",
+    "message": "local"
+  }
+]
+BASELINE_OVERRIDE_EOF
+OVERRIDE_OUTPUT="$( (cd "${BASELINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all --rules override.json 2>&1) )" || true
+if printf '%s' "${OVERRIDE_OUTPUT}" | grep -q "SEC-010"; then
+    echo "  [FAIL] a project rule with a baseline id did not replace it: ${OVERRIDE_OUTPUT}"
+    exit 1
+fi
+for still_enforced in SEC-011 SEC-012 SEC-013; do
+    if ! printf '%s' "${OVERRIDE_OUTPUT}" | grep -q "${still_enforced}"; then
+        echo "  [FAIL] overriding one baseline rule dropped ${still_enforced}: ${OVERRIDE_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] a project rule replaces the baseline rule of the same id and no other."
+
+# Disabling the baseline is a decision a project records, in the idiom qa.lintCommand
+# already uses for declaring something deliberately absent.
+cat > "${BASELINE_REPO}/harness.config.json" <<'BASELINE_OFF_EOF'
+{
+  "project": { "name": "baseline-off", "defaultProfile": "b" },
+  "profiles": { "b": { "rules": { "securityBaseline": false } } }
+}
+BASELINE_OFF_EOF
+git -C "${BASELINE_REPO}" add -A
+git -C "${BASELINE_REPO}" commit -q -m "baseline off"
+OFF_STATUS=0
+OFF_OUTPUT="$( (cd "${BASELINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || OFF_STATUS=$?
+if [ "${OFF_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] the baseline still applied after being switched off: ${OFF_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${OFF_OUTPUT}" | grep -q "securityBaseline"; then
+    echo "  [FAIL] the scan did not say the baseline was disabled: ${OFF_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] the baseline can be switched off, and a scan without it says so."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"

@@ -204,6 +204,10 @@
               "scanner": {
                 "type": "string",
                 "description": "Path to landmines.json static AST/regex rules"
+              },
+              "securityBaseline": {
+                "type": "boolean",
+                "description": "Apply the built-in security baseline on top of the configured rules (default true). Set false to record that this project deliberately scans without it."
               }
             }
           }
