@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.15.0] - 2026-09-12
+
+`harness context`, `harness debt` and `harness spec status` answered in JSON. The two
+commands an agent most needs to act on did not.
+
+### Added
+
+- `harness scan --json` emits one document on stdout carrying every finding as `rule`,
+  `name`, `level`, `file`, `line`, `text` and `message`, plus the mode, the rule source and
+  the error and warning counts. A path-pattern rule matches a name rather than a line and
+  reports `line: null` rather than inventing one.
+- `harness qa all --json` emits one document naming every gate and its status. The four
+  statuses are the four the aggregate already distinguished by exit code — `passed`,
+  `failed`, `unrunnable` and `declared-absent` — so a gate that could not run stays
+  distinguishable from one that passed in the machine form as much as in the human one.
+- Exit statuses are unchanged in both. `--json` changes the shape of the answer, never the
+  verdict, and the existing scanner and QA groups are what hold that.
+
+### Changed
+
+- In JSON mode both commands move stdout aside once, at the top, and write the document to
+  the descriptor they saved. The scanner emits from 44 places and `log_info` and
+  `log_success` write to stdout, so guarding each call site would eventually miss one — and
+  a JSON mode correct in 43 places and prose in the 44th is worse than none. It also carries
+  the QA gates with it, whose output belongs to `pytest` or `npm` and is not this project's
+  to suppress; it is moved to stderr, not silenced.
+- `harness qa all` refuses an option it does not understand. It ignored every argument after
+  `all`, so a mistyped flag ran the suite and answered as though it had applied — the same
+  shape `harness scan` and `harness context` closed for themselves.
+
 ## [2.14.0] - 2026-09-12
 
 `harness spec archive` has existed, worked and been tested since specs did. Nothing an agent

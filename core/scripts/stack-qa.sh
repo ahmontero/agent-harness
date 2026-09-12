@@ -137,23 +137,69 @@ case "${ACTION}" in
         "${SCRIPT_DIR}/stack-scan.sh" "$@"
         ;;
     all)
+        # The aggregate takes options of its own. It used to ignore every argument after
+        # "all", so a mistyped flag ran the suite and answered as though it had applied.
+        JSON_OUTPUT=false
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --json) JSON_OUTPUT=true; shift ;;
+                *) log_error "Unknown qa all option: $1"; echo "Usage: harness qa all [--json]"; exit 1 ;;
+            esac
+        done
+
+        # In JSON mode stdout carries the document and nothing else. The gates run the
+        # project's own commands, and that output belongs to pytest or npm and is not this
+        # command's to suppress -- so the stream moves aside once here and takes the gates
+        # with it, rather than each gate being asked to redirect itself.
+        if [ "${JSON_OUTPUT}" = true ]; then
+            exec 3>&1 1>&2
+        fi
+
         log_info "Running full QA suite (Scan -> Lint -> Types -> Tests)..."
+        JSON_GATES=()
         FAILED_GATES=()
         UNRUNNABLE_GATES=()
         DECLARED_GATES=()
 
+        # The command a gate resolved to, for the machine form. The four names are fixed, so
+        # this is a lookup rather than another path through the resolution logic.
+        gate_command() {
+            case "$1" in
+                scan)  printf 'harness scan --branch' ;;
+                lint)  get_profile_value "qa.lintCommand" "" ;;
+                types) get_profile_value "qa.typeCheckCommand" "" ;;
+                tests) resolve_test_command ;;
+            esac
+        }
+
         record_gate() {
             local gate_name="$1"
             local status="$2"
+            local json_status
             case "${status}" in
-                0) log_success "QA gate passed: ${gate_name}" ;;
-                "${GATE_UNRUNNABLE}") UNRUNNABLE_GATES+=("${gate_name}") ;;
-                "${GATE_DECLARED_ABSENT}") DECLARED_GATES+=("${gate_name}") ;;
+                0) log_success "QA gate passed: ${gate_name}"; json_status="passed" ;;
+                "${GATE_UNRUNNABLE}") UNRUNNABLE_GATES+=("${gate_name}"); json_status="unrunnable" ;;
+                "${GATE_DECLARED_ABSENT}") DECLARED_GATES+=("${gate_name}"); json_status="declared-absent" ;;
                 *)
                     log_error "QA gate failed: ${gate_name}"
                     FAILED_GATES+=("${gate_name}")
+                    json_status="failed"
                     ;;
             esac
+            if [ "${JSON_OUTPUT}" = true ]; then
+                JSON_GATES+=("$(jq -nc --arg name "${gate_name}" --arg status "${json_status}" \
+                    --arg command "$(gate_command "${gate_name}")" \
+                    '{name: $name, status: $status, command: $command}')")
+            fi
+        }
+
+        # One emission, whatever the verdict, so the document and the exit status cannot
+        # disagree about what happened.
+        emit_qa_json() {
+            [ "${JSON_OUTPUT}" = true ] || return 0
+            local gates="[]"
+            [ ${#JSON_GATES[@]} -eq 0 ] || gates="$(printf '%s\n' "${JSON_GATES[@]}" | jq -s '.')"
+            jq -n --arg status "$1" --argjson gates "${gates}" '{status: $status, gates: $gates}' >&3
         }
 
         run_gate() {
@@ -183,13 +229,16 @@ case "${ACTION}" in
         fi
         if [ ${#UNRUNNABLE_GATES[@]} -gt 0 ] || [ ${#FAILED_GATES[@]} -gt 0 ]; then
             log_error "QA did not pass. A gate that could not run is not a gate that passed."
+            emit_qa_json "failed"
             exit 1
         fi
         log_success "All required QA gates passed."
+        emit_qa_json "passed"
         ;;
     *)
         log_error "Unknown QA action: ${ACTION}"
         echo "Usage: harness qa <test|tdd|lint|types|scan|all> [args...]"
+        echo "       harness qa all [--json]"
         exit 1
         ;;
 esac

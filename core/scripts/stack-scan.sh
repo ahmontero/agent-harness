@@ -37,6 +37,7 @@ Options:
   --branch        Scan everything this branch changes since its merge base with the trunk
   --base <ref>    With --branch, name the base revision instead of detecting the trunk
   --all           Scan all tracked source files
+  --json          Emit one JSON document on stdout; every human line goes to stderr
   --rules <file>  Path to custom landmines.json rules file
   --install-hook  Install scanner as git pre-commit hook in target repo
   --force         With --install-hook, replace a foreign hook after backing it up
@@ -45,6 +46,7 @@ USAGE_EOF
 }
 
 SCAN_MODE="staged"
+JSON_OUTPUT=false
 CUSTOM_RULES=""
 INSTALL_HOOK=false
 FORCE_HOOK=false
@@ -56,6 +58,7 @@ BASE_GIVEN=false
 # never quietly become a different, passing question.
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --json) JSON_OUTPUT=true; shift ;;
         --staged) SCAN_MODE="staged"; shift ;;
         --diff) SCAN_MODE="diff"; shift ;;
         --branch) SCAN_MODE="branch"; shift ;;
@@ -87,6 +90,37 @@ if [ "${FORCE_HOOK}" = true ] && [ "${INSTALL_HOOK}" != true ]; then
     log_error "--force replaces a foreign pre-commit hook and only applies with --install-hook."
     exit 1
 fi
+
+# In JSON mode stdout belongs to the document and nothing else. Moving the stream aside once
+# is what makes that true without guarding 44 emitting call sites or redefining the logging
+# functions: log_info and log_success write to stdout, and a JSON mode correct in 43 places
+# and prose in the 44th is worse than none. fd 3 is the real stdout, written only at the end.
+if [ "${JSON_OUTPUT}" = true ]; then
+    exec 3>&1 1>&2
+fi
+
+# Every exit below the swap goes through here, so the document is emitted exactly once and
+# the exit status is the one the human form would have returned. --json changes the shape of
+# the answer, never the verdict.
+JSON_FINDINGS=()
+scan_exit() {
+    local status="$1" code="$2"
+    if [ "${JSON_OUTPUT}" = true ]; then
+        local findings="[]"
+        [ ${#JSON_FINDINGS[@]} -eq 0 ] || findings="$(printf '%s\n' "${JSON_FINDINGS[@]}" | jq -s '.')"
+        jq -n \
+            --arg mode "${SCAN_MODE}" \
+            --arg status "${status}" \
+            --arg rules "${RULES_SOURCE_PATH:-}" \
+            --argjson baseline "$([ "${BASELINE_ENABLED:-true}" = "false" ] && echo false || echo true)" \
+            --argjson errors "${ERRORS_FOUND:-0}" \
+            --argjson warnings "${WARNINGS_FOUND:-0}" \
+            --argjson findings "${findings}" \
+            '{mode: $mode, status: $status, rules: {source: $rules, securityBaseline: $baseline},
+              errors: $errors, warnings: $warnings, findings: $findings}' >&3
+    fi
+    exit "${code}"
+}
 
 # The marker is what makes "our hook" a decidable question. Without it the installer
 # cannot tell an idempotent re-run from silently destroying a hook the project depends on,
@@ -142,7 +176,7 @@ fi
 if ! jq --version >/dev/null 2>&1; then
     log_error "The landmine scanner requires jq; no rule could be read."
     log_error "A scan that could not run is not a passing scan."
-    exit 1
+    scan_exit "unrunnable" 1
 fi
 
 # Rules that were asked for and cannot be read abort the scan. They used to be replaced by
@@ -171,7 +205,7 @@ if [ -n "${RULES_FILE}" ] && [ ! -f "${RULES_FILE}" ]; then
     log_error "The rule file named by ${RULES_SOURCE} does not exist: ${RULES_FILE}"
     log_error "A scan whose rules could not be read is not a passing scan."
     log_info "Restore the file, correct ${RULES_SOURCE}, or pass --rules <file> explicitly."
-    exit "${SCAN_UNRUNNABLE}"
+    scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
 fi
 
 if [ -z "${RULES_FILE}" ]; then
@@ -180,7 +214,7 @@ if [ -z "${RULES_FILE}" ]; then
     if [ ! -f "${RULES_FILE}" ]; then
         log_error "No rule file is configured and the built-in template is missing: ${RULES_FILE}"
         log_error "A scan whose rules could not be read is not a passing scan."
-        exit "${SCAN_UNRUNNABLE}"
+        scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
     fi
 fi
 
@@ -220,7 +254,7 @@ else
         log_error "The security baseline is missing or unreadable: ${BASELINE_FILE}"
         log_error "A scan whose baseline could not be read is not a passing scan."
         log_info "Disable it deliberately with profiles.${ACTIVE_PROFILE}.rules.securityBaseline: false."
-        exit "${SCAN_UNRUNNABLE}"
+        scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
     fi
 
     EFFECTIVE_RULES="$(mktemp "${TMPDIR:-/tmp}/harness-rules.XXXXXX")"
@@ -232,7 +266,7 @@ else
             | ($baseline | map(select(.id as $id | ($overridden | index($id)) == null))) + $project
         ' "${BASELINE_FILE}" "${RULES_FILE}" > "${EFFECTIVE_RULES}"; then
         log_error "The security baseline could not be combined with ${RULES_FILE}."
-        exit "${SCAN_UNRUNNABLE}"
+        scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
     fi
     # Both counts are read off the merged file, so they cannot disagree with the merge. The
     # baseline's contribution is the difference: a project that overrides SEC-010 sees "3 of
@@ -337,7 +371,7 @@ validate_rule_patterns() {
 
 # A rule that cannot be used is the same class as a rule file that cannot be read, so it
 # leaves through the same status and `qa all` aggregates both as "could not run".
-validate_rule_patterns || exit "${SCAN_UNRUNNABLE}"
+validate_rule_patterns || scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
 
 ERRORS_FOUND=0
 WARNINGS_FOUND=0
@@ -404,7 +438,7 @@ if [ ${#FILES_TO_SCAN[@]} -eq 0 ]; then
     # Named so the zero can be judged. "No files to scan" alone reads the same whether the
     # selection is genuinely empty or the mode was the wrong question to ask.
     log_success "No files to scan: the ${SCAN_MODE} selection is empty."
-    exit 0
+    scan_exit "passed" 0
 fi
 
 # --staged answers a question about the next commit, so it must read the index, not the
@@ -421,7 +455,7 @@ if [ "${SCAN_MODE}" = "staged" ]; then
         staged_blob="${STAGED_ROOT}/$(printf '%06d' "${staged_index}")"
         if ! git show ":${file}" > "${staged_blob}" 2>/dev/null; then
             log_error "Cannot read staged content for ${file}."
-            exit 1
+            scan_exit "unrunnable" 1
         fi
         SCAN_SOURCES+=("${staged_blob}")
         staged_index=$((staged_index + 1))
@@ -479,6 +513,24 @@ report_finding() {
     local file="$4"
     local detail="$5"
     local message="$6"
+    local kind="${7:-content}"
+
+    if [ "${JSON_OUTPUT}" = true ]; then
+        if [ "${kind}" = "path" ]; then
+            JSON_FINDINGS+=("$(jq -nc --arg rule "${rule_id}" --arg name "${rule_name}" --arg level "${level}" \
+                --arg file "${file}" --arg message "${message}" \
+                '{rule: $rule, name: $name, level: $level, file: $file, line: null, text: $file, message: $message}')")
+        else
+            local json_row
+            while IFS= read -r json_row; do
+                [ -n "${json_row}" ] || continue
+                JSON_FINDINGS+=("$(jq -nc --arg rule "${rule_id}" --arg name "${rule_name}" --arg level "${level}" \
+                    --arg file "${file}" --argjson line "${json_row%%:*}" --arg text "${json_row#*:}" \
+                    --arg message "${message}" \
+                    '{rule: $rule, name: $name, level: $level, file: $file, line: $line, text: $text, message: $message}')")
+            done <<< "${detail}"
+        fi
+    fi
 
     if [ "${level}" = "error" ]; then
         log_error "[${rule_id}] ${rule_name} in ${file}:"
@@ -544,7 +596,7 @@ for (( i=0; i<RULE_COUNT; i++ )); do
     if [ -n "${PATH_PATTERN}" ]; then
         while IFS= read -r matched_name; do
             [ -n "${matched_name}" ] || continue
-            report_finding "${LEVEL}" "${ID}" "${NAME}" "${matched_name}" "${matched_name}" "${MSG}"
+            report_finding "${LEVEL}" "${ID}" "${NAME}" "${matched_name}" "${matched_name}" "${MSG}" path
         done < <(printf '%s\n' "${RULE_FILES[@]}" | grep "${GREP_FLAGS[@]}" -- "${PATH_PATTERN}" 2>/dev/null || true)
         continue
     fi
@@ -592,8 +644,8 @@ done
 echo ""
 if [ ${ERRORS_FOUND} -eq 0 ]; then
     log_success "Landmine scan passed with 0 errors (${WARNINGS_FOUND} warnings)."
-    exit 0
+    scan_exit "passed" 0
 else
     log_error "Landmine scan failed with ${ERRORS_FOUND} error(s). Commit blocked."
-    exit 1
+    scan_exit "failed" 1
 fi

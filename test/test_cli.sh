@@ -4606,4 +4606,111 @@ fi
 echo "  [PASS] ship reports an active delta spec and publishes anyway."
 
 echo ""
+echo "=== 47. Testing Machine-Readable Gates ==="
+# context, debt and spec status answer in JSON. The scanner and the QA aggregate -- the two
+# an agent most needs to act on -- answered only in ANSI prose, so knowing which rule fired
+# on which line meant parsing log lines. The scanner emits from 44 places and log_info and
+# log_success write to stdout, so a JSON mode that does not move them produces a document no
+# consumer can parse: the defect harness context already closed.
+JSONGATE_REPO="${TMP_TEST_DIR}/machine-readable"
+mkdir -p "${JSONGATE_REPO}"
+git -C "${JSONGATE_REPO}" init -q
+git -C "${JSONGATE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${JSONGATE_REPO}" config user.name "Agent Harness Tests"
+cat > "${JSONGATE_REPO}/rules.json" <<'JSONGATE_RULES_EOF'
+[
+  { "id": "JG-CONTENT", "name": "Content", "level": "error", "pattern": "forbidden_call\\(", "message": "content" },
+  { "id": "JG-PATH", "name": "Path", "level": "error", "pathPattern": "[.]pem$", "message": "path" }
+]
+JSONGATE_RULES_EOF
+cat > "${JSONGATE_REPO}/harness.config.json" <<'JSONGATE_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "j" },
+  "profiles": { "j": { "rules": { "scanner": "./rules.json", "securityBaseline": false },
+                       "qa": { "testCommand": "echo running-the-tests", "lintCommand": false } } }
+}
+JSONGATE_CONFIG_EOF
+printf 'ok = 1\nforbidden_call()\n' > "${JSONGATE_REPO}/a.py"
+printf 'not a key\n' > "${JSONGATE_REPO}/k.pem"
+git -C "${JSONGATE_REPO}" add -A
+git -C "${JSONGATE_REPO}" commit -q -m "fixture"
+
+jsongate() {
+    JSONGATE_STATUS=0
+    JSONGATE_STDOUT="$( (cd "${JSONGATE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>"${TMP_TEST_DIR}/jsongate.err") )" || JSONGATE_STATUS=$?
+    JSONGATE_STDERR="$(cat "${TMP_TEST_DIR}/jsongate.err")"
+}
+
+# R1 and R2: one document on stdout, nothing else, and the findings in it.
+jsongate scan --all --json
+if ! printf '%s' "${JSONGATE_STDOUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] scan --json did not put a parseable document on stdout: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${JSONGATE_STDOUT}" | jq -r '[.findings[] | select(.rule == "JG-CONTENT")] | .[0].line')" != "2" ]; then
+    echo "  [FAIL] scan --json did not report the content finding at its line: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${JSONGATE_STDOUT}" | jq -r '[.findings[] | select(.rule == "JG-PATH")] | .[0].line')" != "null" ]; then
+    echo "  [FAIL] scan --json invented a line for a path-pattern finding: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+if [ "${JSONGATE_STATUS}" -ne 1 ]; then
+    echo "  [FAIL] scan --json changed the exit status of a failing scan (got ${JSONGATE_STATUS})"
+    exit 1
+fi
+echo "  [PASS] scan --json emits one document on stdout, with lines where lines exist."
+
+# R4: a scan that could not run is not a clean one, in the machine form as much as the human.
+jsongate scan --branch --base no/such/ref --json
+if [ "${JSONGATE_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] an unrunnable scan did not exit 2 in JSON mode (got ${JSONGATE_STATUS})"
+    exit 1
+fi
+if printf '%s' "${JSONGATE_STDOUT}" | jq -e '.status == "passed"' >/dev/null 2>&1; then
+    echo "  [FAIL] an unrunnable scan reported itself as passed: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+echo "  [PASS] a scan that could not run stays distinguishable from a clean one."
+
+# R3: the aggregate names every gate, and the gates' own output stays off stdout.
+jsongate qa all --json
+if ! printf '%s' "${JSONGATE_STDOUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] qa all --json did not put a parseable document on stdout: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+if ! printf '%s' "${JSONGATE_STDERR}" | grep -qF "running-the-tests"; then
+    echo "  [FAIL] the test runner's output was suppressed rather than moved to stderr"
+    exit 1
+fi
+if [ "$(printf '%s' "${JSONGATE_STDOUT}" | jq -r '[.gates[] | select(.name == "lint")] | .[0].status')" != "declared-absent" ]; then
+    echo "  [FAIL] qa all --json did not name a gate the configuration declares absent: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${JSONGATE_STDOUT}" | jq -r '[.gates[] | select(.name == "types")] | .[0].status')" != "unrunnable" ]; then
+    echo "  [FAIL] qa all --json did not distinguish a gate that could not run: ${JSONGATE_STDOUT}"
+    exit 1
+fi
+echo "  [PASS] qa all --json names every gate and keeps the runners' output off stdout."
+
+# R5: a mistyped option refuses. Degrading to prose is how an agent gets text it cannot parse.
+# A non-zero status is not enough: this fixture's QA fails anyway because its type gate
+# cannot run, so exit-status-alone would pass whether or not the option was ever noticed.
+# The refusal has to be about the option.
+for jsongate_typo in "scan --jsonn" "qa all --jsonn"; do
+    JSONGATE_TYPO_STATUS=0
+    # shellcheck disable=SC2086 # the typo is two words and must reach the CLI as two
+    JSONGATE_TYPO_OUTPUT="$( (cd "${JSONGATE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ${jsongate_typo} 2>&1) )" || JSONGATE_TYPO_STATUS=$?
+    if [ "${JSONGATE_TYPO_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] 'harness ${jsongate_typo}' was accepted instead of refused"
+        exit 1
+    fi
+    if ! printf '%s' "${JSONGATE_TYPO_OUTPUT}" | grep -qF -- "--jsonn"; then
+        echo "  [FAIL] 'harness ${jsongate_typo}' exited non-zero without naming the option it did not understand: ${JSONGATE_TYPO_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] a mistyped JSON option is refused rather than degraded to prose."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

@@ -85,10 +85,10 @@ ${BOLD}Core Commands:${RESET}
                 harness qa scan [--staged|--diff|--branch|--all]
                 harness qa lint
                 harness qa types
-                harness qa all
+                harness qa all [--json]
 
   ${GREEN}scan${RESET}          Run JSON-driven static Landmine & Security scanner
-                harness scan [--staged|--diff|--branch|--all] [--base <ref>]
+                harness scan [--staged|--diff|--branch|--all] [--base <ref>] [--json]
                 harness scan --install-hook [--force]
 
   ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
