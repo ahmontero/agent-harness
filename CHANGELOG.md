@@ -6,6 +6,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.10.2] - 2026-09-12
+
+### Fixed
+
+- `harness spec create` replaced an existing delta spec with an empty template and reported
+  `Created Delta Spec`. Both writes that render a new spec — the template through `sed` and
+  the no-template fallback heredoc — redirect with `>`, which truncates, and neither was
+  preceded by a test for the destination. Re-running the command for a key and slug that
+  already had a spec therefore destroyed whatever had been written into it, with a success
+  message and exit `0`. A delta spec is the record of what a change is for and the artefact
+  `/harness-implement` and `/harness-orchestrate` both gate on; losing one silently is the
+  most expensive thing this CLI could do to a working tree.
+- The command now refuses when the path is taken, names the spec it left untouched, and
+  exits non-zero. The guard sits above the branch so the template path and the fallback are
+  covered by the same test rather than by two. There is no `--force`: the file is one `rm`
+  away, and a flag that discards a spec is the behaviour this fixes, spelled differently.
+  `harness spec archive` has refused an occupied destination since it was written; create
+  now answers the same question the same way.
+
 ## [2.10.1] - 2026-09-11
 
 ### Fixed

@@ -167,6 +167,17 @@ case "${ACTION}" in
 
         mkdir -p "${SPECS_DIR}"
         SPEC_FILE="${SPECS_DIR}/delta-${ISSUE_KEY}-${SLUG}.md"
+
+        # Both writes below render into the file with '>', which truncates it. Re-running
+        # the command for a key and slug that already have a spec therefore replaced what
+        # someone had written with an empty template, and still reported it as created.
+        # The guard sits above the branch so it covers the template and the fallback alike.
+        if [ -e "${SPEC_FILE}" ] || [ -L "${SPEC_FILE}" ]; then
+            log_error "A delta spec already exists and was left untouched: ${SPEC_FILE}"
+            log_info "Edit it, or remove it first if you mean to start this spec over."
+            exit 1
+        fi
+
         TEMPLATE="$(get_harness_root)/core/templates/delta-spec-template.md"
 
         if [ -f "${TEMPLATE}" ]; then
