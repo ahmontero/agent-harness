@@ -507,26 +507,23 @@ for (( i=0; i<RULE_COUNT; i++ )); do
         [ -n "${exclude_glob}" ] && EXCLUDES+=("${exclude_glob}")
     done < <(jq -r ".[$i].excludePaths[]? // empty" "${RULES_FILE}")
 
+    GREP_FLAGS=(-E -I)
+    [ "${IGNORE_CASE}" = "true" ] && GREP_FLAGS+=(-i)
+
+    # The files this rule is scoped to, and the source each one is read from. Scoping is
+    # decided once here so the grep below is a single invocation rather than one per file:
+    # the scan used to spawn one grep per (rule, file) pair, which on a 500-file repository
+    # was 4000 processes and about 94% of its wall clock.
+    RULE_FILES=()
+    RULE_SOURCES=()
     for (( f=0; f<${#FILES_TO_SCAN[@]}; f++ )); do
         file="${FILES_TO_SCAN[f]}"
-        source_path="${SCAN_SOURCES[f]}"
 
         if [ ${#EXCLUDES[@]} -gt 0 ] && path_is_excluded "${file}" "${EXCLUDES[@]}"; then
             continue
         fi
 
-        GREP_FLAGS=(-E -I)
-        [ "${IGNORE_CASE}" = "true" ] && GREP_FLAGS+=(-i)
-
-        if [ -n "${PATH_PATTERN}" ]; then
-            if printf '%s' "${file}" | grep "${GREP_FLAGS[@]}" -q -- "${PATH_PATTERN}"; then
-                report_finding "${LEVEL}" "${ID}" "${NAME}" "${file}" "${file}" "${MSG}"
-            fi
-            continue
-        fi
-
-        MATCH_EXT=true
-        if [ -n "${EXTS}" ]; then
+        if [ -z "${PATH_PATTERN}" ] && [ -n "${EXTS}" ]; then
             MATCH_EXT=false
             for ext in ${EXTS}; do
                 if [[ "${file}" == *"${ext}" ]]; then
@@ -534,24 +531,61 @@ for (( i=0; i<RULE_COUNT; i++ )); do
                     break
                 fi
             done
+            [ "${MATCH_EXT}" = true ] || continue
         fi
-        [ "${MATCH_EXT}" = true ] || continue
 
-        RAW_MATCHES=$(grep "${GREP_FLAGS[@]}" -n -- "${PATTERN}" "${source_path}" 2>/dev/null || true)
-        [ -n "${RAW_MATCHES}" ] || continue
+        RULE_FILES+=("${file}")
+        RULE_SOURCES+=("${SCAN_SOURCES[f]}")
+    done
+    [ ${#RULE_FILES[@]} -gt 0 ] || continue
 
+    # A path rule matches names, so the names go through one grep instead of one each. grep
+    # preserves the order it was given, which is the order the findings are reported in.
+    if [ -n "${PATH_PATTERN}" ]; then
+        while IFS= read -r matched_name; do
+            [ -n "${matched_name}" ] || continue
+            report_finding "${LEVEL}" "${ID}" "${NAME}" "${matched_name}" "${matched_name}" "${MSG}"
+        done < <(printf '%s\n' "${RULE_FILES[@]}" | grep "${GREP_FLAGS[@]}" -- "${PATH_PATTERN}" 2>/dev/null || true)
+        continue
+    fi
+
+    # -H forces the filename prefix grep omits when it is given a single file, and xargs -0
+    # chunks the list: 5000 paths exceed ARG_MAX on macOS, and a scan that silently dropped
+    # the files past the limit would be worse than a slow one.
+    RULE_MATCHES="$(printf '%s\0' "${RULE_SOURCES[@]}" \
+        | xargs -0 grep "${GREP_FLAGS[@]}" -H -n -- "${PATTERN}" 2>/dev/null || true)"
+    [ -n "${RULE_MATCHES}" ] || continue
+
+    MATCH_LINES=()
+    while IFS= read -r match_row; do
+        [ -n "${match_row}" ] && MATCH_LINES+=("${match_row}")
+    done <<< "${RULE_MATCHES}"
+
+    # grep emits the files in the order it was handed them, so its output is walked
+    # alongside the rule's own list in one pass. The source is matched as a literal prefix
+    # rather than by splitting on the first colon, which is what keeps a path containing a
+    # colon parsing correctly -- and in --staged mode the source is an index blob, so the
+    # repository path is what gets reported either way.
+    MATCH_INDEX=0
+    MATCH_TOTAL=${#MATCH_LINES[@]}
+    for (( r=0; r<${#RULE_SOURCES[@]} && MATCH_INDEX<MATCH_TOTAL; r++ )); do
+        source_path="${RULE_SOURCES[r]}"
         KEPT_MATCHES=""
-        while IFS= read -r raw_match; do
-            [ -n "${raw_match}" ] || continue
+        while [ "${MATCH_INDEX}" -lt "${MATCH_TOTAL}" ]; do
+            match_row="${MATCH_LINES[MATCH_INDEX]}"
+            case "${match_row}" in
+                "${source_path}:"*) ;;
+                *) break ;;
+            esac
+            raw_match="${match_row#"${source_path}:"}"
             match_line="${raw_match%%:*}"
-            if line_is_suppressed "${source_path}" "${match_line}" "${ID}"; then
-                continue
+            if ! line_is_suppressed "${source_path}" "${match_line}" "${ID}"; then
+                KEPT_MATCHES="${KEPT_MATCHES}${raw_match}"$'\n'
             fi
-            KEPT_MATCHES="${KEPT_MATCHES}${raw_match}"$'\n'
-        done <<< "${RAW_MATCHES}"
-
+            MATCH_INDEX=$((MATCH_INDEX + 1))
+        done
         [ -n "${KEPT_MATCHES%$'\n'}" ] || continue
-        report_finding "${LEVEL}" "${ID}" "${NAME}" "${file}" "${KEPT_MATCHES%$'\n'}" "${MSG}"
+        report_finding "${LEVEL}" "${ID}" "${NAME}" "${RULE_FILES[r]}" "${KEPT_MATCHES%$'\n'}" "${MSG}"
     done
 done
 

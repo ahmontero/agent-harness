@@ -1,6 +1,6 @@
 {
   "name": "@ahmontero/agent-harness",
-  "version": "2.12.0",
+  "version": "2.12.1",
   "description": "The Universal Engineering Harness & Quality Floor for AI Coding Agents",
   "main": "bin/harness",
   "bin": {

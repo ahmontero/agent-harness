@@ -4265,4 +4265,201 @@ fi
 echo "  [PASS] the baseline can be switched off, and a scan without it says so."
 
 echo ""
+echo "=== 44. Testing Scanner Batching ==="
+# The scanner ran one grep per (rule, file) pair. On a 500-file repository that was 6.6s
+# with four rules and 13.2s with eight -- linear in the product, and about 3.3ms of process
+# startup each. AH-28 doubled the rule count and so doubled the cost.
+#
+# The invariant is about growth, not about a clock: a wall-clock bound flakes on a shared
+# runner and does not measure the property anyway. A grep that counts its own invocations,
+# placed earlier on PATH, measures exactly it.
+BATCH_ROOT="${TMP_TEST_DIR}/scanner-batching"
+mkdir -p "${BATCH_ROOT}/shim"
+BATCH_REAL_GREP="$(command -v grep)"
+cat > "${BATCH_ROOT}/shim/grep" <<BATCH_SHIM_EOF
+#!/usr/bin/env bash
+printf 'x\n' >> "\${HARNESS_GREP_TALLY}"
+exec "${BATCH_REAL_GREP}" "\$@"
+BATCH_SHIM_EOF
+chmod 755 "${BATCH_ROOT}/shim/grep"
+
+cat > "${BATCH_ROOT}/rules.json" <<'BATCH_RULES_EOF'
+[
+  {
+    "id": "BATCH-1",
+    "name": "Batching probe",
+    "level": "error",
+    "pattern": "never-matches-anything-here",
+    "message": "probe"
+  },
+  {
+    "id": "BATCH-2",
+    "name": "Second probe",
+    "level": "error",
+    "pattern": "also-never-matches",
+    "message": "probe"
+  }
+]
+BATCH_RULES_EOF
+
+# One repository per size, identical but for the file count.
+batch_build_repo() {
+    local repo="$1" count="$2" index=1
+    mkdir -p "${repo}"
+    git -C "${repo}" init -q
+    git -C "${repo}" config user.email "tests@agent-harness.local"
+    git -C "${repo}" config user.name "Agent Harness Tests"
+    cp "${BATCH_ROOT}/rules.json" "${repo}/rules.json"
+    cat > "${repo}/harness.config.json" <<BATCH_CONFIG_EOF
+{
+  "project": { "defaultProfile": "b" },
+  "profiles": { "b": { "rules": { "scanner": "./rules.json", "securityBaseline": false } } }
+}
+BATCH_CONFIG_EOF
+    while [ "${index}" -le "${count}" ]; do
+        printf 'value = %s\n' "${index}" > "${repo}/module_${index}.py"
+        index=$((index + 1))
+    done
+    git -C "${repo}" add -A
+    git -C "${repo}" commit -q -m "fixture"
+}
+
+batch_count_greps() {
+    local repo="$1" tally="$2"
+    : > "${tally}"
+    (cd "${repo}" && env -u STACK_PROFILE PATH="${BATCH_ROOT}/shim:${PATH}" \
+        HARNESS_GREP_TALLY="${tally}" "${HARNESS_ROOT}/bin/harness" scan --all >/dev/null 2>&1) || true
+    grep -c . "${tally}" 2>/dev/null || echo 0
+}
+
+batch_build_repo "${BATCH_ROOT}/small" 20
+batch_build_repo "${BATCH_ROOT}/large" 200
+BATCH_SMALL="$(batch_count_greps "${BATCH_ROOT}/small" "${BATCH_ROOT}/small.tally")"
+BATCH_LARGE="$(batch_count_greps "${BATCH_ROOT}/large" "${BATCH_ROOT}/large.tally")"
+
+if [ "${BATCH_SMALL}" -lt 1 ]; then
+    echo "  [FAIL] the grep shim counted nothing, so this assertion measures nothing"
+    exit 1
+fi
+# Ten times the files must not mean ten times the processes. Two times is generous headroom
+# for the fixed greps the scan makes regardless, and for xargs chunking.
+if [ "${BATCH_LARGE}" -gt $(( BATCH_SMALL * 2 )) ]; then
+    echo "  [FAIL] grep invocations grew with the file count: ${BATCH_SMALL} for 20 files, ${BATCH_LARGE} for 200"
+    exit 1
+fi
+echo "  [PASS] grep invocations track the rule count, not the rule count times the file count."
+
+# R2: this is an optimization, and it must be invisible in the output. The tuples below fix
+# which rule fired, on which repository-relative path, at which line, and in what order.
+BATCH_FIDELITY="${BATCH_ROOT}/fidelity"
+mkdir -p "${BATCH_FIDELITY}/vendor"
+git -C "${BATCH_FIDELITY}" init -q
+git -C "${BATCH_FIDELITY}" config user.email "tests@agent-harness.local"
+git -C "${BATCH_FIDELITY}" config user.name "Agent Harness Tests"
+cat > "${BATCH_FIDELITY}/rules.json" <<'BATCH_FIDELITY_RULES_EOF'
+[
+  {
+    "id": "FID-CONTENT",
+    "name": "Content rule",
+    "level": "error",
+    "pattern": "forbidden_call\\(",
+    "fileExtensions": [".py", ".ts"],
+    "excludePaths": ["vendor/*"],
+    "message": "content"
+  },
+  {
+    "id": "FID-PATH",
+    "name": "Path rule",
+    "level": "error",
+    "pathPattern": "[.]pem$",
+    "message": "path"
+  }
+]
+BATCH_FIDELITY_RULES_EOF
+cat > "${BATCH_FIDELITY}/harness.config.json" <<'BATCH_FIDELITY_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "f" },
+  "profiles": { "f": { "rules": { "scanner": "./rules.json", "securityBaseline": false } } }
+}
+BATCH_FIDELITY_CONFIG_EOF
+printf 'ok = 1\nforbidden_call()\nok = 2\nok = 3\nforbidden_call()  # harness-ignore: FID-CONTENT\n' > "${BATCH_FIDELITY}/a.py"
+printf 'forbidden_call()\n' > "${BATCH_FIDELITY}/b.ts"
+printf 'forbidden_call()\n' > "${BATCH_FIDELITY}/vendor/c.py"
+printf 'forbidden_call()\n' > "${BATCH_FIDELITY}/d.txt"
+printf 'not a real key\n' > "${BATCH_FIDELITY}/secrets.pem"
+git -C "${BATCH_FIDELITY}" add -A
+git -C "${BATCH_FIDELITY}" commit -q -m "fixture"
+
+FIDELITY_OUTPUT="$( (cd "${BATCH_FIDELITY}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || true
+# "<RULE> <file>" for each reported file, then "<line>" for each match, in the order printed.
+FIDELITY_SHAPE="$(printf '%s' "${FIDELITY_OUTPUT}" | sed 's/\x1b\[[0-9;]*m//g' \
+    | sed -n -e 's/^.*\[\(FID-[A-Z]*\)\] .* in \([^:]*\):$/\1 \2/p' -e 's/^  \([0-9]*\):.*$/\1/p')"
+FIDELITY_EXPECTED="FID-CONTENT a.py
+2
+FID-CONTENT b.ts
+1
+FID-PATH secrets.pem"
+if [ "${FIDELITY_SHAPE}" != "${FIDELITY_EXPECTED}" ]; then
+    echo "  [FAIL] the findings changed shape."
+    echo "expected:"; printf '%s\n' "${FIDELITY_EXPECTED}" | sed 's/^/    /'
+    echo "got:"; printf '%s\n' "${FIDELITY_SHAPE}" | sed 's/^/    /'
+    exit 1
+fi
+echo "  [PASS] rules, paths, line numbers, grouping and order are unchanged."
+
+# R4: one grep per rule means handing grep the whole file list, and a list can outgrow the
+# command line. BSD xargs sizes its chunks from the ARG_MAX the platform reports and GNU
+# xargs uses a buffer of about 128KB by default, so the fixture has to exceed the larger of
+# the two to force chunking on both runners. Long nested paths get there with three thousand
+# files where short ones would need tens of thousands, which is the difference between a
+# test that runs in CI and one that does not.
+#
+# Without chunking this does not merely miss files: grep is never invoked at all, the scan
+# reports nothing, and a repository carrying two violations passes. That is the failure this
+# asserts against, so the findings are checked at both ends of the list.
+ARGMAX_REPO="${TMP_TEST_DIR}/scanner-argmax"
+ARGMAX_SEGMENT="$(printf 'd%.0s' $(seq 1 200))"
+ARGMAX_DIR="${ARGMAX_REPO}/${ARGMAX_SEGMENT}/${ARGMAX_SEGMENT}"
+mkdir -p "${ARGMAX_DIR}"
+git -C "${ARGMAX_REPO}" init -q
+git -C "${ARGMAX_REPO}" config user.email "tests@agent-harness.local"
+git -C "${ARGMAX_REPO}" config user.name "Agent Harness Tests"
+cp "${BATCH_FIDELITY}/rules.json" "${ARGMAX_REPO}/rules.json"
+cat > "${ARGMAX_REPO}/harness.config.json" <<'ARGMAX_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "a" },
+  "profiles": { "a": { "rules": { "scanner": "./rules.json", "securityBaseline": false } } }
+}
+ARGMAX_CONFIG_EOF
+# One xargs rather than three thousand redirections: the fixture is the slow part of this
+# group, and a loop here would cost more than the scan it is testing.
+seq 1 3000 | sed "s|^|${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_|; s|\$|.py|" | tr '\n' '\0' | xargs -0 touch
+printf 'forbidden_call()\n' > "${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_1.py"
+printf 'forbidden_call()\n' > "${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_3000.py"
+git -C "${ARGMAX_REPO}" add -A
+git -C "${ARGMAX_REPO}" commit -q -m "fixture"
+
+# The fixture has to stay over the limit, or this group would keep passing while testing
+# nothing. Asserting the size is what keeps it honest.
+ARGMAX_LIST_BYTES="$(git -C "${ARGMAX_REPO}" ls-files | wc -c | tr -d ' ')"
+ARGMAX_LIMIT="$(getconf ARG_MAX 2>/dev/null || echo 131072)"
+if [ "${ARGMAX_LIST_BYTES}" -le "${ARGMAX_LIMIT}" ]; then
+    echo "  [FAIL] the fixture's file list is ${ARGMAX_LIST_BYTES} bytes, within the ${ARGMAX_LIMIT}-byte limit, so it does not exercise chunking"
+    exit 1
+fi
+
+ARGMAX_OUTPUT="$( (cd "${ARGMAX_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || true
+for argmax_end in "_1.py" "_3000.py"; do
+    if ! printf '%s' "${ARGMAX_OUTPUT}" | grep -q -- "${argmax_end}:"; then
+        echo "  [FAIL] a file list over the command-line limit lost the finding in ${argmax_end}: ${ARGMAX_OUTPUT}"
+        exit 1
+    fi
+done
+if ! printf '%s' "${ARGMAX_OUTPUT}" | grep -q "failed with 2 error"; then
+    echo "  [FAIL] the chunked scan did not report exactly the two findings the fixture carries: ${ARGMAX_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] a file list larger than the command-line limit is chunked without losing a finding."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
