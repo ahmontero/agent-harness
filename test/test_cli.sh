@@ -3620,6 +3620,42 @@ if [ "${SCHEMA_STATUS}" -ne 0 ]; then
 fi
 echo "  [PASS] config validate accepts the documented way to declare a gate absent."
 
+# `harness init` passed $(pwd), so running it from a subdirectory installed a whole second
+# harness inside that subdirectory -- its own AGENTS.md, CLAUDE.md and GEMINI.md symlinks,
+# rules/, stack.config.json, a second .gitignore and four skill surfaces -- and said nothing
+# about where any of it went. Initializing a repository means initializing its root.
+INIT_SUBDIR_REPO="${TMP_TEST_DIR}/init-subdir"
+mkdir -p "${INIT_SUBDIR_REPO}/src/deep"
+git -C "${INIT_SUBDIR_REPO}" init -q
+git -C "${INIT_SUBDIR_REPO}" config user.email "tests@agent-harness.local"
+git -C "${INIT_SUBDIR_REPO}" config user.name "Agent Harness Tests"
+printf 'print("x")\n' > "${INIT_SUBDIR_REPO}/src/deep/app.py"
+git -C "${INIT_SUBDIR_REPO}" add -A
+git -C "${INIT_SUBDIR_REPO}" commit -q -m init
+
+INIT_SUBDIR_OUTPUT="$( (cd "${INIT_SUBDIR_REPO}/src/deep" \
+    && env -u STACK_PROFILE HOME="${INIT_ROOT}/home" HARNESS_STATE_DIR="${INIT_ROOT}/state" \
+       "${HARNESS_ROOT}/bin/harness" init 2>&1) )"
+
+for stray in AGENTS.md CLAUDE.md GEMINI.md stack.config.json .gitignore rules .claude .gemini .codex .agents .cursor; do
+    if [ -e "${INIT_SUBDIR_REPO}/src/deep/${stray}" ] || [ -L "${INIT_SUBDIR_REPO}/src/deep/${stray}" ]; then
+        echo "  [FAIL] init from a subdirectory wrote ${stray} into it: ${INIT_SUBDIR_OUTPUT}"
+        exit 1
+    fi
+done
+for expected in AGENTS.md stack.config.json rules; do
+    if [ ! -e "${INIT_SUBDIR_REPO}/${expected}" ]; then
+        echo "  [FAIL] init from a subdirectory did not initialize the repository root: ${INIT_SUBDIR_OUTPUT}"
+        exit 1
+    fi
+done
+# Writing somewhere other than the working directory has to be said out loud.
+if ! printf '%s' "${INIT_SUBDIR_OUTPUT}" | grep -qF "${INIT_SUBDIR_REPO}"; then
+    echo "  [FAIL] init did not name the root it resolved to: ${INIT_SUBDIR_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] init from a subdirectory initializes the repository root and names it."
+
 echo ""
 echo "=== 39. Testing Ship Guards ==="
 # `harness ship` published whatever it was pointed at. On the trunk it pushed the trunk and
