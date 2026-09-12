@@ -2124,6 +2124,51 @@ if ! printf '%s' "${DOCTOR_AUTH}" | grep -q "Provider Authentication"; then
 fi
 echo "  [PASS] doctor --check-auth reports provider authentication state."
 
+# context was the only command reading repository facts that never asserted a repository
+# exists. In a directory that is not one it answered branch "HEAD", dirty false, zero active
+# specs and zero debt markers, and exited 0: five helpers each degrading reasonably on their
+# own, composed into one confident document about a repository that is not there. It is also
+# the first command every workflow runs, and the one whose numbers an agent cannot check.
+CONTEXT_NOREPO="${TMP_TEST_DIR}/context-norepo"
+mkdir -p "${CONTEXT_NOREPO}"
+context_norepo() {
+    CONTEXT_STATUS=0
+    CONTEXT_OUTPUT="$( (cd "${CONTEXT_NOREPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context "$@" 2>&1) )" || CONTEXT_STATUS=$?
+}
+
+for context_form in "text" "json"; do
+    if [ "${context_form}" = "json" ]; then
+        context_norepo --json
+    else
+        context_norepo
+    fi
+    if [ "${CONTEXT_STATUS}" -eq 0 ]; then
+        echo "  [FAIL] context (${context_form}) exited 0 outside a repository: ${CONTEXT_OUTPUT}"
+        exit 1
+    fi
+    if ! printf '%s' "${CONTEXT_OUTPUT}" | grep -q "not a git repository"; then
+        echo "  [FAIL] context (${context_form}) did not say why it refused: ${CONTEXT_OUTPUT}"
+        exit 1
+    fi
+    # Refusing is only half of it: none of the facts it used to invent may survive.
+    for invented in '"branch"' '"dirty"' '"activeDeltaSpecs"' "Current Branch" "Working Tree"; do
+        if printf '%s' "${CONTEXT_OUTPUT}" | grep -qF "${invented}"; then
+            echo "  [FAIL] context (${context_form}) still reported ${invented} outside a repository: ${CONTEXT_OUTPUT}"
+            exit 1
+        fi
+    done
+done
+echo "  [PASS] context refuses a directory that is not a repository instead of inventing one."
+
+# --help is a claim about the CLI, not about a repository, so it still answers in one that
+# does not exist yet -- which is exactly where someone asks what the command does.
+context_norepo --help
+if [ "${CONTEXT_STATUS}" -ne 0 ] || ! printf '%s' "${CONTEXT_OUTPUT}" | grep -q "Usage: harness context"; then
+    echo "  [FAIL] context --help did not answer outside a repository (status ${CONTEXT_STATUS}): ${CONTEXT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] context --help answers without a repository."
+
 echo ""
 echo "=== 28. Testing Destructive Command Refusals ==="
 

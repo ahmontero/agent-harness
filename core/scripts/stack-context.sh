@@ -42,6 +42,20 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
+# Every field below is a fact about a repository, and each helper that reads one degrades
+# on its own when there is none: get_current_branch falls back to "HEAD" the way it does for
+# a detached head, is_working_tree_dirty reads a failed `git status` as no output and so as
+# clean, get_trunk_branch defaults to "main", and both counts come back zero. Separately all
+# four are reasonable; composed, they were one confident document about a repository that
+# was not there, and this is the first command every workflow runs. The check belongs to the
+# command rather than the helpers, because having a repository is a precondition of the
+# whole report and not of any single line of it -- and stack-upgrade.sh relies on exactly
+# those fallbacks behind its own repository check.
+#
+# It sits after the argument loop, not before it: --help is a claim about the CLI, not about
+# a repository, and it is asked most often where one does not exist yet.
+ensure_git_repo "${REPO_DIR}"
+
 BRANCH="$(get_current_branch "${REPO_DIR}")"
 TRUNK="$(get_trunk_branch "${REPO_DIR}")"
 TEST_RUNNER="$(get_profile_value "qa.testRunner" "unknown")"
