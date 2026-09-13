@@ -18,19 +18,29 @@ source "${SCRIPT_DIR}/lib/config.sh"
 usage() {
     cat <<USAGE_EOF
 Usage:
-  harness config validate    Report the resolved configuration and every structural problem
+  harness config validate [--json]   Report the resolved configuration and every structural problem
 USAGE_EOF
 }
 
 ACTION="${1:-validate}"
 shift || true
 
+JSON_OUTPUT=false
 while [[ $# -gt 0 ]]; do
     case "$1" in
+        --json) JSON_OUTPUT=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown config option: $1"; usage; exit 1 ;;
     esac
 done
+
+# In JSON mode stdout carries the document and nothing else, the same swap scan and qa all
+# already use: the prose is written by twenty call sites and redirecting the stream once is
+# what makes the mode correct in all of them rather than in nineteen.
+if [ "${JSON_OUTPUT}" = true ]; then
+    exec 3>&1 1>&2
+fi
+JSON_FINDINGS=()
 
 case "${ACTION}" in
     validate) ;;
@@ -154,6 +164,10 @@ else
                 WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
                 ;;
         esac
+        case "${JSON_OUTPUT}" in
+            true) JSON_FINDINGS+=("$(jq -nc --arg level "${level}" --arg path "${path}" --arg message "${message}" \
+                    '{level: $level, path: $path, message: $message}')") ;;
+        esac
     done <<< "${FINDINGS}"
 
     # A targetRepoPath that does not resolve is a warning rather than an error: one
@@ -166,6 +180,10 @@ else
         if [ ! -d "${expanded}" ]; then
             log_warn "profiles.${configured%%$'\t'*}.targetRepoPath: '${expanded}' does not exist, so commands run against the current directory instead."
             WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+            [ "${JSON_OUTPUT}" != true ] || JSON_FINDINGS+=("$(jq -nc \
+                --arg path "profiles.${configured%%$'\t'*}.targetRepoPath" \
+                --arg message "'${expanded}' does not exist, so commands run against the current directory instead." \
+                '{level: "warning", path: $path, message: $message}')")
         fi
     done < <(jq -r '.profiles // {} | to_entries[] | select(.value.targetRepoPath != null) | "\(.key)\t\(.value.targetRepoPath)"' "${CONFIG_FILE}" 2>/dev/null)
 
@@ -178,13 +196,31 @@ for note in "${UNCHECKED[@]}"; do
     log_info "Not checked — ${note}"
 done
 
+# One emission whatever the verdict, so the document and the exit status cannot disagree.
+emit_config_json() {
+    [ "${JSON_OUTPUT}" = true ] || return 0
+    local findings="[]" unchecked="[]"
+    [ ${#JSON_FINDINGS[@]} -eq 0 ] || findings="$(printf '%s\n' "${JSON_FINDINGS[@]}" | jq -s '.')"
+    [ ${#UNCHECKED[@]} -eq 0 ] || unchecked="$(printf '%s\n' "${UNCHECKED[@]}" | jq -R -s 'split("\n") | map(select(length > 0))')"
+    jq -n --arg status "$1" --arg file "${CONFIG_FILE}" --arg profile "${ACTIVE_PROFILE}" \
+        --arg reason "${PROFILE_REASON}" --argjson errors "${ERRORS_FOUND}" \
+        --argjson warnings "${WARNINGS_FOUND}" --argjson findings "${findings}" \
+        --argjson notChecked "${unchecked}" \
+        '{status: $status, configurationFile: (if $file == "" then null else $file end),
+          profile: $profile, resolvedBy: $reason, errors: $errors, warnings: $warnings,
+          findings: $findings, notChecked: $notChecked}' >&3
+}
+
 echo ""
 if [ "${ERRORS_FOUND}" -ne 0 ]; then
     log_error "Configuration has ${ERRORS_FOUND} error(s) and ${WARNINGS_FOUND} warning(s)."
+    emit_config_json "failed"
     exit 1
 fi
 if [ "${WARNINGS_FOUND}" -ne 0 ]; then
     log_warn "Configuration is structurally valid with ${WARNINGS_FOUND} warning(s)."
+    emit_config_json "passed"
     exit 0
 fi
 log_success "Configuration is structurally valid."
+emit_config_json "passed"
