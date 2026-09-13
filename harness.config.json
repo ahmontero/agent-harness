@@ -17,7 +17,7 @@
       "qa": {
         "testCommand": "env -u STACK_PROFILE npm test",
         "tddCommand": "bash test/test_cli.sh",
-        "lintCommand": "./setup --verify",
+        "lintCommand": "npm run lint && ./setup --verify",
         "typeCheckCommand": "bash -n bin/harness bin/agh bin/agent-harness core/scripts/*.sh core/scripts/lib/*.sh install.sh setup test/test_cli.sh scripts/record-demo.sh"
       },
       "ci": {

@@ -491,9 +491,28 @@ if [ ! -f "${HARNESS_ROOT}/harness.config.json" ]; then
     echo "  [FAIL] Repository must define local QA commands instead of using config.example.json"
     exit 1
 fi
-if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config.json")" != "env -u STACK_PROFILE npm test" ] || \
-   [ "$(jq -r '.profiles.harness.qa.lintCommand' "${HARNESS_ROOT}/harness.config.json")" != "./setup --verify" ]; then
-    echo "  [FAIL] Repository QA configuration does not target its canonical verification commands"
+if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config.json")" != "env -u STACK_PROFILE npm test" ]; then
+    echo "  [FAIL] Repository QA configuration does not target its canonical test command"
+    exit 1
+fi
+# The lint gate is asserted by what it must reach, not by a literal. It was pinned to
+# "./setup --verify", which is bash -n, while CI ran ShellCheck -- so harness qa all reported
+# a passing lint gate over code CI rejected, and a ShellCheck failure reached a published
+# pull request with local QA green. The chain below is the property that was missing: the
+# local gate runs the project's lint script, and that script is the ShellCheck CI runs.
+REPO_LINT_GATE="$(jq -r '.profiles.harness.qa.lintCommand' "${HARNESS_ROOT}/harness.config.json")"
+for lint_link in "npm run lint" "./setup --verify"; do
+    if ! printf '%s' "${REPO_LINT_GATE}" | grep -qF -- "${lint_link}"; then
+        echo "  [FAIL] the repository's lint gate does not run '${lint_link}': ${REPO_LINT_GATE}"
+        exit 1
+    fi
+done
+if ! jq -r '.scripts.lint' "${HARNESS_ROOT}/package.json" | grep -qF "shellcheck"; then
+    echo "  [FAIL] the lint script the gate runs does not invoke ShellCheck"
+    exit 1
+fi
+if ! grep -qF "shellcheck" "${HARNESS_ROOT}/.github/workflows/ci.yml"; then
+    echo "  [FAIL] CI no longer runs ShellCheck, so the local gate is asserting an alignment that is gone"
     exit 1
 fi
 echo "  [PASS] repository provides its canonical floor and landmine documentation."
