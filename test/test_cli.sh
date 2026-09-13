@@ -4431,25 +4431,33 @@ cat > "${ARGMAX_REPO}/harness.config.json" <<'ARGMAX_CONFIG_EOF'
   "profiles": { "a": { "rules": { "scanner": "./rules.json", "securityBaseline": false } } }
 }
 ARGMAX_CONFIG_EOF
-# One xargs rather than three thousand redirections: the fixture is the slow part of this
+# The count is derived from the platform's own limit rather than fixed. Three thousand paths
+# are 1.8MB, over the 1MB macOS reports and comfortably under the 4MB Linux does -- so a
+# hardcoded fixture exercised chunking on one runner and quietly stopped on the other. The
+# size assertion below caught that; deriving the count is what stops it recurring on the next
+# platform with a limit nobody guessed.
+ARGMAX_LIMIT="$(getconf ARG_MAX 2>/dev/null || echo 131072)"
+ARGMAX_SAMPLE="${ARGMAX_DIR#"${ARGMAX_REPO}/"}/f_${ARGMAX_SEGMENT}_1.py"
+ARGMAX_COUNT=$(( (ARGMAX_LIMIT * 6 / 5) / ${#ARGMAX_SAMPLE} + 1 ))
+
+# One xargs rather than thousands of redirections: the fixture is the slow part of this
 # group, and a loop here would cost more than the scan it is testing.
-seq 1 3000 | sed "s|^|${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_|; s|\$|.py|" | tr '\n' '\0' | xargs -0 touch
+seq 1 "${ARGMAX_COUNT}" | sed "s|^|${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_|; s|\$|.py|" | tr '\n' '\0' | xargs -0 touch
 printf 'forbidden_call()\n' > "${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_1.py"
-printf 'forbidden_call()\n' > "${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_3000.py"
+printf 'forbidden_call()\n' > "${ARGMAX_DIR}/f_${ARGMAX_SEGMENT}_${ARGMAX_COUNT}.py"
 git -C "${ARGMAX_REPO}" add -A
 git -C "${ARGMAX_REPO}" commit -q -m "fixture"
 
 # The fixture has to stay over the limit, or this group would keep passing while testing
 # nothing. Asserting the size is what keeps it honest.
 ARGMAX_LIST_BYTES="$(git -C "${ARGMAX_REPO}" ls-files | wc -c | tr -d ' ')"
-ARGMAX_LIMIT="$(getconf ARG_MAX 2>/dev/null || echo 131072)"
 if [ "${ARGMAX_LIST_BYTES}" -le "${ARGMAX_LIMIT}" ]; then
     echo "  [FAIL] the fixture's file list is ${ARGMAX_LIST_BYTES} bytes, within the ${ARGMAX_LIMIT}-byte limit, so it does not exercise chunking"
     exit 1
 fi
 
 ARGMAX_OUTPUT="$( (cd "${ARGMAX_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || true
-for argmax_end in "_1.py" "_3000.py"; do
+for argmax_end in "_1.py" "_${ARGMAX_COUNT}.py"; do
     if ! printf '%s' "${ARGMAX_OUTPUT}" | grep -q -- "${argmax_end}:"; then
         echo "  [FAIL] a file list over the command-line limit lost the finding in ${argmax_end}: ${ARGMAX_OUTPUT}"
         exit 1
