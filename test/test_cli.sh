@@ -5567,4 +5567,151 @@ rm -f "${GUARD_REPO}/body.md"
 echo "  [PASS] ship takes a pull request body and a draft flag, and refuses a body it cannot read."
 
 echo ""
+echo "=== 53. Testing Uninstallation And Lifecycle Ergonomics ==="
+# Installation wrote into four global surfaces, ~/.local/bin, and the repository, and the
+# only way back was `./setup --rollback` -- which undoes the last transaction, once, and is
+# useless a week later. Something that writes into a user's home directory owes them an exit.
+UNINSTALL_HOME="${TMP_TEST_DIR}/uninstall-home"
+UNINSTALL_REPO="${TMP_TEST_DIR}/uninstall-repo"
+UNINSTALL_STATE="${TMP_TEST_DIR}/uninstall-state"
+mkdir -p "${UNINSTALL_HOME}" "${UNINSTALL_REPO}" "${UNINSTALL_STATE}"
+git -C "${UNINSTALL_REPO}" init -q
+git -C "${UNINSTALL_REPO}" config user.email "tests@agent-harness.local"
+git -C "${UNINSTALL_REPO}" config user.name "Agent Harness Tests"
+echo "seed" > "${UNINSTALL_REPO}/seed.txt"
+git -C "${UNINSTALL_REPO}" add -A
+git -C "${UNINSTALL_REPO}" commit -qm "chore: seed"
+
+uninstall_run() {
+    UNINSTALL_STATUS=0
+    UNINSTALL_OUTPUT="$( (cd "${UNINSTALL_REPO}" && env -u STACK_PROFILE HOME="${UNINSTALL_HOME}" \
+        HARNESS_STATE_DIR="${UNINSTALL_STATE}" "${HARNESS_ROOT}/bin/harness" "$@" </dev/null 2>&1) )" || UNINSTALL_STATUS=$?
+}
+
+# init --with-hook: the scanner is the only gate that acts at the moment of the commit, and
+# it was opt-in behind a second command nobody ran -- after which doctor warned about its
+# absence on every invocation.
+uninstall_run init --with-hook
+if [ "${UNINSTALL_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] init --with-hook failed: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+if ! grep -qxF "# agent-harness-pre-commit-hook-v1" "${UNINSTALL_REPO}/.git/hooks/pre-commit" 2>/dev/null; then
+    echo "  [FAIL] init --with-hook installed no pre-commit hook: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] init --with-hook installs the scanner's pre-commit hook."
+
+for uninstall_surface in .claude/skills .gemini/skills .codex/skills .agents/skills; do
+    if [ ! -f "${UNINSTALL_REPO}/${uninstall_surface}/${SURFACE_MANIFEST}" ]; then
+        echo "  [FAIL] init installed no managed surface at ${uninstall_surface}"
+        exit 1
+    fi
+done
+
+# Nothing is removed by a report.
+uninstall_run uninstall --dry-run
+if [ "${UNINSTALL_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] uninstall --dry-run failed: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${UNINSTALL_OUTPUT}" | grep -q ".claude/skills"; then
+    echo "  [FAIL] uninstall --dry-run did not name the surfaces it would remove: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+if [ ! -f "${UNINSTALL_REPO}/.claude/skills/${SURFACE_MANIFEST}" ]; then
+    echo "  [FAIL] uninstall --dry-run removed a surface"
+    exit 1
+fi
+echo "  [PASS] uninstall --dry-run names every managed path and removes none."
+
+# Removing things from a home directory is not something to infer from an argument list.
+uninstall_run uninstall
+if [ "${UNINSTALL_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] uninstall proceeded with no confirmation and no terminal: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+if [ ! -f "${UNINSTALL_REPO}/.claude/skills/${SURFACE_MANIFEST}" ]; then
+    echo "  [FAIL] uninstall removed a surface while refusing"
+    exit 1
+fi
+echo "  [PASS] uninstall refuses without a confirmation and removes nothing."
+
+# A directory agent-harness never installed into is never touched.
+mkdir -p "${UNINSTALL_REPO}/.claude/skills/somebody-elses-skill"
+printf 'name: theirs\n' > "${UNINSTALL_REPO}/.claude/skills/somebody-elses-skill/SKILL.md"
+mkdir -p "${UNINSTALL_HOME}/.claude"
+printf 'my own notes\n' > "${UNINSTALL_HOME}/.claude/settings.json"
+
+uninstall_run uninstall --yes
+if [ "${UNINSTALL_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] a confirmed uninstall failed: ${UNINSTALL_OUTPUT}"
+    exit 1
+fi
+if [ -e "${UNINSTALL_REPO}/.claude/skills/harness-implement" ]; then
+    echo "  [FAIL] uninstall left a managed skill bundle behind"
+    exit 1
+fi
+if [ -e "${UNINSTALL_REPO}/.git/hooks/pre-commit" ]; then
+    echo "  [FAIL] uninstall left the pre-commit hook behind"
+    exit 1
+fi
+if [ ! -f "${UNINSTALL_REPO}/.claude/skills/somebody-elses-skill/SKILL.md" ]; then
+    echo "  [FAIL] uninstall removed a skill agent-harness did not install"
+    exit 1
+fi
+if [ ! -f "${UNINSTALL_HOME}/.claude/settings.json" ]; then
+    echo "  [FAIL] uninstall removed a file outside its own surfaces"
+    exit 1
+fi
+for uninstall_kept in AGENTS.md rules/floor.md stack.config.json; do
+    if [ ! -e "${UNINSTALL_REPO}/${uninstall_kept}" ]; then
+        echo "  [FAIL] uninstall removed ${uninstall_kept}, which belongs to the project"
+        exit 1
+    fi
+done
+echo "  [PASS] uninstall removes what it installed, and only that."
+
+# It journals through the same transaction the installer uses, so it is reversible.
+UNINSTALL_ROLLBACK_STATUS=0
+(cd "${UNINSTALL_REPO}" && env -u STACK_PROFILE HOME="${UNINSTALL_HOME}" HARNESS_STATE_DIR="${UNINSTALL_STATE}" \
+    "${HARNESS_ROOT}/setup" --rollback >/dev/null 2>&1) || UNINSTALL_ROLLBACK_STATUS=$?
+if [ "${UNINSTALL_ROLLBACK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] the uninstall transaction could not be rolled back"
+    exit 1
+fi
+if [ ! -e "${UNINSTALL_REPO}/.claude/skills/harness-implement/SKILL.md" ]; then
+    echo "  [FAIL] rolling back the uninstall did not restore the surfaces"
+    exit 1
+fi
+echo "  [PASS] An uninstall is journalled, and './setup --rollback' restores it."
+
+# A worktree gets its tracked files from Git and its surfaces from nowhere, so the command
+# that creates one reported the gap and left the user to close it by hand.
+SEED_REPO="${TMP_TEST_DIR}/seed-on-create"
+mkdir -p "${SEED_REPO}"
+git -C "${SEED_REPO}" init -q
+git -C "${SEED_REPO}" config user.email "tests@agent-harness.local"
+git -C "${SEED_REPO}" config user.name "Agent Harness Tests"
+echo "seed" > "${SEED_REPO}/seed.txt"
+printf '.claude/skills/\n.gemini/skills/\n.codex/skills/\n.agents/skills/\n' > "${SEED_REPO}/.gitignore"
+git -C "${SEED_REPO}" add -A
+git -C "${SEED_REPO}" commit -qm "chore: seed"
+git -C "${SEED_REPO}" branch -M main
+(cd "${SEED_REPO}" && env -u STACK_PROFILE HOME="${UNINSTALL_HOME}" HARNESS_STATE_DIR="${UNINSTALL_STATE}" \
+    "${HARNESS_ROOT}/bin/harness" init >/dev/null 2>&1)
+SEED_STATUS=0
+SEED_OUTPUT="$( (cd "${SEED_REPO}" && env -u STACK_PROFILE HOME="${UNINSTALL_HOME}" HARNESS_STATE_DIR="${UNINSTALL_STATE}" \
+    "${HARNESS_ROOT}/bin/harness" worktree create feat AH-50 seeded --seed 2>&1) )" || SEED_STATUS=$?
+if [ "${SEED_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] worktree create --seed failed: ${SEED_OUTPUT}"
+    exit 1
+fi
+if [ ! -f "$(dirname "${SEED_REPO}")/$(basename "${SEED_REPO}")-AH-50/.claude/skills/${SURFACE_MANIFEST}" ]; then
+    echo "  [FAIL] worktree create --seed left the worktree with no surface: ${SEED_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] worktree create --seed gives the new worktree its own surfaces."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

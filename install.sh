@@ -62,6 +62,7 @@ usage() {
 ${BOLD}Usage:${RESET}
   ./setup                     # Guided interactive installer (Default)
   ./setup --target <path>     # Initialize harness in target repository
+  ./setup --target <path> --with-hook # ...and install the scanner's pre-commit hook
   ./setup --target <path> --expert # Expose advanced primitive skills too
   ./setup --recipe <name>     # Initialize with recipe (python-fastapi, typescript-fullstack, go-microservices)
   ./setup --global            # Install skills & rules globally to user home
@@ -90,6 +91,7 @@ SYNC_TARGET=""
 SEED_TARGET=""
 GUIDED_MODE=false
 ROLLBACK_MODE=false
+WITH_HOOK=false
 SKILL_MODE="curated"
 ASSUME_YES=false
 
@@ -116,6 +118,7 @@ while [[ $# -gt 0 ]]; do
             [ -n "${2:-}" ] || { log_error "--seed-target requires a path to a worktree."; exit 1; }
             SEED_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
+        --with-hook) WITH_HOOK=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         --yes|-y) ASSUME_YES=true; shift ;;
         -h|--help) usage; exit 0 ;;
@@ -129,7 +132,7 @@ if [ "${ROLLBACK_MODE}" = true ]; then
        [ "${SYNC_ONLY}" = true ] || [ "${VERIFY_MODE}" = true ] || [ -n "${RECIPE_NAME}" ] || \
        [ -n "${SYNC_TARGET}" ] || [ -n "${SEED_TARGET}" ] || \
        [ "${GUIDED_MODE}" = true ] || [ "${SKILL_MODE}" != "curated" ] || \
-       [ "${ASSUME_YES}" = true ]; then
+       [ "${WITH_HOOK}" = true ] || [ "${ASSUME_YES}" = true ]; then
         log_error "--rollback cannot be combined with installation options."
         exit 1
     fi
@@ -844,6 +847,26 @@ install_target_repo() {
     fi
     if [ ! -f "${target}/rules/landmines.json" ]; then
         transaction_copy "${HARNESS_ROOT}/core/templates/landmines-template.json" "${target}/rules/landmines.json"
+    fi
+
+    # The scanner is the only gate that acts at the moment of the commit, and it was opt-in
+    # behind a second command nobody ran -- after which `harness doctor` warned about its
+    # absence on every invocation. The hook is written by the scanner's own installer rather
+    # than here, so there is one implementation of what the hook contains, and that installer
+    # already refuses to replace a hook the project wrote.
+    #
+    # It is outside the transaction for that reason. It is idempotent and refuses rather than
+    # clobbers, so a rolled-back installation leaves a hook that still works; `harness
+    # uninstall` removes it, by the same marker.
+    if [ "${WITH_HOOK}" = true ]; then
+        if ! git -C "${target}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            log_warn "${target} is not a Git repository, so no pre-commit hook was installed."
+        elif ( cd "${target}" && "${HARNESS_ROOT}/bin/harness" scan --install-hook ); then
+            :
+        else
+            log_warn "The pre-commit hook was not installed; the rest of the installation stands."
+            log_info "Install it later with: harness scan --install-hook"
+        fi
     fi
 
     log_success "agent-harness initialized in ${target}"

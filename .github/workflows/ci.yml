@@ -18,6 +18,11 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # commit check --branch and scan --branch both resolve a merge base, and the
+          # default depth of 1 has none. A gate that cannot resolve its range exits 2 and
+          # reports that it could not run, which is correct and useless in CI.
+          fetch-depth: 0
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
@@ -47,6 +52,17 @@ jobs:
 
       - name: Validate this repository's own configuration
         run: ./bin/harness config validate
+
+      - name: Check this branch's own commit messages
+        # Against the pull request's base, not the trunk. A stacked branch legitimately
+        # carries its parent's commits, and those belong to the parent's issue rather than
+        # to this one -- so trunk..HEAD is the wrong range to hold to this branch's key.
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            ./bin/harness commit check --branch --base "origin/${{ github.base_ref }}"
+          else
+            ./bin/harness commit check --branch
+          fi
 
       - name: Run automated test suite
         run: bash test/test_cli.sh
