@@ -37,13 +37,10 @@ case "${ACTION}" in
         fi
 
         BRANCH="$(get_current_branch "${REPO_DIR}")"
-        # Extract issue key from branch if present (e.g. feat/PROJ-123-slug -> PROJ-123).
-        # A key is an uppercase prefix, a hyphen, then digits not followed by a dot, so a
-        # version-like token (chore/release-2.4.1, fix/bump-node-22-1) is not read as one.
-        ISSUE_KEY=""
-        if [[ "${BRANCH}" =~ ([A-Z]+-[0-9]+)($|[^0-9.]) ]]; then
-            ISSUE_KEY="${BASH_REMATCH[1]}"
-        fi
+        # One grammar, defined in lib/issues.sh and shared with `branch check`. This used to
+        # match only [A-Z]+-[0-9]+, so a branch check called conforming -- feat/P20-1234-x,
+        # or feat/42-x -- produced a commit carrying no issue key at all.
+        ISSUE_KEY="$(issue_key_from_branch "${BRANCH}")"
 
         FINAL_MSG=""
         if [ -n "${ISSUE_KEY}" ]; then

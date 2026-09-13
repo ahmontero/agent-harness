@@ -4950,4 +4950,229 @@ fi
 echo "  [PASS] the suite runs one group, refuses a filter that matches none, and tdd uses it."
 
 echo ""
+echo "=== 49. Testing One Issue Key Grammar ==="
+# `branch check` and `commit build` each carried their own idea of what an issue key looks
+# like. check accepted [A-Z][A-Z0-9]*-[0-9]+ and a bare number; build matched only
+# [A-Z]+-[0-9]+. A branch check called conforming therefore produced a commit with no
+# scope at all -- for P20-1234, and for the bare number `normalize_issue_key` yields when
+# no issueTracker.defaultPrefix is configured, which is the default on GitHub.
+KEY_REPO="${TMP_TEST_DIR}/issue-key-grammar"
+mkdir -p "${KEY_REPO}"
+git -C "${KEY_REPO}" init -q
+git -C "${KEY_REPO}" config user.email "tests@agent-harness.local"
+git -C "${KEY_REPO}" config user.name "Agent Harness Tests"
+cat > "${KEY_REPO}/harness.config.json" <<'KEY_CONFIG_EOF'
+{
+  "project": { "name": "issue-key-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Issue key fixture" } }
+}
+KEY_CONFIG_EOF
+echo "fixture" > "${KEY_REPO}/fixture.txt"
+git -C "${KEY_REPO}" add -A
+git -C "${KEY_REPO}" commit -qm "issue key fixture"
+git -C "${KEY_REPO}" branch -M main
+
+key_commit_subject() {
+    local branch="$1" type="$2" message="$3"
+    git -C "${KEY_REPO}" checkout -q -B "${branch}"
+    printf '%s\n' "${branch}" > "${KEY_REPO}/fixture.txt"
+    git -C "${KEY_REPO}" add fixture.txt
+    (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit build "${type}" "${message}" >/dev/null 2>&1)
+    git -C "${KEY_REPO}" log -1 --pretty=%s
+}
+key_branch_check() {
+    local status=0
+    KEY_CHECK_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch check "$1" 2>&1) )" || status=$?
+    printf '%s' "${status}"
+}
+
+# Every key `branch check` calls conforming must survive into the commit subject.
+for key_case in "P20-1234:feat/P20-1234-add-rate:feat(P20-1234): add rate" \
+                "42:feat/42-numeric-key:feat(42): numeric key" \
+                "AH-7:feat/AH-7-plain:feat(AH-7): plain"; do
+    KEY_EXPECTED_KEY="${key_case%%:*}"
+    KEY_REST="${key_case#*:}"
+    KEY_BRANCH="${KEY_REST%%:*}"
+    KEY_EXPECTED_SUBJECT="${KEY_REST#*:}"
+    if [ "$(key_branch_check "${KEY_BRANCH}")" != "0" ]; then
+        echo "  [FAIL] branch check rejected '${KEY_BRANCH}': ${KEY_CHECK_OUTPUT}"
+        exit 1
+    fi
+    KEY_SUBJECT="$(key_commit_subject "${KEY_BRANCH}" "${KEY_EXPECTED_SUBJECT%%(*}" "${KEY_EXPECTED_SUBJECT#*: }")"
+    if [ "${KEY_SUBJECT}" != "${KEY_EXPECTED_SUBJECT}" ]; then
+        echo "  [FAIL] branch check accepted '${KEY_BRANCH}' carrying ${KEY_EXPECTED_KEY} but commit build recorded: ${KEY_SUBJECT}"
+        exit 1
+    fi
+done
+echo "  [PASS] branch check and commit build read one issue key grammar."
+
+# A version-like token is still not an issue key, in either reader.
+for key_version in "chore/release-2.4.1" "fix/bump-node-22-1"; do
+    KEY_SUBJECT="$(key_commit_subject "${key_version}" chore "version bump")"
+    if [ "${KEY_SUBJECT}" != "chore: version bump" ]; then
+        echo "  [FAIL] commit build read an issue key out of '${key_version}': ${KEY_SUBJECT}"
+        exit 1
+    fi
+done
+echo "  [PASS] A version-like branch name still yields no issue key."
+
+# `branch create` took any type at all and produced a branch `branch check` then rejected.
+# A creator and a validator that disagree leave the user holding a branch the harness made
+# and will not accept.
+git -C "${KEY_REPO}" checkout -q main
+KEY_CREATE_STATUS=0
+KEY_CREATE_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch create feature AH-9 unsupported-type 2>&1) )" || KEY_CREATE_STATUS=$?
+if [ "${KEY_CREATE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] branch create accepted a type branch check rejects: ${KEY_CREATE_OUTPUT}"
+    exit 1
+fi
+if git -C "${KEY_REPO}" show-ref --verify --quiet refs/heads/feature/AH-9-unsupported-type; then
+    echo "  [FAIL] branch create refused and created the branch anyway"
+    exit 1
+fi
+if ! printf '%s' "${KEY_CREATE_OUTPUT}" | grep -q "feat"; then
+    echo "  [FAIL] branch create refused without naming the types it accepts: ${KEY_CREATE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] branch create refuses a type branch check would reject, and creates nothing."
+
+# Every type branch create writes must be a type branch check accepts.
+for key_type in chore feat fix spike; do
+    git -C "${KEY_REPO}" checkout -q main
+    (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch create "${key_type}" AH-8 "round-trip" >/dev/null 2>&1) || {
+        echo "  [FAIL] branch create refused its own type '${key_type}'"
+        exit 1
+    }
+    if [ "$(key_branch_check "${key_type}/AH-8-round-trip")" != "0" ]; then
+        echo "  [FAIL] branch check rejected a branch branch create just wrote: ${KEY_CHECK_OUTPUT}"
+        exit 1
+    fi
+    git -C "${KEY_REPO}" checkout -q main
+    git -C "${KEY_REPO}" branch -qD "${key_type}/AH-8-round-trip"
+done
+echo "  [PASS] Every type branch create writes is a type branch check accepts."
+
+echo ""
+echo "=== 50. Testing Refusals And Hook Portability ==="
+REFUSE_REPO="${TMP_TEST_DIR}/refusals"
+mkdir -p "${REFUSE_REPO}"
+git -C "${REFUSE_REPO}" init -q
+git -C "${REFUSE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${REFUSE_REPO}" config user.name "Agent Harness Tests"
+cat > "${REFUSE_REPO}/harness.config.json" <<'REFUSE_CONFIG_EOF'
+{
+  "project": { "name": "refusals-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Refusals", "qa": { "tddCommand": "printf [%s] {path}" } } }
+}
+REFUSE_CONFIG_EOF
+echo "fixture" > "${REFUSE_REPO}/fixture.txt"
+git -C "${REFUSE_REPO}" add -A
+git -C "${REFUSE_REPO}" commit -qm "refusals fixture"
+
+# A scan that cannot read its rules exits 2, which is what `qa all` aggregates as a gate
+# that could not run. It exited 1 -- indistinguishable from a scan that ran and found a
+# landmine -- in the one case the header of stack-scan.sh names first.
+REFUSE_STUB="${TMP_TEST_DIR}/no-jq-bin"
+mkdir -p "${REFUSE_STUB}"
+printf '#!/bin/sh\nexit 1\n' > "${REFUSE_STUB}/jq"
+chmod 755 "${REFUSE_STUB}/jq"
+REFUSE_SCAN_STATUS=0
+REFUSE_SCAN_OUTPUT="$( (cd "${REFUSE_REPO}" && env -u STACK_PROFILE PATH="${REFUSE_STUB}:${PATH}" "${HARNESS_ROOT}/bin/harness" scan --all 2>&1) )" || REFUSE_SCAN_STATUS=$?
+if [ "${REFUSE_SCAN_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] scan without a usable jq exited ${REFUSE_SCAN_STATUS}, not 2: ${REFUSE_SCAN_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A scan that could not read any rule exits 2, not 1."
+
+# Staged content git cannot read is the same class: the scan did not run.
+REFUSE_INDEX="${TMP_TEST_DIR}/refusals-index"
+mkdir -p "${REFUSE_INDEX}"
+git -C "${REFUSE_INDEX}" init -q
+git -C "${REFUSE_INDEX}" config user.email "tests@agent-harness.local"
+git -C "${REFUSE_INDEX}" config user.name "Agent Harness Tests"
+echo "seed" > "${REFUSE_INDEX}/seed.txt"
+git -C "${REFUSE_INDEX}" add -A
+git -C "${REFUSE_INDEX}" commit -qm seed
+git -C "${REFUSE_INDEX}" update-index --add --cacheinfo \
+    100644,0000000000000000000000000000000000000001,missing.py
+REFUSE_INDEX_STATUS=0
+REFUSE_INDEX_OUTPUT="$( (cd "${REFUSE_INDEX}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --staged 2>&1) )" || REFUSE_INDEX_STATUS=$?
+if [ "${REFUSE_INDEX_STATUS}" -ne 2 ]; then
+    echo "  [FAIL] scan over unreadable staged content exited ${REFUSE_INDEX_STATUS}, not 2: ${REFUSE_INDEX_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A scan that could not read staged content exits 2, not 1."
+
+# `spec status` printed a header and nothing else when there were no specs: find exits 0 on
+# an empty result, so the `||` fallback never ran. Silence reads as a listing that failed.
+REFUSE_SPEC_OUTPUT="$( (cd "${REFUSE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" spec status 2>&1) )"
+if ! printf '%s' "${REFUSE_SPEC_OUTPUT}" | grep -qi "no active delta spec"; then
+    echo "  [FAIL] spec status said nothing about an empty specs directory: ${REFUSE_SPEC_OUTPUT}"
+    exit 1
+fi
+mkdir -p "${REFUSE_REPO}/specs"
+REFUSE_SPEC_OUTPUT="$( (cd "${REFUSE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" spec status 2>&1) )"
+if ! printf '%s' "${REFUSE_SPEC_OUTPUT}" | grep -qi "no active delta spec"; then
+    echo "  [FAIL] spec status said nothing about a specs directory holding none: ${REFUSE_SPEC_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] spec status reports an empty listing as one."
+
+# Every other command exits non-zero on a subcommand it does not have.
+REFUSE_COMPLETION_STATUS=0
+REFUSE_COMPLETION_OUTPUT="$( (cd "${REFUSE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" completion bogus 2>&1) )" || REFUSE_COMPLETION_STATUS=$?
+if [ "${REFUSE_COMPLETION_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] completion accepted an unknown subcommand: ${REFUSE_COMPLETION_OUTPUT}"
+    exit 1
+fi
+if [ -e "${HOME}/.zsh/completion/_harness.bogus" ]; then
+    echo "  [FAIL] completion wrote something for an unknown subcommand"
+    exit 1
+fi
+echo "  [PASS] completion refuses an unknown subcommand."
+
+# `qa tdd` substituted {path} into a string it then passed through eval unquoted, so a test
+# path containing a space arrived as two arguments.
+REFUSE_TDD_OUTPUT="$( (cd "${REFUSE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa tdd "two words" 2>&1) )"
+if ! printf '%s' "${REFUSE_TDD_OUTPUT}" | grep -qF "[two words]"; then
+    echo "  [FAIL] qa tdd split a path containing a space: ${REFUSE_TDD_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] qa tdd passes a path containing a space as one argument."
+
+# The hook ran `harness` by name, so it needed the user's interactive PATH. Committing from
+# a GUI Git client -- which does not inherit a login shell -- failed with
+# "exec: harness: not found", and the usual next move is --no-verify, which retires the
+# gate the hook exists to enforce.
+REFUSE_HOOK="${TMP_TEST_DIR}/hook-path"
+mkdir -p "${REFUSE_HOOK}"
+git -C "${REFUSE_HOOK}" init -q
+git -C "${REFUSE_HOOK}" config user.email "tests@agent-harness.local"
+git -C "${REFUSE_HOOK}" config user.name "Agent Harness Tests"
+echo "seed" > "${REFUSE_HOOK}/seed.txt"
+git -C "${REFUSE_HOOK}" add -A
+git -C "${REFUSE_HOOK}" commit -qm seed
+(cd "${REFUSE_HOOK}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --install-hook >/dev/null 2>&1)
+# AWS's own documentation key. It has to match SEC-011 for real, because the assertion is
+# that the hook ran the scan at all rather than dying on a missing PATH entry.
+# harness-ignore: SEC-011
+printf 'AWS_KEY = "AKIAIOSFODNN7EXAMPLE"\n' > "${REFUSE_HOOK}/leak.py"
+git -C "${REFUSE_HOOK}" add leak.py
+REFUSE_HOOK_STATUS=0
+REFUSE_HOOK_OUTPUT="$( (cd "${REFUSE_HOOK}" && env -i HOME="${HOME}" PATH="/usr/bin:/bin" git commit -m "leak" 2>&1) )" || REFUSE_HOOK_STATUS=$?
+if [ "${REFUSE_HOOK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the pre-commit hook let a staged credential through: ${REFUSE_HOOK_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${REFUSE_HOOK_OUTPUT}" | grep -q "not found"; then
+    echo "  [FAIL] the pre-commit hook could not find the harness on a minimal PATH: ${REFUSE_HOOK_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${REFUSE_HOOK_OUTPUT}" | grep -q "SEC-011"; then
+    echo "  [FAIL] the pre-commit hook blocked without running the scan: ${REFUSE_HOOK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] The pre-commit hook runs the scan on a minimal PATH."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

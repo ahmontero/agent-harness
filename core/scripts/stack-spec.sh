@@ -123,10 +123,19 @@ case "${ACTION}" in
 
         log_info "Listing Active Delta Specs in ${SPECS_DIR}..."
         if [ ! -d "${SPECS_DIR}" ]; then
-            log_info "No specs directory found. Run 'harness spec create <issue> <slug>' to create one."
+            log_info "No active delta specs: there is no specs directory yet."
+            log_info "Run 'harness spec create <issue> <slug>' to create one."
             exit 0
         fi
-        active_delta_specs "${SPECS_DIR}" || log_info "No active delta specs."
+        # `find` exits 0 on an empty result, so the `||` fallback this replaces never ran:
+        # the command printed its header and then nothing at all, which reads as a listing
+        # that failed rather than a listing with nothing in it.
+        SPEC_LISTING="$(active_delta_specs "${SPECS_DIR}")"
+        if [ -z "${SPEC_LISTING}" ]; then
+            log_info "No active delta specs."
+        else
+            printf '%s\n' "${SPEC_LISTING}"
+        fi
         ;;
     create)
         RAW_KEY=""

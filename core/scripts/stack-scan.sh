@@ -128,15 +128,26 @@ scan_exit() {
 # in lib/git.sh because `harness doctor` reports on the same hook.
 HOOK_MARKER="${HARNESS_PRE_COMMIT_MARKER}"
 
+# The hook ran `harness` by name, so it needed whatever PATH the committing process had.
+# A GUI Git client does not inherit a login shell, so ~/.local/bin is absent and every
+# commit from one died with "exec: harness: not found" -- fail-closed, but with an error
+# that names nothing actionable, and the usual next move is --no-verify, which retires the
+# gate the hook exists to be.
+#
+# The checkout that installed the hook is written in, and the name is kept as a fallback so
+# a checkout that later moves degrades to the old behaviour rather than to nothing.
 write_pre_commit_hook() {
     local hook_path="$1"
-    local hooks_dir temporary
+    local hooks_dir temporary harness_cli
     hooks_dir="$(dirname -- "${hook_path}")"
+    harness_cli="$(get_harness_root)/bin/harness"
     temporary="$(mktemp "${hooks_dir}/pre-commit.harness.XXXXXX")"
     cat > "${temporary}" <<HOOK_EOF
 #!/usr/bin/env bash
 ${HOOK_MARKER}
-exec harness scan --staged
+HARNESS_CLI="${harness_cli}"
+[ -x "\${HARNESS_CLI}" ] || HARNESS_CLI="harness"
+exec "\${HARNESS_CLI}" scan --staged
 HOOK_EOF
     chmod 755 "${temporary}"
     mv "${temporary}" "${hook_path}"
@@ -176,7 +187,11 @@ fi
 if ! jq --version >/dev/null 2>&1; then
     log_error "The landmine scanner requires jq; no rule could be read."
     log_error "A scan that could not run is not a passing scan."
-    scan_exit "unrunnable" 1
+    # The one refusal that does not route through scan_exit, and the only one that cannot:
+    # jq is what writes the JSON document, so there is nothing to emit. It exited 1, which
+    # `qa all` aggregates as a scan that ran and found a landmine rather than as a gate that
+    # could not run -- the distinction this file's header exists to make.
+    exit "${SCAN_UNRUNNABLE}"
 fi
 
 # Rules that were asked for and cannot be read abort the scan. They used to be replaced by
@@ -455,7 +470,8 @@ if [ "${SCAN_MODE}" = "staged" ]; then
         staged_blob="${STAGED_ROOT}/$(printf '%06d' "${staged_index}")"
         if ! git show ":${file}" > "${staged_blob}" 2>/dev/null; then
             log_error "Cannot read staged content for ${file}."
-            scan_exit "unrunnable" 1
+            log_error "A scan that could not read what it was asked to read is not a passing scan."
+            scan_exit "unrunnable" "${SCAN_UNRUNNABLE}"
         fi
         SCAN_SOURCES+=("${staged_blob}")
         staged_index=$((staged_index + 1))
