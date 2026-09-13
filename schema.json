@@ -90,6 +90,23 @@
                 "type": "string",
                 "default": "release/",
                 "description": "Prefix for release branches"
+              },
+              "requireConventionalCommits": {
+                "description": "Whether 'harness commit check' holds every commit to Conventional Commits. Set false for a project that has no such convention.",
+                "type": "boolean",
+                "default": true
+              },
+              "requireIssueKey": {
+                "description": "Whether every commit must carry the issue key its branch names. Applies only when the branch carries one.",
+                "type": "boolean",
+                "default": true
+              },
+              "forbiddenCommitTrailers": {
+                "description": "Substrings no commit message may contain, matched case-insensitively. Empty by default: whether AI attribution trailers are banned is a project policy, not a universal one.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           },

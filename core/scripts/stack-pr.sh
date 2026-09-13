@@ -33,9 +33,11 @@ Runs the full QA suite, pushes the current branch, and opens a pull request agai
 <target_branch> (default: the trunk). It does not create commits.
 
 Options:
-  --yes, -y     Confirm the push in advance. Required where there is no terminal to ask on.
-  --dry-run     Report every decision and mutate nothing.
-  -h, --help    Show this help message
+  --yes, -y          Confirm the push in advance. Required where there is no terminal to ask on.
+  --dry-run          Run every pre-flight guard, report each decision, and mutate nothing.
+  --draft            Open the pull request as a draft.
+  --body-file <path> Use this file as the pull request body instead of the commit messages.
+  -h, --help         Show this help message
 USAGE_EOF
 }
 
@@ -46,11 +48,19 @@ ensure_git_repo "${REPO_DIR}"
 TARGET_BRANCH=""
 ASSUME_YES=false
 DRY_RUN=false
+DRAFT=false
+BODY_FILE=""
 
 while [ $# -gt 0 ]; do
     case "$1" in
         --yes|-y) ASSUME_YES=true; shift ;;
         --dry-run) DRY_RUN=true; shift ;;
+        --draft) DRAFT=true; shift ;;
+        --body-file)
+            [ -n "${2:-}" ] || { log_error "--body-file requires a path."; exit 1; }
+            BODY_FILE="$2"
+            shift 2
+            ;;
         -h|--help) usage; exit 0 ;;
         -*)
             log_error "Unknown ship option: $1"
@@ -69,6 +79,13 @@ while [ $# -gt 0 ]; do
 done
 
 cd "${REPO_DIR}"
+
+# Checked here rather than at `gh pr create`, which happens after the push: a body that
+# cannot be read would otherwise leave the branch published and the pull request unopened.
+if [ -n "${BODY_FILE}" ] && [ ! -f "${BODY_FILE}" ]; then
+    log_error "The pull request body file does not exist: ${BODY_FILE}"
+    exit 1
+fi
 
 [ -n "${TARGET_BRANCH}" ] || TARGET_BRANCH="$(get_trunk_branch "${REPO_DIR}")"
 CI_PROVIDER="$(get_profile_value "ci.provider" "github")"
@@ -122,19 +139,48 @@ if [ -n "${UNTRACKED}" ]; then
     printf '%s\n' "${UNTRACKED}" | sed 's/^/  /'
 fi
 
-# A delta spec is active while its work is in flight, and `harness context` counts what is
-# left in specs/ as exactly that. Publishing with one still there is usually the workflow
-# having skipped its archive step, and the next run will be told there is work in progress
-# that shipped. It is reported and not refused, for the same reason as the untracked files
-# above: a project may legitimately carry one spec across several pull requests, and
-# refusing would retire the command rather than catch the mistake.
+# Every rule the harness defines and could check here, checked. `ship` ran qa all and the
+# git guards and nothing else, so the branch convention, the commit format and the delta
+# spec's own verification -- all of them already implemented, all of them checkable -- were
+# unenforced at the one moment the work leaves the machine and becomes other people's
+# problem. Each refusal below is satisfiable by configuration or by fixing the work.
+log_info "Running pre-flight guards..."
+
+if ! "${SCRIPT_DIR}/stack-branch.sh" check "${CURRENT_BRANCH}"; then
+    log_error "'${CURRENT_BRANCH}' does not follow this project's branch convention; nothing was pushed."
+    exit 1
+fi
+
+if ! "${SCRIPT_DIR}/stack-commit.sh" check --branch --base "${TARGET_REF}"; then
+    log_error "The commit messages on this branch do not conform; nothing was pushed."
+    log_info "Rewrite them, or record the exemption in profiles.${ACTIVE_PROFILE}.git."
+    exit 1
+fi
+
+# An active delta spec is work the harness believes is still in flight. Publishing one that
+# does not verify ships a spec nobody finished, and `harness context` will go on telling the
+# next run there is work in progress. Archiving a delivered spec is `harness spec archive`.
 ACTIVE_SPECS="$(active_delta_specs "${REPO_DIR}/specs")"
 if [ -n "${ACTIVE_SPECS}" ]; then
-    log_warn "A delta spec is still active. If this branch delivers it, archive it with 'harness spec archive':"
+    SPEC_FAILURES=0
+    while IFS= read -r active_spec; do
+        [ -n "${active_spec}" ] || continue
+        "${SCRIPT_DIR}/stack-spec.sh" verify "${active_spec}" || SPEC_FAILURES=$((SPEC_FAILURES + 1))
+    done <<< "${ACTIVE_SPECS}"
+    if [ "${SPEC_FAILURES}" -ne 0 ]; then
+        log_error "${SPEC_FAILURES} active delta spec(s) do not verify; nothing was pushed."
+        exit 1
+    fi
+    log_warn "A delta spec is still active and verifies. If this branch delivers it, archive it with 'harness spec archive':"
     printf '%s\n' "${ACTIVE_SPECS}" | sed "s|^${REPO_DIR}/|  |"
 fi
 
-log_info "Publishing ${BOLD}${CURRENT_BRANCH}${RESET} (${COMMITS_AHEAD} commit(s)) into ${BOLD}${TARGET_BRANCH}${RESET} on origin."
+log_success "Pre-flight guards passed: branch convention, commit messages, delta specs."
+
+PUBLICATION_SHAPE="a pull request"
+[ "${DRAFT}" != true ] || PUBLICATION_SHAPE="a draft pull request"
+log_info "Publishing ${BOLD}${CURRENT_BRANCH}${RESET} (${COMMITS_AHEAD} commit(s)) into ${BOLD}${TARGET_BRANCH}${RESET} on origin as ${PUBLICATION_SHAPE}."
+[ -z "${BODY_FILE}" ] || log_info "Pull request body: ${BODY_FILE}"
 
 if [ "${DRY_RUN}" = true ]; then
     log_info "Dry run: the QA suite, the push, and the pull request were all skipped. Nothing was changed."
@@ -187,11 +233,28 @@ case "${CI_PROVIDER}" in
         log_info "Opening GitHub Pull Request targeting '${TARGET_BRANCH}'..."
         # No interactive retry: the previous fallback re-ran `gh pr create` without --fill,
         # which prompts, and hangs wherever there is no terminal.
-        gh pr create --base "${TARGET_BRANCH}" --fill || report_unopened "'gh pr create' failed."
+        GH_ARGS=(--base "${TARGET_BRANCH}")
+        # --fill derives the body from the commit messages, which is the right default and
+        # cannot express a project's pull request template. --body-file is how a caller
+        # supplies one without this command growing an opinion about its content.
+        if [ -n "${BODY_FILE}" ]; then
+            GH_ARGS+=(--title "$(git log -1 --pretty=%s)" --body-file "${BODY_FILE}")
+        else
+            GH_ARGS+=(--fill)
+        fi
+        [ "${DRAFT}" != true ] || GH_ARGS+=(--draft)
+        gh pr create "${GH_ARGS[@]}" || report_unopened "'gh pr create' failed."
         ;;
     gitlab)
         command -v glab >/dev/null 2>&1 || report_unopened "the GitLab CLI ('glab') is not installed."
-        glab mr create --target-branch "${TARGET_BRANCH}" --fill || report_unopened "'glab mr create' failed."
+        GLAB_ARGS=(--target-branch "${TARGET_BRANCH}")
+        if [ -n "${BODY_FILE}" ]; then
+            GLAB_ARGS+=(--title "$(git log -1 --pretty=%s)" --description "$(cat "${BODY_FILE}")")
+        else
+            GLAB_ARGS+=(--fill)
+        fi
+        [ "${DRAFT}" != true ] || GLAB_ARGS+=(--draft)
+        glab mr create "${GLAB_ARGS[@]}" || report_unopened "'glab mr create' failed."
         ;;
     *)
         CUSTOM_PR_CMD="$(get_profile_value "ci.prCommand" "")"
