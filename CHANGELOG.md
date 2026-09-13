@@ -6,6 +6,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.19.0] - 2026-09-13
+
+`harness ship` now runs the rules the harness already defines.
+
+### Added
+
+- `harness commit check --branch [--base <ref>]` reads every commit from the merge base to
+  HEAD. One commit was checkable and the range a pull request actually publishes was not, so
+  the rule existed and went unenforced at the one moment it matters. It reports every commit
+  that fails and every rule each one breaks, rather than the first.
+- `harness ship` runs `branch check`, `commit check --branch` and `spec verify` before the
+  QA suite, so a refusal costs no test run. `ship --dry-run` is now a real pre-flight report.
+- `harness ship --draft` and `--body-file <path>`. `gh pr create --fill` derives the body
+  from the commit messages and cannot express a project's pull request template; the body
+  file is read and validated before the push, so a body that cannot be read no longer leaves
+  the branch published and the pull request unopened.
+- `profiles.<name>.git.forbiddenCommitTrailers` — substrings no commit message may carry,
+  matched case-insensitively. **Empty by default.** Whether AI attribution trailers are
+  banned is a project policy, not a universal one: this repository's own tooling adds one
+  deliberately, and a harness that hard-coded the ban could not build itself.
+
+### Changed
+
+- An active delta spec that does not verify now refuses publication. One that verifies is
+  still reported and still publishes, because a project may legitimately carry a spec across
+  several pull requests. Previously every active spec was a warning, verified or not.
+- `git.requireConventionalCommits` and `git.requireIssueKey` default to true, so `ship` will
+  refuse a branch whose commits do not conform. A project with no such convention records
+  that with `false`, the way one with no linter already records `lintCommand: false`: a
+  refusal that cannot be satisfied is a gate that can never pass.
+
 ## [2.18.0] - 2026-09-13
 
 A delta mode now reads the delta. This is the change that makes the harness adoptable on a

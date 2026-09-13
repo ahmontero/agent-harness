@@ -3922,7 +3922,7 @@ echo "  [PASS] ship refuses a branch with no commits ahead of its target."
 
 printf 'shipped = 1\n' > "${SHIP_REPO}/feature.txt"
 git -C "${SHIP_REPO}" add -A
-git -C "${SHIP_REPO}" commit -q -m "add the feature"
+git -C "${SHIP_REPO}" commit -q -m "feat(AH-18): add the feature"
 
 # Uncommitted work would not be pushed, and the previous command said nothing about it.
 printf 'shipped = 2\n' > "${SHIP_REPO}/feature.txt"
@@ -3994,7 +3994,7 @@ echo "  [PASS] a confirmed ship runs QA, pushes, and opens the pull request."
 git -C "${SHIP_REPO}" checkout -q -b feat/AH-18-nopr
 printf 'more = 1\n' > "${SHIP_REPO}/second.txt"
 git -C "${SHIP_REPO}" add -A
-git -C "${SHIP_REPO}" commit -q -m "second"
+git -C "${SHIP_REPO}" commit -q -m "feat(AH-18): second"
 python3 - "${SHIP_REPO}/harness.config.json" <<'STRIP_PR_EOF'
 import json, sys
 path = sys.argv[1]
@@ -4003,7 +4003,7 @@ config["profiles"]["ship"]["ci"] = {"provider": "custom"}
 json.dump(config, open(path, "w"), indent=2)
 STRIP_PR_EOF
 git -C "${SHIP_REPO}" add -A
-git -C "${SHIP_REPO}" commit -q -m "drop the pr command"
+git -C "${SHIP_REPO}" commit -q -m "chore(AH-18): drop the pr command"
 ship --yes
 if [ "${SHIP_STATUS}" -eq 0 ]; then
     echo "  [FAIL] ship reported success having opened no pull request: ${SHIP_OUTPUT}"
@@ -4757,9 +4757,33 @@ git -C "${LIFECYCLE_REPO}" config user.name "Agent Harness Tests"
 git -C "${LIFECYCLE_REPO}" commit -q --allow-empty -m "init"
 git -C "${LIFECYCLE_REPO}" branch -M main
 git -C "${LIFECYCLE_REPO}" checkout -q -b feat/AH-1-alpha
-printf '# Delta Spec: AH-1\n' > "${LIFECYCLE_REPO}/specs/delta-AH-1-alpha.md"
+# A spec that verifies. What this group asserts is that an active spec is reported rather
+# than refused, and that is unchanged -- but ship now verifies the specs it reports, so the
+# fixture has to be a finished one to exercise that assertion at all. The opposite case, an
+# active spec that does not verify, is asserted in group 52.
+cat > "${LIFECYCLE_REPO}/specs/delta-AH-1-alpha.md" <<'LIFECYCLE_SPEC_EOF'
+# Delta Spec: AH-1 — alpha
+
+- **Issue / Ticket:** AH-1
+
+## 1. Intent & Context
+
+Exercise the lifecycle of an active delta spec through ship.
+
+## 2. Requirements & Domain Floor Invariants
+
+An active spec is reported at publication time and does not refuse the publication.
+
+## 3. Implementation Plan
+
+Create the spec on the branch and leave it active.
+
+## 4. Verification & QA
+
+harness ship --dry-run reports the spec and exits zero.
+LIFECYCLE_SPEC_EOF
 git -C "${LIFECYCLE_REPO}" add -A
-git -C "${LIFECYCLE_REPO}" commit -q -m "work"
+git -C "${LIFECYCLE_REPO}" commit -q -m "feat(AH-1): work"
 
 LIFECYCLE_STATUS=0
 LIFECYCLE_OUTPUT="$( (cd "${LIFECYCLE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship --dry-run 2>&1) )" || LIFECYCLE_STATUS=$?
@@ -5332,6 +5356,215 @@ if [ "${SCOPE_BAD_STATUS}" -eq 0 ]; then
     exit 1
 fi
 echo "  [PASS] qa.scanMode selects the scan gate's mode and refuses one it does not have."
+
+echo ""
+echo "=== 52. Testing Publication Guards ==="
+# `ship` ran qa all and the git guards and nothing else. Every other rule the harness
+# defines -- the branch convention, the delta spec's own verification, the commit format --
+# was checkable and unchecked at the one moment the work leaves the machine.
+GUARD_REPO="${TMP_TEST_DIR}/publication-guards"
+mkdir -p "${GUARD_REPO}"
+git -C "${GUARD_REPO}" init -q
+git -C "${GUARD_REPO}" config user.email "tests@agent-harness.local"
+git -C "${GUARD_REPO}" config user.name "Agent Harness Tests"
+guard_config() {
+    cat > "${GUARD_REPO}/harness.config.json"
+}
+guard_config <<'GUARD_CONFIG_EOF'
+{
+  "project": { "name": "publication-guards", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Guards", "git": { "trunkBranch": "main" },
+    "qa": { "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" } } }
+}
+GUARD_CONFIG_EOF
+echo "seed" > "${GUARD_REPO}/seed.txt"
+git -C "${GUARD_REPO}" add -A
+git -C "${GUARD_REPO}" commit -qm "chore: seed"
+git -C "${GUARD_REPO}" branch -M main
+
+guard_commit_check() {
+    GUARD_STATUS=0
+    GUARD_OUTPUT="$( (cd "${GUARD_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit check "$@" 2>&1) )" || GUARD_STATUS=$?
+}
+guard_ship() {
+    GUARD_STATUS=0
+    GUARD_OUTPUT="$( (cd "${GUARD_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship "$@" </dev/null 2>&1) )" || GUARD_STATUS=$?
+}
+guard_add_commit() {
+    printf '%s\n' "$2" >> "${GUARD_REPO}/seed.txt"
+    git -C "${GUARD_REPO}" add -A
+    git -C "${GUARD_REPO}" commit -q -m "$1"
+}
+
+# One commit at a time was checkable; the range a pull request actually publishes was not.
+git -C "${GUARD_REPO}" checkout -q -b feat/AH-40-range main
+guard_add_commit "feat(AH-40): first" one
+guard_add_commit "feat(AH-40): second" two
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] commit check --branch rejected a conforming range: ${GUARD_OUTPUT}"
+    exit 1
+fi
+guard_add_commit "wip" three
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit check --branch accepted a non-conforming commit: ${GUARD_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${GUARD_OUTPUT}" | grep -q "$(git -C "${GUARD_REPO}" rev-parse --short HEAD)"; then
+    echo "  [FAIL] commit check --branch did not name the offending commit: ${GUARD_OUTPUT}"
+    exit 1
+fi
+git -C "${GUARD_REPO}" reset -q --hard HEAD~1
+echo "  [PASS] commit check --branch reads the range a pull request publishes and names what fails."
+
+# A branch carrying an issue key and a commit that drops it is the exact defect AH-36 fixed
+# in the builder; the checker has to be able to see it too.
+guard_add_commit "feat: no key at all" four
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit check --branch accepted a commit missing the branch's issue key: ${GUARD_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${GUARD_OUTPUT}" | grep -q "AH-40"; then
+    echo "  [FAIL] commit check --branch did not name the key it expected: ${GUARD_OUTPUT}"
+    exit 1
+fi
+git -C "${GUARD_REPO}" reset -q --hard HEAD~1
+echo "  [PASS] commit check --branch requires the branch's issue key in every commit."
+
+# Attribution trailers are a project policy, not a universal one: this repository requires
+# the trailer its own tooling adds. So the ban is configured, and empty by default.
+guard_add_commit "feat(AH-40): trailered
+
+Co-Authored-By: Some Assistant <noreply@example.com>" five
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] commit check --branch banned a trailer no configuration forbids: ${GUARD_OUTPUT}"
+    exit 1
+fi
+guard_config <<'GUARD_TRAILER_EOF'
+{
+  "project": { "name": "publication-guards", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Guards",
+    "git": { "trunkBranch": "main", "forbiddenCommitTrailers": ["Co-Authored-By: Some Assistant"] },
+    "qa": { "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" } } }
+}
+GUARD_TRAILER_EOF
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit check --branch accepted a configured-forbidden trailer: ${GUARD_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${GUARD_OUTPUT}" | grep -qi "Some Assistant"; then
+    echo "  [FAIL] commit check --branch did not name the forbidden trailer: ${GUARD_OUTPUT}"
+    exit 1
+fi
+git -C "${GUARD_REPO}" reset -q --hard HEAD~1
+guard_config <<'GUARD_RESET_EOF'
+{
+  "project": { "name": "publication-guards", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Guards", "git": { "trunkBranch": "main" },
+    "qa": { "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" } } }
+}
+GUARD_RESET_EOF
+echo "  [PASS] A forbidden commit trailer is configured policy, banned by no default."
+
+# A project with no conventional-commit convention must be able to say so, the way a
+# project with no linter already can.
+git -C "${GUARD_REPO}" checkout -q -b feat/AH-41-optout main
+guard_add_commit "anything at all" six
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit check --branch accepted a free-form message by default: ${GUARD_OUTPUT}"
+    exit 1
+fi
+guard_config <<'GUARD_OPTOUT_EOF'
+{
+  "project": { "name": "publication-guards", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Guards",
+    "git": { "trunkBranch": "main", "requireConventionalCommits": false, "requireIssueKey": false },
+    "qa": { "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" } } }
+}
+GUARD_OPTOUT_EOF
+guard_commit_check --branch
+if [ "${GUARD_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] commit check --branch enforced a convention the project switched off: ${GUARD_OUTPUT}"
+    exit 1
+fi
+guard_config <<'GUARD_ON_EOF'
+{
+  "project": { "name": "publication-guards", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Guards", "git": { "trunkBranch": "main" },
+    "qa": { "testCommand": "true", "lintCommand": "true", "typeCheckCommand": "true" } } }
+}
+GUARD_ON_EOF
+echo "  [PASS] A project with no commit convention can record that, and is then not held to one."
+
+# ship refuses on a branch name its own checker rejects, and reports it before touching QA.
+git -C "${GUARD_REPO}" checkout -q -b not-an-issue-branch main
+guard_add_commit "feat: off convention" seven
+guard_ship --dry-run
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship accepted a branch name branch check rejects: ${GUARD_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${GUARD_OUTPUT}" | grep -q "convention"; then
+    echo "  [FAIL] ship refused without naming the branch convention: ${GUARD_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] ship refuses a branch its own branch check rejects."
+
+# An active delta spec that does not verify is a spec that is not finished.
+git -C "${GUARD_REPO}" checkout -q -b feat/AH-42-spec main
+guard_add_commit "feat(AH-42): work" eight
+mkdir -p "${GUARD_REPO}/specs"
+printf '# Delta Spec: AH-42\n\n[TODO]\n' > "${GUARD_REPO}/specs/delta-AH-42-unfinished.md"
+git -C "${GUARD_REPO}" add -A
+git -C "${GUARD_REPO}" commit -qm "feat(AH-42): add the spec"
+guard_ship --dry-run
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship accepted an active delta spec that does not verify: ${GUARD_OUTPUT}"
+    exit 1
+fi
+rm -rf "${GUARD_REPO}/specs"
+git -C "${GUARD_REPO}" add -A
+git -C "${GUARD_REPO}" commit -qm "chore(AH-42): drop the spec"
+echo "  [PASS] ship refuses an active delta spec that does not verify."
+
+# All guards satisfied: the dry run reports a publishable branch and mutates nothing.
+guard_ship --dry-run
+if [ "${GUARD_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] ship refused a branch that satisfies every guard: ${GUARD_OUTPUT}"
+    exit 1
+fi
+for guard_expected in "branch convention" "commit messages" "Dry run"; do
+    if ! printf '%s' "${GUARD_OUTPUT}" | grep -qi "${guard_expected}"; then
+        echo "  [FAIL] ship --dry-run did not report '${guard_expected}': ${GUARD_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] ship --dry-run reports every guard it checked and mutates nothing."
+
+# A pull request body is not something --fill can express, and the repository's own
+# template is the shape reviewers expect.
+guard_ship --draft --body-file "${TMP_TEST_DIR}/no-such-body.md" --dry-run
+if [ "${GUARD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] ship accepted a --body-file that does not exist: ${GUARD_OUTPUT}"
+    exit 1
+fi
+printf 'A body.\n' > "${GUARD_REPO}/body.md"
+guard_ship --draft --body-file "${GUARD_REPO}/body.md" --dry-run
+if [ "${GUARD_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] ship refused a valid --draft --body-file: ${GUARD_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${GUARD_OUTPUT}" | grep -qi "draft"; then
+    echo "  [FAIL] ship --dry-run did not report that it would open a draft: ${GUARD_OUTPUT}"
+    exit 1
+fi
+rm -f "${GUARD_REPO}/body.md"
+echo "  [PASS] ship takes a pull request body and a draft flag, and refuses a body it cannot read."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"
