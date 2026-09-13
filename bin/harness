@@ -92,7 +92,7 @@ ${BOLD}Core Commands:${RESET}
                 harness scan --install-hook [--force]
 
   ${GREEN}worktree${RESET}      Isolate feature/bug development in clean parallel directories
-                harness worktree create <type> <issue_key> <slug> [--base <branch>]
+                harness worktree create <type> <issue_key> <slug> [--base <branch>] [--seed]
                 harness worktree list
                 harness worktree seed <path>
                 harness worktree remove <issue_key|path> [--force] [--dry-run]
@@ -134,7 +134,10 @@ ${BOLD}Core Commands:${RESET}
                 harness sync --check
 
   ${GREEN}init${RESET}          Initialize agent harness in current repository
-                harness init [--recipe <name>]
+                harness init [--recipe <name>] [--with-hook]
+
+  ${GREEN}uninstall${RESET}     Remove the surfaces, CLI symlinks and hook agent-harness installed
+                harness uninstall [--global|--target <path>] [--dry-run] [--yes]
 
   ${GREEN}completion${RESET}    Install shell autocompletion for Zsh and Bash
                 harness completion install
@@ -202,6 +205,9 @@ case "${COMMAND}" in
         ;;
     sync)
         exec "${SCRIPTS_DIR}/stack-sync.sh" "$@"
+        ;;
+    uninstall)
+        exec "${SCRIPTS_DIR}/stack-uninstall.sh" "$@"
         ;;
     version)
         exec "${SCRIPTS_DIR}/stack-version.sh" "$@"

@@ -88,7 +88,19 @@ report_worktree_surfaces() {
 
 case "${ACTION}" in
     create)
-        parse_create_arguments "$@"
+        # --seed is this command's own flag, filtered out before the shared creation parser
+        # sees it: a worktree gets its tracked files from Git and its surfaces from nowhere,
+        # and reporting that gap left the user to close it by hand in a second command.
+        SEED_ON_CREATE=false
+        CREATE_ARGUMENTS=()
+        for create_argument in "$@"; do
+            if [ "${create_argument}" = "--seed" ]; then
+                SEED_ON_CREATE=true
+            else
+                CREATE_ARGUMENTS+=("${create_argument}")
+            fi
+        done
+        parse_create_arguments "${CREATE_ARGUMENTS[@]+"${CREATE_ARGUMENTS[@]}"}"
         TYPE="${CREATE_TYPE:-feat}"
         RAW_KEY="${CREATE_KEY}"
         SLUG="${CREATE_SLUG}"
@@ -108,6 +120,13 @@ case "${ACTION}" in
         log_info "Creating worktree for ${BOLD}${BRANCH_NAME}${RESET} in ${WORKTREE_DIR}..."
         git worktree add -b "${BRANCH_NAME}" "${WORKTREE_DIR}" "${BASE}"
         log_success "Worktree created: ${WORKTREE_DIR}"
+        if [ "${SEED_ON_CREATE}" = true ]; then
+            if project_tracks_surfaces; then
+                log_info "This project tracks its skill surfaces in Git, so the worktree already carries them."
+            else
+                "$(get_harness_root)/install.sh" --seed-target "${WORKTREE_DIR}"
+            fi
+        fi
         report_worktree_surfaces "${WORKTREE_DIR}"
         ;;
     list)

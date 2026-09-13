@@ -6,6 +6,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.20.0] - 2026-09-13
+
+The lifecycle gaps: getting the harness fully installed, and getting it off a machine again.
+
+### Added
+
+- `harness uninstall` removes the skill surfaces, CLI symlinks and pre-commit hook
+  agent-harness installed. Installation writes into four global surfaces, `~/.local/bin` and
+  the repository, and the only way back was `./setup --rollback` — which undoes the last
+  transaction, once, and is useless a week later. It removes only what carries the managed
+  marker, so a skill somebody else put in `~/.claude/skills` is never a candidate; it removes
+  a surface directory only once it is empty; and it never touches `AGENTS.md`, the
+  `CLAUDE.md`/`GEMINI.md` symlinks, `rules/` or `stack.config.json`, which a repository owns.
+  `--dry-run` names every path first, a confirmation is required, and every removal is
+  journalled through the installer's own transaction — so `./setup --rollback` undoes an
+  uninstall exactly as it undoes an install.
+- `harness init --with-hook` installs the scanner's pre-commit hook. It is the only gate that
+  acts at the moment of the commit and it was opt-in behind a second command nobody ran,
+  after which `harness doctor` warned about its absence on every invocation. The hook is
+  written by the scanner's own installer, so there is one implementation of what it contains.
+- `harness worktree create --seed` gives the new worktree its surfaces in the same breath.
+  The command reported the gap and left the user to close it by hand — which is how an agent
+  moves into a worktree following `references/worktree.md` and loses the skills that sent it
+  there.
+- CI checks its own branch's commit messages with `harness commit check --branch`, and
+  checks out at full depth so that gate and `scan --branch` can resolve a merge base at all.
+
 ## [2.19.0] - 2026-09-13
 
 `harness ship` now runs the rules the harness already defines.

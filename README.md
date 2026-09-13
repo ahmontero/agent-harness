@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.19.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.20.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -588,6 +588,11 @@ It now runs every one of them **before** the QA suite, so a refusal costs no tes
 An active spec that *verifies* is still reported and still publishes: a project may
 legitimately carry one across several pull requests.
 
+`commit check --branch` measures from the merge base with the trunk. On a **stacked** branch
+that is the wrong range — it legitimately carries its parent's commits, and those belong to
+the parent's issue — so name the real base with `--base`. `harness ship` already does this:
+it checks against the branch it is about to target.
+
 ```jsonc
 "git": {
   "requireConventionalCommits": true,
@@ -636,6 +641,27 @@ version number are not the same thing.
 one tracking no upstream, and one with uncommitted changes to tracked files. It
 fast-forwards only. `--check` is a report rather than a gate: it names whatever it could
 not determine and still exits `0`. The gate for surface currency is `harness sync --check`.
+
+### 🧹 Removing it again (`harness uninstall`)
+
+Installation writes into four global skill surfaces, `~/.local/bin`, and the repository. The
+only way back was `./setup --rollback`, which undoes the last transaction, once, and is
+useless a week later. Something that writes into a home directory owes an exit that still
+works after you have stopped thinking about it.
+
+```bash
+harness uninstall --dry-run        # name every path it would remove; remove none
+harness uninstall                  # global surfaces + CLI symlinks + this repository
+harness uninstall --global         # the global surfaces and the CLI only
+harness uninstall --target <path>  # one repository's surfaces and hook only
+```
+
+It removes only what carries the managed marker, so a skill somebody else put in
+`~/.claude/skills` is never a candidate, and a surface directory is removed only once it is
+empty. It **never** removes `AGENTS.md`, the `CLAUDE.md`/`GEMINI.md` symlinks, `rules/` or
+`stack.config.json` — a repository commits and owns those. Every removal is journalled
+through the installer's transaction, so `./setup --rollback` undoes an uninstall exactly as
+it undoes an install.
 
 ### 🐚 Shell Autocompletion (Zsh & Bash)
 

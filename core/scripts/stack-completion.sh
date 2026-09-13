@@ -31,6 +31,7 @@ HARNESS_COMMANDS=(
     "sync:Report or repair drift in installed skill surfaces"
     "completion:Install shell autocompletion"
     "init:Initialize the harness in a repository"
+    "uninstall:Remove the surfaces, CLI symlinks and hook agent-harness installed"
     "version:Report the installed version, checkout and revision"
     "upgrade:Update the checkout and re-sync every managed surface"
 )
