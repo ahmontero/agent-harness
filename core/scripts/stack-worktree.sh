@@ -223,9 +223,27 @@ case "${ACTION}" in
             local path="$1"
             local branch="$2"
             local key="$3"
-            local last_segment
+            local last_segment resolved_key resolved_path
             [ "${path}" = "${key}" ] && return 0
             [ "$(basename "${path}")" = "${key}" ] && return 0
+
+            # A path the caller can type is a path this command advertises. The key was
+            # compared as an opaque string against the absolute path git emits, so only the
+            # absolute form ever matched -- while `worktree seed`, thirty lines above,
+            # already resolves its argument with pwd -P and compares physical paths.
+            #
+            # Resolution does not loosen the match. The exactness this function was given
+            # after a substring key removed two worktrees is about naming one worktree and
+            # no other, and a resolved path names exactly one directory: a path that is not
+            # a worktree still matches nothing.
+            if [ -d "${key}" ]; then
+                resolved_key="$(cd "${key}" 2>/dev/null && pwd -P)" || resolved_key=""
+                resolved_path="$(cd "${path}" 2>/dev/null && pwd -P)" || resolved_path=""
+                if [ -n "${resolved_key}" ] && [ "${resolved_key}" = "${resolved_path}" ]; then
+                    return 0
+                fi
+            fi
+
             if [ -n "${branch}" ]; then
                 last_segment="${branch##*/}"
                 [ "${last_segment}" = "${key}" ] && return 0
