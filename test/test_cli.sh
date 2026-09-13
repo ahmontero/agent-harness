@@ -1921,6 +1921,86 @@ if ! printf '%s' "${SHAPE_OUTPUT}" | grep -q "Not checked"; then
 fi
 echo "  [PASS] config validate reports structural problems and names what it did not check."
 
+# Every command resolved its configuration and its target repository from $PWD, so running
+# the harness from any subdirectory of a configured repository answered as though the
+# project had no configuration at all: the profile fell back to "default", every qa gate
+# reported it could not run, and the scanner read the built-in template instead of the
+# project's rules. `harness scan --all` then read that subtree alone and reported "passed
+# with 0 errors" -- a gate that read almost nothing reporting a pass, which is the
+# fail-open shape rules/floor.md invariant 1 forbids.
+CONFIG_ROOTED="${TMP_TEST_DIR}/config-rooted"
+mkdir -p "${CONFIG_ROOTED}/services/api"
+git -C "${CONFIG_ROOTED}" init -q
+cat > "${CONFIG_ROOTED}/harness.config.json" <<'ROOTED_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "rooted" },
+  "profiles": { "rooted": { "displayName": "Rooted", "qa": { "testCommand": "echo rooted" } } }
+}
+ROOTED_CONFIG_EOF
+# The fixture has to look exactly like the credential SEC-010 catches, which is what makes
+# it the evidence that the baseline rule reached a file at the repository root.
+# harness-ignore: SEC-010
+printf 'password = "rootedsecretvalue123"\n' > "${CONFIG_ROOTED}/legacy.py"
+git -C "${CONFIG_ROOTED}" add -A
+git -C "${CONFIG_ROOTED}" -c user.email=t@example.com -c user.name=test commit -qm "seed" >/dev/null
+# mktemp -d hands back /var/... on macOS while git reports /private/var/..., so both sides
+# of the comparison are resolved the same way rather than assumed equal.
+ROOTED_PHYSICAL="$(cd "${CONFIG_ROOTED}" && pwd -P)"
+
+ROOTED_CONTEXT="$(cd "${CONFIG_ROOTED}/services/api" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json)"
+if [ "$(printf '%s' "${ROOTED_CONTEXT}" | jq -r '.profile')" != "rooted" ]; then
+    echo "  [FAIL] A subdirectory resolved profile '$(printf '%s' "${ROOTED_CONTEXT}" | jq -r '.profile')' instead of the repository's 'rooted'"
+    exit 1
+fi
+if [ "$(printf '%s' "${ROOTED_CONTEXT}" | jq -r '.repository')" != "${ROOTED_PHYSICAL}" ]; then
+    echo "  [FAIL] A subdirectory reported the target repository as '$(printf '%s' "${ROOTED_CONTEXT}" | jq -r '.repository')' instead of '${ROOTED_PHYSICAL}'"
+    exit 1
+fi
+echo "  [PASS] A subdirectory resolves the repository's configuration and the repository root."
+
+ROOTED_SCAN="$(cd "${CONFIG_ROOTED}/services/api" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all --json 2>/dev/null || true)"
+if [ "$(printf '%s' "${ROOTED_SCAN}" | jq -r '.status')" != "failed" ]; then
+    echo "  [FAIL] scan --all from a subdirectory reported '$(printf '%s' "${ROOTED_SCAN}" | jq -r '.status')' without reading the repository"
+    exit 1
+fi
+if [ "$(printf '%s' "${ROOTED_SCAN}" | jq -r '[.findings[] | select(.file == "legacy.py")] | length')" -eq 0 ]; then
+    echo "  [FAIL] scan --all from a subdirectory did not read legacy.py at the repository root: ${ROOTED_SCAN}"
+    exit 1
+fi
+echo "  [PASS] scan --all from a subdirectory reads the whole repository."
+
+# Per-directory resolution is how a polyglot repository selects a profile, so the ascent is
+# a fallback and never a replacement: a directory carrying its own configuration still wins.
+cat > "${CONFIG_ROOTED}/services/api/harness.config.json" <<'INNER_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "inner" },
+  "profiles": { "inner": { "displayName": "Inner" } } }
+INNER_CONFIG_EOF
+INNER_PROFILE="$(cd "${CONFIG_ROOTED}/services/api" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json | jq -r '.profile')"
+if [ "${INNER_PROFILE}" != "inner" ]; then
+    echo "  [FAIL] A directory carrying its own configuration resolved '${INNER_PROFILE}' instead of 'inner'"
+    exit 1
+fi
+rm -f "${CONFIG_ROOTED}/services/api/harness.config.json"
+echo "  [PASS] A directory's own configuration still outranks the repository root's."
+
+# The ascent stops at the repository root. Climbing past it would let a directory nobody in
+# the project controls decide how the checkout is scanned.
+CONFIG_OUTSIDE="${TMP_TEST_DIR}/config-outside"
+mkdir -p "${CONFIG_OUTSIDE}/checkout"
+cat > "${CONFIG_OUTSIDE}/harness.config.json" <<'OUTSIDE_CONFIG_EOF'
+{
+  "project": { "defaultProfile": "outside" },
+  "profiles": { "outside": { "displayName": "Outside" } } }
+OUTSIDE_CONFIG_EOF
+git -C "${CONFIG_OUTSIDE}/checkout" init -q
+OUTSIDE_PROFILE="$(cd "${CONFIG_OUTSIDE}/checkout" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" context --json | jq -r '.profile')"
+if [ "${OUTSIDE_PROFILE}" = "outside" ]; then
+    echo "  [FAIL] A configuration above the repository root was adopted from inside the checkout"
+    exit 1
+fi
+echo "  [PASS] Resolution stops at the repository root."
+
 echo ""
 echo "=== 26. Testing Gate Refusals ==="
 

@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.2] - 2026-09-13
+
+### Fixed
+
+- The harness resolved its configuration and its target repository from `$PWD`, so every
+  command run from a subdirectory of a configured repository answered as though the project
+  had no configuration at all. The profile fell back to `default`, `qa all` reported that
+  lint, types and tests "could not run", the scanner read the built-in template instead of
+  the project's `rules/landmines.json`, and `spec status` looked for `<subdirectory>/specs`.
+- `harness scan --all` was the sharp end of it: from a subdirectory it read that subtree
+  alone and reported "passed with 0 errors" — a security gate that read almost nothing
+  reporting a pass, which is the fail-open shape `rules/floor.md` invariant 1 forbids.
+- Two independent links, both cut. `resolve_config_file` now searches the current directory
+  and ascends to the repository root; `get_target_repo` now falls back to the repository
+  root rather than to `pwd`. Fixing only the first would have left the scanner reading a
+  subtree, which the regression asserts directly.
+- The ascent stops at the repository root. A configuration above the checkout belongs to
+  nobody in the project, and adopting it would let a directory outside version control
+  decide how the checkout is scanned. Outside a repository the loop runs once, so nothing
+  changes for a directory that is not a checkout.
+- Per-directory resolution is preserved: a directory carrying its own configuration still
+  outranks the repository root's, because that is how a polyglot repository selects a
+  profile. The ascent is a fallback, never a replacement.
+- Paths are compared physically. Git reports a physical repository root and `pwd` is
+  logical, so under a symlinked parent — `/var` against `/private/var` on macOS, which is
+  where `mktemp -d` puts every fixture in this suite — the two spellings never meet and the
+  ascent would have run past the root it is meant to stop at.
+- `get_repo_root` moved from `lib/git.sh` to `lib/utils.sh`. `lib/config.sh` resolves paths
+  with it and is sourced before `lib/git.sh` everywhere, and without it at all by
+  `stack-config.sh` and `install.sh`. A second implementation would eventually have
+  disagreed about where a repository starts, and every path the harness resolves is
+  measured from that answer.
+
 ## [2.16.1] - 2026-09-13
 
 ### Fixed

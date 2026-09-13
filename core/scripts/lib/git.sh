@@ -30,10 +30,8 @@ ensure_git_repo() {
     fi
 }
 
-get_repo_root() {
-    local start_dir="${1:-$(pwd)}"
-    git -C "${start_dir}" rev-parse --show-toplevel 2>/dev/null || echo "${start_dir}"
-}
+# get_repo_root lives in lib/utils.sh: lib/config.sh needs it and is sourced before this
+# file everywhere, and without this file at all by stack-config.sh and install.sh.
 
 get_current_branch() {
     local repo_dir="${1:-$(pwd)}"
