@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.14.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.15.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -404,6 +404,25 @@ silently matching nothing.
   }
 ]
 ```
+
+#### Machine-readable output
+
+`harness scan --json` and `harness qa all --json` answer with one JSON document on stdout.
+Every human line — including the output of the gates' own test runners and linters — goes to
+stderr instead, so a human watching still sees it and a consumer parsing stdout never has to
+skip past it.
+
+```bash
+harness scan --branch --json | jq '.findings[] | "\(.file):\(.line) \(.rule)"'
+harness qa all --json        | jq -r '.gates[] | select(.status != "passed") | .name'
+```
+
+A finding carries `rule`, `name`, `level`, `file`, `line`, `text` and `message`; a
+path-pattern rule matches a name rather than a line and reports `line: null` rather than
+inventing one. A gate reports one of `passed`, `failed`, `unrunnable` or `declared-absent` —
+the four the aggregate already distinguishes, so a gate that could not run stays
+distinguishable from one that passed. Exit statuses are unchanged in both commands: `--json`
+changes the shape of the answer, never the verdict.
 
 `excludePaths` takes glob patterns and scopes a rule without switching it off (`vendor/*`,
 `*.generated.js`, `tests/*`). A single line can be exempted in place:
