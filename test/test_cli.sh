@@ -4586,7 +4586,15 @@ printf '# Delta Spec: AH-1\n' > "${LIFECYCLE_REPO}/specs/delta-AH-1-alpha.md"
 git -C "${LIFECYCLE_REPO}" add -A
 git -C "${LIFECYCLE_REPO}" commit -q -m "work"
 
+LIFECYCLE_STATUS=0
 LIFECYCLE_OUTPUT="$( (cd "${LIFECYCLE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship --dry-run 2>&1) )" || LIFECYCLE_STATUS=$?
+# The status was captured and never read, which ShellCheck was right to flag: the whole
+# point of this assertion is that ship carries on, and the exit status is the direct way to
+# say so rather than inferring it from the absence of a refusal in the prose.
+if [ "${LIFECYCLE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] ship refused on an active delta spec instead of reporting it (status ${LIFECYCLE_STATUS}): ${LIFECYCLE_OUTPUT}"
+    exit 1
+fi
 if ! printf '%s' "${LIFECYCLE_OUTPUT}" | grep -qF "delta-AH-1-alpha.md"; then
     echo "  [FAIL] ship published without naming the delta spec still active: ${LIFECYCLE_OUTPUT}"
     exit 1
