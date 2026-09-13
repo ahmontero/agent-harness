@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.15.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.16.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -205,7 +205,9 @@ Ledgers live under `.git/agent-harness/ledgers/`, are readable only by their own
 
 ## 🧠 Internal Engineering Protocols
 
-Default installations expose only `/harness-implement`, `/harness-fix`, and `/harness-investigate`. The protocols below are bundled privately inside those workflows, so agents still apply TDD, debugging, specs, QA, and review without adding those primitives to the normal command surface.
+Default installations expose only `/harness-implement`, `/harness-fix` and `/harness-investigate` — plus `/harness-orchestrate` on Claude Code. Most of the protocols below are bundled privately inside those workflows, so agents apply TDD, debugging, specs, QA, review, the bounded review loop and conflict resolution without those primitives appearing on the command surface.
+
+Five are bundled into no workflow and are reachable only through `--expert`: `/harness-commit`, `/harness-debt`, `/harness-doctor`, `/harness-scan` and `/harness-questionnaire`. The first four document CLI commands you can run directly — `harness commit`, `harness debt`, `harness doctor`, `harness scan` — so a curated installation loses nothing it cannot reach another way.
 
 Advanced users can expose the supported primitives as standalone skills with `./setup --global --expert` or `./setup --target <path> --expert`. This mode is optional; operational CLI commands such as `harness qa`, `harness commit`, and `harness pr` remain available in both modes.
 

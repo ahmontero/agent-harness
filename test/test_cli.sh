@@ -4780,6 +4780,39 @@ echo "  [PASS] a mistyped JSON option is refused rather than degraded to prose."
 
 echo ""
 echo "=== 48. Testing Minor Surface Gaps ==="
+# The README introduces its protocol list with "bundled privately inside those workflows".
+# Six of the sixteen were bundled nowhere. Four of those document CLI commands and duplicate
+# harness --help; conflicts is a capability with no CLI behind it, so an agent that met a
+# merge conflict in the default mode had no protocol for it at all.
+if [ "$(jq -r '.public.implement | index("conflicts") != null' "${HARNESS_ROOT}/core/skills/catalog.json")" != "true" ] || \
+   [ "$(jq -r '.public.fix | index("conflicts") != null' "${HARNESS_ROOT}/core/skills/catalog.json")" != "true" ]; then
+    echo "  [FAIL] conflicts reaches neither workflow that integrates work, so curated mode has no conflict protocol"
+    exit 1
+fi
+if grep -qF "The protocols below are bundled privately inside those workflows" "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] the README still claims every listed protocol is bundled inside a workflow"
+    exit 1
+fi
+echo "  [PASS] conflicts reaches the workflows that integrate, and the README says what each mode gets."
+
+# init named the gates it left unset and not what to write into them. Knowing a key is
+# missing was never the friction.
+MINOR_INIT="${TMP_TEST_DIR}/minor-init"
+mkdir -p "${MINOR_INIT}/home"
+git -C "${MINOR_INIT}" init -q 2>/dev/null || { mkdir -p "${MINOR_INIT}"; git -C "${MINOR_INIT}" init -q; }
+git -C "${MINOR_INIT}" config user.email "tests@agent-harness.local"
+git -C "${MINOR_INIT}" config user.name "Agent Harness Tests"
+printf '{"name":"x","version":"1.0.0"}\n' > "${MINOR_INIT}/package.json"
+git -C "${MINOR_INIT}" add -A
+git -C "${MINOR_INIT}" commit -q -m init
+MINOR_INIT_OUTPUT="$(env HOME="${MINOR_INIT}/home" HARNESS_STATE_DIR="${MINOR_INIT}/state" \
+    "${HARNESS_ROOT}/install.sh" --target "${MINOR_INIT}" 2>&1)"
+if ! printf '%s' "${MINOR_INIT_OUTPUT}" | grep -qF '"lintCommand": false'; then
+    echo "  [FAIL] init named the gates it left unset without showing what to write: ${MINOR_INIT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] init prints the JSON to paste for every gate it could not evidence."
+
 # The suite is 48 groups and about five minutes. This project's own tddCommand ran all of
 # it, while the protocol it ships calls harness qa tdd "fast feedback mode".
 MINOR_FILTER_OUTPUT="$(bash "${HARNESS_ROOT}/test/test_cli.sh" --group 3 2>&1)" || {
