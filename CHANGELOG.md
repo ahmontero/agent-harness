@@ -6,6 +6,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.17.0] - 2026-09-13
+
+Seven defects the audit found in the CLI itself. Two of them change what previously
+"working" invocations do, which is why this is a minor rather than a patch.
+
+### Fixed
+
+- `branch check` and `commit build` each carried their own idea of what an issue key looks
+  like. Check accepted a prefix containing digits and a bare number; build matched only
+  `[A-Z]+-[0-9]+`. A branch check called conforming therefore produced a commit with no
+  scope at all: `feat/P20-1234-x` recorded `feat: ...`, and so did `feat/42-x` — the bare
+  number `normalize_issue_key` yields when no `issueTracker.defaultPrefix` is configured,
+  which is the default on GitHub. One grammar now lives in `lib/issues.sh` and both read it.
+  A version-like branch name still yields no key, which the regression asserts alongside.
+- `branch create` accepted any type at all and wrote a branch `branch check` then rejected.
+  A creator and a validator that disagree hand the user a branch the harness itself will not
+  accept. Both now read one list, and the regression round-trips every type through both.
+- The pre-commit hook ran `harness` by name, so it needed the committing process's PATH. A
+  GUI Git client does not inherit a login shell, so every commit from one died with
+  `exec: harness: not found` — fail-closed, but naming nothing actionable, and the usual
+  next move is `--no-verify`, which retires the gate the hook exists to be. The hook now
+  carries the absolute path of the checkout that installed it, keeping the name as a
+  fallback so a checkout that later moves degrades to the old behaviour rather than to
+  nothing.
+- `harness scan` exited 1 in the two refusals its own header documents as exit 2 — no usable
+  `jq`, and staged content Git cannot read. `qa all` aggregates 1 as a scan that ran and
+  found a landmine, which is not what happened. The jq refusal is the one exit that cannot
+  route through `scan_exit`, because `jq` is what writes the JSON document; that is now
+  stated where it happens.
+- `harness qa tdd` and `harness qa test` appended their arguments to the configured command
+  unquoted, so a path containing a space arrived as two. Quoting now happens once, at the
+  seam both gates route through. An empty `{path}` still expands to nothing rather than to
+  `''`, so a `tddCommand` of `pytest {path}` run with no path stays `pytest`.
+- `harness spec status` printed its header and nothing else when there were no specs: `find`
+  exits 0 on an empty result, so the fallback behind `||` never ran. Silence reads as a
+  listing that failed rather than a listing with nothing in it.
+- `harness completion <unknown>` printed the usage text and exited 0, reporting success
+  having written no completion. Every other command in the CLI refuses a subcommand it does
+  not have.
+
 ## [2.16.2] - 2026-09-13
 
 ### Fixed

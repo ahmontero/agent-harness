@@ -34,6 +34,11 @@ case "${ACTION}" in
             exit 1
         fi
 
+        # The creator and the validator used to disagree: create took any type at all, so
+        # `harness branch create feature AH-9 x` wrote a branch `harness branch check`
+        # then rejected. One list, in lib/issues.sh, answers both.
+        require_branch_type "${TYPE}"
+
         ISSUE_KEY="$(normalize_issue_key "${RAW_KEY}")"
         BRANCH_NAME="${TYPE}/${ISSUE_KEY}-${SLUG}"
 
@@ -70,7 +75,6 @@ case "${ACTION}" in
 
         TRUNK="$(get_trunk_branch "${REPO_DIR}")"
         RELEASE_PREFIX="$(get_profile_value "git.releaseBranchPrefix" "release/")"
-        BRANCH_TYPES="chore|feat|fix|spike"
 
         if [ "${BRANCH_TO_CHECK}" = "${TRUNK}" ]; then
             log_success "'${BRANCH_TO_CHECK}' is the trunk, not an issue branch."
@@ -83,13 +87,14 @@ case "${ACTION}" in
             exit 0
         fi
 
-        if [[ "${BRANCH_TO_CHECK}" =~ ^(${BRANCH_TYPES})/([A-Z][A-Z0-9]*-[0-9]+|[0-9]+)-(.+)$ ]]; then
+        ISSUE_BRANCH_PATTERN="^(${BRANCH_TYPE_PATTERN})/(${ISSUE_KEY_PATTERN})-(.+)$"
+        if [[ "${BRANCH_TO_CHECK}" =~ ${ISSUE_BRANCH_PATTERN} ]]; then
             log_success "'${BRANCH_TO_CHECK}' is an issue branch: type '${BASH_REMATCH[1]}', issue key '${BASH_REMATCH[2]}', slug '${BASH_REMATCH[3]}'."
             exit 0
         fi
 
         log_error "'${BRANCH_TO_CHECK}' does not follow the branch convention."
-        log_info "Expected <type>/<ISSUE-KEY>-<slug>, with type one of: ${BRANCH_TYPES//|/, }."
+        log_info "Expected <type>/<ISSUE-KEY>-<slug>, with type one of: $(branch_types_for_humans)."
         log_info "Create one with: harness branch create <type> <issue_key> <slug>"
         exit 1
         ;;

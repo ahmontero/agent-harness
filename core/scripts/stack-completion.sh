@@ -95,7 +95,15 @@ case "${1:-}" in
         install_zsh
         install_bash
         ;;
-    *)
+    -h|--help)
         echo "Usage: harness completion install"
+        ;;
+    *)
+        # This printed the usage text and exited 0, so `harness completion isntall` reported
+        # success having written no completion at all. Every other command in the CLI
+        # refuses a subcommand it does not have.
+        log_error "Unknown completion action: ${1:-<none>}"
+        echo "Usage: harness completion install" >&2
+        exit 1
         ;;
 esac

@@ -38,6 +38,31 @@ shift || true
 
 cd "${REPO_DIR}"
 
+# A configured command is a shell string, so it reaches the project's runner through eval.
+# Everything the harness appends to it is data, and data has to arrive as one argument each:
+# appending "$*" raw split `harness qa test "tests/my dir"` into two paths, and substituting
+# {path} raw did the same to `harness qa tdd`. Quoting happens here, once, so both gates
+# route through the same seam rather than one of them being fixed.
+#
+# An empty value expands to nothing rather than to '': a tddCommand of "pytest {path}" run
+# with no path has to stay `pytest`, not `pytest ''`.
+shell_quote_argument() {
+    local quoted
+    [ -n "$1" ] || return 0
+    printf -v quoted '%q' "$1"
+    printf '%s' "${quoted}"
+}
+
+append_quoted_arguments() {
+    local line="$1"
+    shift
+    local argument
+    for argument in "$@"; do
+        line="${line} $(shell_quote_argument "${argument}")"
+    done
+    printf '%s' "${line}"
+}
+
 # Resolves one configured command and runs it, or refuses. Extra arguments are appended,
 # which is what lets `harness qa test tests/unit -k name` forward to the configured runner.
 run_configured_gate() {
@@ -59,7 +84,7 @@ run_configured_gate() {
     esac
 
     log_info "Running ${label}: ${BOLD}${command_line} $*${RESET}..."
-    eval "${command_line} $*"
+    eval "$(append_quoted_arguments "${command_line}" "$@")"
 }
 
 # The test command may also be expressed as a runner name, which is the older and more
@@ -119,9 +144,9 @@ case "${ACTION}" in
             log_info "Set profiles.${ACTIVE_PROFILE}.qa.tddCommand to the command this project uses, with {path} where the test path belongs."
             exit "${GATE_UNRUNNABLE}"
         fi
-        CMD="${TDD_CMD//\{path\}/${TEST_PATH}}"
+        CMD="${TDD_CMD//\{path\}/$(shell_quote_argument "${TEST_PATH}")}"
         log_info "Running TDD cycle: ${BOLD}${CMD} $*${RESET}..."
-        eval "${CMD} $*"
+        eval "$(append_quoted_arguments "${CMD}" "$@")"
         ;;
     lint)
         STATUS=0
