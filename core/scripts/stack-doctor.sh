@@ -192,22 +192,33 @@ log_info "--- 5. CLI Installation ---"
 # healthy environment right up to the next command that failed.
 BIN_DIR="${HOME}/.local/bin"
 EXPECTED_CLI="$(get_harness_root)/bin/harness"
+
+# Reports one link: linked here, pointing elsewhere, or broken. The three default names and
+# every profile alias are the same question, so they go through the same answer.
+report_cli_link() {
+    local cli_name="$1"
+    local cli_path="${BIN_DIR}/${cli_name}"
+    local cli_target
+    cli_target="$(readlink "${cli_path}")"
+
+    if [ "${cli_target}" = "${EXPECTED_CLI}" ]; then
+        log_success "CLI linked: ${cli_path}"
+        record_check "cli" "${cli_name}" "ok" "${cli_path}"
+    elif [ -e "${cli_path}" ]; then
+        log_warn "CLI ${cli_path} points at ${cli_target}, not this checkout (${EXPECTED_CLI})."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "cli" "${cli_name}" "warning" "points at ${cli_target}"
+    else
+        log_error "CLI ${cli_path} is a broken symlink to ${cli_target}."
+        ERRORS_FOUND=$((ERRORS_FOUND + 1))
+        record_check "cli" "${cli_name}" "error" "broken symlink to ${cli_target}"
+    fi
+}
+
 for cli_name in harness agh agent-harness; do
     cli_path="${BIN_DIR}/${cli_name}"
     if [ -L "${cli_path}" ]; then
-        cli_target="$(readlink "${cli_path}")"
-        if [ "${cli_target}" = "${EXPECTED_CLI}" ]; then
-            log_success "CLI linked: ${cli_path}"
-            record_check "cli" "${cli_name}" "ok" "${cli_path}"
-        elif [ -e "${cli_path}" ]; then
-            log_warn "CLI ${cli_path} points at ${cli_target}, not this checkout (${EXPECTED_CLI})."
-            WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
-            record_check "cli" "${cli_name}" "warning" "points at ${cli_target}"
-        else
-            log_error "CLI ${cli_path} is a broken symlink to ${cli_target}."
-            ERRORS_FOUND=$((ERRORS_FOUND + 1))
-            record_check "cli" "${cli_name}" "error" "broken symlink to ${cli_target}"
-        fi
+        report_cli_link "${cli_name}"
     elif [ -e "${cli_path}" ]; then
         log_warn "CLI ${cli_path} exists but is not a symlink; agent-harness will not manage it."
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
@@ -218,6 +229,29 @@ for cli_name in harness agh agent-harness; do
         record_check "cli" "${cli_name}" "warning" "not installed"
     fi
 done
+# A profile's cliAlias is linked by the same installer into the same directory, and doctor
+# checked only the three names it installs by default. An alias left behind by a
+# configuration nobody uses any more -- pointing at a checkout that is not this one -- was
+# invisible here while `harness uninstall --dry-run` listed it, which is the wrong way round
+# for the command whose whole job is to say what is wrong.
+#
+# A link into some checkout's bin/harness is the test, so a symlink to anything else and a
+# plain script in the same directory are not this command's business.
+if [ -d "${BIN_DIR}" ]; then
+    for alias_path in "${BIN_DIR}"/*; do
+        [ -L "${alias_path}" ] || continue
+        alias_name="$(basename "${alias_path}")"
+        case "${alias_name}" in
+            harness|agh|agent-harness) continue ;;
+        esac
+        case "$(readlink "${alias_path}")" in
+            */bin/harness) ;;
+            *) continue ;;
+        esac
+        report_cli_link "${alias_name}"
+    done
+fi
+
 case ":${PATH}:" in
     *":${BIN_DIR}:"*) log_success "On PATH: ${BIN_DIR}" ;;
     *)

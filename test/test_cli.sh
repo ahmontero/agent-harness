@@ -5844,4 +5844,71 @@ fi
 echo "  [PASS] Completion offers each command's own subcommands and flags."
 
 echo ""
+echo "=== 55. Testing Doctor CLI Alias Reporting ==="
+# doctor checked the three names it installs by default and stopped. A profile's cliAlias is
+# linked by the same installer into the same directory, so an alias left behind by a
+# configuration nobody uses any more -- pointing at a checkout that is not this one -- was
+# invisible: doctor reported a healthy environment, and the alias went on dispatching to
+# whatever it still resolved to. `harness uninstall --dry-run` listed it; the diagnostic did
+# not, which is the wrong way round.
+ALIAS_HOME="${TMP_TEST_DIR}/alias-home"
+ALIAS_OTHER="${TMP_TEST_DIR}/alias-other-checkout"
+mkdir -p "${ALIAS_HOME}/.local/bin" "${ALIAS_OTHER}/bin"
+printf '#!/usr/bin/env bash\ntrue\n' > "${ALIAS_OTHER}/bin/harness"
+chmod 755 "${ALIAS_OTHER}/bin/harness"
+ln -sf "${HARNESS_ROOT}/bin/harness" "${ALIAS_HOME}/.local/bin/harness"
+ln -sf "${HARNESS_ROOT}/bin/harness" "${ALIAS_HOME}/.local/bin/agh"
+ln -sf "${HARNESS_ROOT}/bin/harness" "${ALIAS_HOME}/.local/bin/agent-harness"
+# The alias under test, and two things that must not be mistaken for one.
+ln -sf "${ALIAS_OTHER}/bin/harness" "${ALIAS_HOME}/.local/bin/backend"
+ln -sf "/usr/bin/true" "${ALIAS_HOME}/.local/bin/somebody-elses-tool"
+printf '#!/usr/bin/env bash\ntrue\n' > "${ALIAS_HOME}/.local/bin/a-real-script"
+chmod 755 "${ALIAS_HOME}/.local/bin/a-real-script"
+
+ALIAS_REPO="${TMP_TEST_DIR}/alias-repo"
+mkdir -p "${ALIAS_REPO}"
+git -C "${ALIAS_REPO}" init -q
+git -C "${ALIAS_REPO}" config user.email "tests@agent-harness.local"
+git -C "${ALIAS_REPO}" config user.name "Agent Harness Tests"
+echo "seed" > "${ALIAS_REPO}/seed.txt"
+git -C "${ALIAS_REPO}" add -A
+git -C "${ALIAS_REPO}" commit -qm "chore: seed"
+
+ALIAS_DOCTOR="$( (cd "${ALIAS_REPO}" && env -u STACK_PROFILE HOME="${ALIAS_HOME}" \
+    "${HARNESS_ROOT}/bin/harness" doctor --json 2>/dev/null) )"
+if ! printf '%s' "${ALIAS_DOCTOR}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] doctor --json emitted no document for the alias fixture: ${ALIAS_DOCTOR}"
+    exit 1
+fi
+if [ "$(printf '%s' "${ALIAS_DOCTOR}" | jq -r '[.checks[] | select(.section == "cli" and .name == "backend" and .state == "warning")] | length')" -ne 1 ]; then
+    echo "  [FAIL] doctor did not report the alias pointing at another checkout: ${ALIAS_DOCTOR}"
+    exit 1
+fi
+if ! printf '%s' "${ALIAS_DOCTOR}" | jq -r '.checks[] | select(.name == "backend") | .detail' | grep -qF "${ALIAS_OTHER}"; then
+    echo "  [FAIL] doctor did not name the checkout the alias points at: ${ALIAS_DOCTOR}"
+    exit 1
+fi
+echo "  [PASS] doctor reports a CLI alias pointing at a checkout that is not this one."
+
+# A symlink to something that is not a harness, and a plain file, are not this command's
+# business. Reporting them would make the check noise nobody reads.
+for alias_foreign in somebody-elses-tool a-real-script; do
+    if [ "$(printf '%s' "${ALIAS_DOCTOR}" | jq -r --arg n "${alias_foreign}" '[.checks[] | select(.name == $n)] | length')" -ne 0 ]; then
+        echo "  [FAIL] doctor reported '${alias_foreign}', which agent-harness did not install: ${ALIAS_DOCTOR}"
+        exit 1
+    fi
+done
+echo "  [PASS] doctor ignores entries in the bin directory that are not harness links."
+
+# An alias pointing at this checkout is correct and is reported as such, not as a problem.
+ln -sf "${HARNESS_ROOT}/bin/harness" "${ALIAS_HOME}/.local/bin/backend"
+ALIAS_DOCTOR_OK="$( (cd "${ALIAS_REPO}" && env -u STACK_PROFILE HOME="${ALIAS_HOME}" \
+    "${HARNESS_ROOT}/bin/harness" doctor --json 2>/dev/null) )"
+if [ "$(printf '%s' "${ALIAS_DOCTOR_OK}" | jq -r '[.checks[] | select(.name == "backend" and .state == "ok")] | length')" -ne 1 ]; then
+    echo "  [FAIL] doctor did not accept an alias pointing at this checkout: ${ALIAS_DOCTOR_OK}"
+    exit 1
+fi
+echo "  [PASS] An alias pointing at this checkout is reported as current."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"
