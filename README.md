@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.17.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.18.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -407,6 +407,36 @@ silently matching nothing.
 ]
 ```
 
+#### What each mode reads
+
+| Mode | Reads |
+| :--- | :--- |
+| `--staged`, `--diff`, `--branch` | the lines the changeset **adds** |
+| `--all` | every line of every tracked file |
+
+A delta mode is a claim about a changeset. It used to read whole files, so a branch that
+added a comment to a file carrying a credential from before the harness existed failed the
+gate `qa all` and `harness ship` both run — with no way to pass short of cleaning every
+legacy file a branch happens to touch. Adoption on an existing codebase needs an incremental
+route, and the whole-repository question is still `--all`.
+
+Path rules are the exception: a rule matching a filename has no line to belong to, so it is
+answered by the changeset's file list in every mode. Staging a `.env` is caught whatever the
+mode.
+
+`harness qa all` scans in `--branch` mode. `profiles.<name>.qa.scanMode` moves it to
+`staged`, `diff` or `all` for a project that wants the whole repository read before a pull
+request; an unknown value fails the gate rather than falling back to a mode nobody chose.
+
+```jsonc
+"qa":    { "scanMode": "all" },
+"rules": { "excludePaths": ["vendor/*", "*.generated.js"] }
+```
+
+`rules.excludePaths` excludes a path from **every** rule, the security baseline's included —
+which a rule's own `excludePaths` cannot do, because a project does not own the baseline's
+rules and cannot scope them without overriding them wholesale.
+
 #### Machine-readable output
 
 `harness scan --json` and `harness qa all --json` answer with one JSON document on stdout.
@@ -426,8 +456,9 @@ the four the aggregate already distinguishes, so a gate that could not run stays
 distinguishable from one that passed. Exit statuses are unchanged in both commands: `--json`
 changes the shape of the answer, never the verdict.
 
-`excludePaths` takes glob patterns and scopes a rule without switching it off (`vendor/*`,
-`*.generated.js`, `tests/*`). A single line can be exempted in place:
+A rule's own `excludePaths` takes glob patterns and scopes that one rule without switching
+it off (`vendor/*`, `*.generated.js`, `tests/*`); `profiles.<name>.rules.excludePaths` above
+does the same for every rule at once. A single line can be exempted in place:
 
 ```python
 value = legacy_call()  # harness-ignore: NO_RAW_SQL
