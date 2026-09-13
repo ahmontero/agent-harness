@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-2.13.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-2.14.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -244,11 +244,23 @@ Scans code against custom JSON regex rules (`rules/landmines.json`):
 </details>
 
 <details>
-<summary><b>4. 📐 Living Delta Specs (<code>/harness-spec &lt;create|status&gt;</code>)</b></summary>
+<summary><b>4. 📐 Living Delta Specs (<code>/harness-spec &lt;create|verify|archive&gt;</code>)</b></summary>
 
-Lightweight Spec-Driven Development (OpenSpec):
-- Creates living specifications (`specs/<issue>-<slug>/harness-spec.md`).
-- Records architectural requirements, edge cases, and explicit non-goals.
+Lightweight Spec-Driven Development (OpenSpec), with a lifecycle that closes:
+
+```bash
+harness spec create <issue_key> <slug>   # specs/delta-<issue_key>-<slug>.md
+harness spec verify                      # structure, headings, no leftover placeholders
+harness spec archive                     # specs/archive/<module>/ once the work is handed off
+```
+
+- Records architectural requirements, edge cases, and explicit non-goals before code.
+- `create` refuses to replace a spec that already exists, and `archive` refuses an occupied
+  destination or a path outside `specs/`.
+- A spec is active while its work is in flight. `harness context` counts what is left in
+  `specs/` and reports it as exactly that, so archiving at hand-off is what keeps the next
+  run from starting on a false statement. `harness ship` names any spec still active before
+  it publishes.
 </details>
 
 <details>

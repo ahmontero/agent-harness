@@ -4543,4 +4543,67 @@ done
 echo "  [PASS] investigate keeps a ledger and gains no loop."
 
 echo ""
+echo "=== 46. Testing Delta Spec Lifecycle ==="
+# `harness spec archive` exists, works, is tested, and nothing an agent reads mentions it.
+# No workflow called it, the spec primitive's own argument-hint omitted it, and the README
+# never named it -- so a delivered spec stayed active forever and `harness context`, the
+# first command every workflow runs, reported work in flight that had shipped. The suite
+# still carries an assertion hardcoded to one forgotten spec's filename, which is the scar
+# this group exists to stop reopening.
+SPEC_PRIMITIVE="${HARNESS_ROOT}/core/skills/spec/SKILL.md"
+if ! grep -qF "harness spec archive" "${SPEC_PRIMITIVE}"; then
+    echo "  [FAIL] the spec primitive does not document the archive step that closes the lifecycle"
+    exit 1
+fi
+if ! grep -qE '^argument-hint:.*archive' "${SPEC_PRIMITIVE}"; then
+    echo "  [FAIL] the spec primitive's argument-hint omits archive, so the bundle never offers it"
+    exit 1
+fi
+for archiving_workflow in implement orchestrate; do
+    if ! grep -qF "harness spec archive" "${HARNESS_ROOT}/core/skills/${archiving_workflow}/SKILL.md"; then
+        echo "  [FAIL] ${archiving_workflow} works from a delta spec and never archives it"
+        exit 1
+    fi
+done
+if ! grep -qF "spec archive" "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] the README describes the spec lifecycle without the step that ends it"
+    exit 1
+fi
+echo "  [PASS] the archive step is documented, reachable from the bundle, and required at hand-off."
+
+# ship names an active spec and publishes anyway. Refusing would retire the command for a
+# project that legitimately carries one spec across several pull requests -- the reason ship
+# already gives for reporting untracked files rather than refusing on them.
+LIFECYCLE_REPO="${TMP_TEST_DIR}/spec-lifecycle"
+mkdir -p "${LIFECYCLE_REPO}/specs"
+git -C "${LIFECYCLE_REPO}" init -q
+git -C "${LIFECYCLE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${LIFECYCLE_REPO}" config user.name "Agent Harness Tests"
+git -C "${LIFECYCLE_REPO}" commit -q --allow-empty -m "init"
+git -C "${LIFECYCLE_REPO}" branch -M main
+git -C "${LIFECYCLE_REPO}" checkout -q -b feat/AH-1-alpha
+printf '# Delta Spec: AH-1\n' > "${LIFECYCLE_REPO}/specs/delta-AH-1-alpha.md"
+git -C "${LIFECYCLE_REPO}" add -A
+git -C "${LIFECYCLE_REPO}" commit -q -m "work"
+
+LIFECYCLE_STATUS=0
+LIFECYCLE_OUTPUT="$( (cd "${LIFECYCLE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" ship --dry-run 2>&1) )" || LIFECYCLE_STATUS=$?
+# The status was captured and never read, which ShellCheck was right to flag: the whole
+# point of this assertion is that ship carries on, and the exit status is the direct way to
+# say so rather than inferring it from the absence of a refusal in the prose.
+if [ "${LIFECYCLE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] ship refused on an active delta spec instead of reporting it (status ${LIFECYCLE_STATUS}): ${LIFECYCLE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${LIFECYCLE_OUTPUT}" | grep -qF "delta-AH-1-alpha.md"; then
+    echo "  [FAIL] ship published without naming the delta spec still active: ${LIFECYCLE_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${LIFECYCLE_OUTPUT}" | grep -qiE "nothing was pushed|refus"; then
+    echo "  [FAIL] ship refused on an active spec instead of reporting it: ${LIFECYCLE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] ship reports an active delta spec and publishes anyway."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

@@ -22,6 +22,7 @@ source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
 source "${SCRIPT_DIR}/lib/issues.sh"
+source "${SCRIPT_DIR}/lib/specs.sh"
 
 usage() {
     cat <<USAGE_EOF
@@ -119,6 +120,18 @@ UNTRACKED="$(git ls-files --others --exclude-standard | head -n 5)"
 if [ -n "${UNTRACKED}" ]; then
     log_warn "Untracked files are present and will not be part of this pull request:"
     printf '%s\n' "${UNTRACKED}" | sed 's/^/  /'
+fi
+
+# A delta spec is active while its work is in flight, and `harness context` counts what is
+# left in specs/ as exactly that. Publishing with one still there is usually the workflow
+# having skipped its archive step, and the next run will be told there is work in progress
+# that shipped. It is reported and not refused, for the same reason as the untracked files
+# above: a project may legitimately carry one spec across several pull requests, and
+# refusing would retire the command rather than catch the mistake.
+ACTIVE_SPECS="$(active_delta_specs "${REPO_DIR}/specs")"
+if [ -n "${ACTIVE_SPECS}" ]; then
+    log_warn "A delta spec is still active. If this branch delivers it, archive it with 'harness spec archive':"
+    printf '%s\n' "${ACTIVE_SPECS}" | sed "s|^${REPO_DIR}/|  |"
 fi
 
 log_info "Publishing ${BOLD}${CURRENT_BRANCH}${RESET} (${COMMITS_AHEAD} commit(s)) into ${BOLD}${TARGET_BRANCH}${RESET} on origin."

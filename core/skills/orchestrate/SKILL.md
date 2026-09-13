@@ -45,7 +45,7 @@ Configuration selects which model fills a role. It can never collapse the two ro
 2. **Dispatch the implementer** — Send the brief below for item N. Require the RED-GREEN-REFACTOR protocol from `references/tdd.md` and require `harness qa test` before the return. Record the outcome with `harness ledger append "$RUN_ID" phase "item <N> implemented — <summary>"`.
 3. **Dispatch the reviewer** — Send a separate dispatch with the diff from `git diff`, the item text, and `rules/floor.md`. Require findings classified Critical, Important, or Minor using `references/review.md`. Record the counts in the ledger.
 4. **Resolve the item** — Run the Bounded Review Loop below until it exits, then move to item N+1. Repeat phases 2 to 4 until the plan is exhausted.
-5. **Close** — Run `harness qa all` once and report its real status. Run `harness ledger rulings "$RUN_ID"` and reproduce every line, exhaustively and in recorded order. Finish the receipt.
+5. **Close** — Run `harness qa all` once and report its real status. Archive the delta spec you executed with `harness spec archive`; its plan is exhausted, and a spec left in `specs/` is counted as work still in flight. Run `harness ledger rulings "$RUN_ID"` and reproduce every line, exhaustively and in recorded order. Finish the receipt.
 
 ## The Brief
 
