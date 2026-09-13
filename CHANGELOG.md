@@ -6,6 +6,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.1] - 2026-09-13
+
+### Fixed
+
+- `harness doctor` reports CLI aliases, not only the three names it installs by default. A
+  profile's `cliAlias` is linked by the same installer into the same directory, so an alias
+  left behind by a configuration nobody uses any more — pointing at a checkout that is not
+  this one — was invisible to the command whose whole job is to say what is wrong, while
+  `harness uninstall --dry-run` listed it. That is the wrong way round, and it is how the
+  gap was found: by running the audit the previous release added.
+- A link into some checkout's `bin/harness` is the test, so a symlink to anything else and a
+  plain script in the same directory stay out of the report. The three default names and
+  every alias now go through one answer, rather than the defaults having one and the aliases
+  having none.
+
 ## [2.21.0] - 2026-09-13
 
 ### Added
