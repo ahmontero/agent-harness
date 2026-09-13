@@ -65,13 +65,13 @@ ${BOLD}Options:${RESET}
 
 ${BOLD}Core Commands:${RESET}
   ${GREEN}doctor${RESET}        Diagnose environment, symlinks, configs, harnesses & tools
-                harness doctor [--fix] [--check-auth]
+                harness doctor [--fix] [--check-auth] [--json]
 
   ${GREEN}context${RESET}       Extract fast, token-efficient workspace signals (<1s) for LLMs
                 harness context [--json]
 
   ${GREEN}config${RESET}        Report the resolved configuration and validate its structure
-                harness config validate
+                harness config validate [--json]
 
   ${GREEN}spec${RESET}          Spec-Driven Development & Living Delta Specs management
                 harness spec status [--json]
@@ -105,6 +105,7 @@ ${BOLD}Core Commands:${RESET}
   ${GREEN}commit${RESET}        Build conventional commit message with issue prefix
                 harness commit build <type> "<message>"
                 harness commit check [commit_hash]
+                harness commit check --branch [--base <ref>]
 
   ${GREEN}debt${RESET}          Scan & harvest technical debt markers ("# pragmatism:", "# defer:")
                 harness debt [--json] [--all] [--path <path>]
@@ -113,7 +114,7 @@ ${BOLD}Core Commands:${RESET}
                 harness receipt start <implement|fix|investigate|orchestrate> [--issue <token>]
                 harness receipt phase <run_id> <phase> <status>
                 harness receipt finish <run_id> <outcome>
-                harness receipt list
+                harness receipt list [--json]
                 harness receipt show <run_id>
                 harness receipt prune [--keep <count>]
 
@@ -126,7 +127,7 @@ ${BOLD}Core Commands:${RESET}
                 harness ledger failure <run_id> [label] (failure text on stdin)
 
   ${GREEN}ship${RESET}          Run pre-flight checks, push the branch, and open a Pull Request
-                harness ship [target_branch] [--yes] [--dry-run]
+                harness ship [target_branch] [--yes] [--dry-run] [--draft] [--body-file <path>]
                 ${DIM}(alias: pr)${RESET}
 
   ${GREEN}sync${RESET}          Report or repair drift in installed skill surfaces

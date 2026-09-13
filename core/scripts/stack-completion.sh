@@ -36,6 +36,30 @@ HARNESS_COMMANDS=(
     "upgrade:Update the checkout and re-sync every managed surface"
 )
 
+# What each command actually takes. Completion offered the top-level names and stopped, so
+# the second word -- which is where every one of these commands does something -- was never
+# completed at all. "<command>:<space-separated words>".
+HARNESS_SUBCOMMANDS=(
+    "doctor:--fix --check-auth --json"
+    "context:--json"
+    "config:validate --json"
+    "spec:status create verify archive --json --module"
+    "qa:test tdd scan lint types all --json"
+    "scan:--staged --diff --branch --all --base --json --rules --install-hook --force"
+    "worktree:create list seed remove --base --seed --force --dry-run"
+    "branch:create check list --base"
+    "commit:build check --branch --base"
+    "debt:--json --all --path"
+    "receipt:start phase finish list show prune --issue --keep --json"
+    "ledger:start append show rulings signature failure"
+    "ship:--yes --dry-run --draft --body-file"
+    "sync:--check --target --global --expert"
+    "init:--recipe --with-hook"
+    "uninstall:--global --target --dry-run --yes"
+    "completion:install"
+    "upgrade:--check"
+)
+
 command_names() {
     local entry
     for entry in "${HARNESS_COMMANDS[@]}"; do
@@ -56,7 +80,17 @@ install_zsh() {
             printf "        '%s'\n" "${entry}"
         done
         printf '    )\n'
-        printf '    _describe '"'"'command'"'"' commands\n'
+        printf '    local -a subcommands\n'
+        printf '    if (( CURRENT == 2 )); then\n'
+        printf '        _describe '"'"'command'"'"' commands\n'
+        printf '        return\n'
+        printf '    fi\n'
+        printf '    case "${words[2]}" in\n'
+        for entry in "${HARNESS_SUBCOMMANDS[@]}"; do
+            printf '        %s) subcommands=(%s) ;;\n' "${entry%%:*}" "${entry#*:}"
+        done
+        printf '    esac\n'
+        printf '    (( ${#subcommands} )) && _describe '"'"'subcommand'"'"' subcommands\n'
         printf '}\n'
         printf '_harness "$@"\n'
     } > "${zsh_dir}/_harness"
@@ -78,11 +112,22 @@ install_bash() {
         # A read loop rather than mapfile: mapfile is bash 4, and macOS still ships 3.2,
         # so a generated completion using it would be a syntax error in the default shell
         # of the platform half of this project's CI runs on.
+        printf '    local subcommands=""\n'
+        printf '    case "${COMP_WORDS[1]}" in\n'
+        local entry
+        for entry in "${HARNESS_SUBCOMMANDS[@]}"; do
+            printf '        %s) subcommands="%s" ;;\n' "${entry%%:*}" "${entry#*:}"
+        done
+        printf '    esac\n'
+        printf '    COMPREPLY=()\n'
         printf '    if [ "${COMP_CWORD}" -eq 1 ]; then\n'
-        printf '        COMPREPLY=()\n'
         printf '        while IFS= read -r candidate; do\n'
         printf '            COMPREPLY+=("${candidate}")\n'
         printf '        done < <(compgen -W "${commands}" -- "${current}")\n'
+        printf '    elif [ -n "${subcommands}" ]; then\n'
+        printf '        while IFS= read -r candidate; do\n'
+        printf '            COMPREPLY+=("${candidate}")\n'
+        printf '        done < <(compgen -W "${subcommands}" -- "${current}")\n'
         printf '    fi\n'
         printf '}\n'
         printf 'complete -F _harness_complete harness agh agent-harness\n'

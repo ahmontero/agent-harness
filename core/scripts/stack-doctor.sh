@@ -17,6 +17,8 @@ REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
 FIX_MODE=false
 CHECK_AUTH=false
 
+JSON_OUTPUT=false
+
 while [[ $# -gt 0 ]]; do
     case "$1" in
         --fix)
@@ -27,19 +29,40 @@ while [[ $# -gt 0 ]]; do
             CHECK_AUTH=true
             shift
             ;;
+        --json)
+            JSON_OUTPUT=true
+            shift
+            ;;
         -h|--help)
-            echo "Usage: harness doctor [--fix] [--check-auth]"
+            echo "Usage: harness doctor [--fix] [--check-auth] [--json]"
             exit 0
             ;;
         *)
             # `harness doctor --fixx` used to run the diagnosis and repair nothing, while
             # reading as though --fix had been honoured.
             log_error "Unknown doctor option: $1"
-            echo "Usage: harness doctor [--fix] [--check-auth]"
+            echo "Usage: harness doctor [--fix] [--check-auth] [--json]"
             exit 1
             ;;
     esac
 done
+
+# The banner, the section headers and every diagnostic line are prose written by dozens of
+# call sites. Moving stdout aside once takes all of them with it, the same swap scan, qa all
+# and config validate use, and leaves fd 3 for the one document.
+if [ "${JSON_OUTPUT}" = true ]; then
+    exec 3>&1 1>&2
+fi
+JSON_CHECKS=()
+
+# Records a check's outcome for the machine form alongside the line a human reads. The
+# states are the ones the counters already distinguish, so "could not be determined" stays
+# separable from "passed" here too.
+record_check() {
+    [ "${JSON_OUTPUT}" = true ] || return 0
+    JSON_CHECKS+=("$(jq -nc --arg section "$1" --arg name "$2" --arg state "$3" --arg detail "${4:-}" \
+        '{section: $section, name: $name, state: $state, detail: (if $detail == "" then null else $detail end)}')")
+}
 
 print_banner
 echo ""
@@ -56,13 +79,16 @@ check_cmd() {
         local version
         version=$("${name}" --version 2>/dev/null | head -n 1 || echo "installed")
         log_success "Tool installed: ${name} (${version})"
+        record_check "tooling" "${name}" "ok" "${version}"
     else
         if [ "${required}" = "true" ]; then
             log_error "Missing required CLI tool: ${name}"
             ERRORS_FOUND=$((ERRORS_FOUND + 1))
+            record_check "tooling" "${name}" "error" "required CLI tool is not installed"
         else
             log_warn "Optional CLI tool not found: ${name}"
             WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+            record_check "tooling" "${name}" "warning" "optional CLI tool is not installed"
         fi
     fi
 }
@@ -90,6 +116,7 @@ if [ -d "${REPO_DIR}" ]; then
     else
         log_warn "Missing AGENTS.md in ${REPO_DIR}"
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    record_check "repository" "AGENTS.md" "warning"
         if [ "${FIX_MODE}" = true ]; then
             template="$(get_harness_root)/core/templates/AGENTS-template.md"
             if [ -f "${template}" ]; then
@@ -108,6 +135,7 @@ log_info "--- 4. Installed Skill Surfaces ---"
 if ! jq --version >/dev/null 2>&1; then
     log_warn "Surface drift check unavailable: jq is not usable, so no surface state was determined."
     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    record_check "surfaces" "drift check" "warning"
 else
     SURFACES_DRIFTED=0
 
@@ -122,11 +150,13 @@ else
             case "${SURFACE_STATE}" in
                 current)
                     log_success "current   ${directory} (${runtime})"
+                    record_check "surfaces" "${directory}" "ok" "current (${scope_label})"
                     ;;
                 drifted)
                     SURFACES_DRIFTED=$((SURFACES_DRIFTED + 1))
                     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
                     log_warn "drifted   ${directory} (${runtime}) [${scope_label}]"
+                    record_check "surfaces" "${directory}" "warning" "drifted (${scope_label})"
                     for reason in "${SURFACE_REASONS[@]}"; do
                         printf '            %s\n' "${reason}" >&2
                     done
@@ -168,19 +198,24 @@ for cli_name in harness agh agent-harness; do
         cli_target="$(readlink "${cli_path}")"
         if [ "${cli_target}" = "${EXPECTED_CLI}" ]; then
             log_success "CLI linked: ${cli_path}"
+            record_check "cli" "${cli_name}" "ok" "${cli_path}"
         elif [ -e "${cli_path}" ]; then
             log_warn "CLI ${cli_path} points at ${cli_target}, not this checkout (${EXPECTED_CLI})."
             WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+            record_check "cli" "${cli_name}" "warning" "points at ${cli_target}"
         else
             log_error "CLI ${cli_path} is a broken symlink to ${cli_target}."
             ERRORS_FOUND=$((ERRORS_FOUND + 1))
+            record_check "cli" "${cli_name}" "error" "broken symlink to ${cli_target}"
         fi
     elif [ -e "${cli_path}" ]; then
         log_warn "CLI ${cli_path} exists but is not a symlink; agent-harness will not manage it."
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "cli" "${cli_name}" "warning" "not a symlink"
     else
         log_warn "CLI not installed: ${cli_path}. Run './setup --cli-only' to link it."
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "cli" "${cli_name}" "warning" "not installed"
     fi
 done
 case ":${PATH}:" in
@@ -188,6 +223,7 @@ case ":${PATH}:" in
     *)
         log_warn "${BIN_DIR} is not on PATH, so the linked CLI cannot be invoked by name."
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "cli" "PATH" "warning" "${BIN_DIR} is not on PATH"
         ;;
 esac
 
@@ -197,12 +233,16 @@ HOOKS_DIR="$(resolve_hooks_dir "${REPO_DIR}" 2>/dev/null || true)"
 if [ -z "${HOOKS_DIR}" ]; then
     log_warn "Hook state unavailable: ${REPO_DIR} is not a Git repository."
     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    record_check "hook" "pre-commit" "warning" "not a Git repository"
 elif [ ! -e "${HOOKS_DIR}/pre-commit" ]; then
     log_warn "There is no agent-harness pre-commit hook in ${HOOKS_DIR}. Run 'harness scan --install-hook'."
     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    record_check "hook" "pre-commit" "warning" "no pre-commit hook is installed"
 elif grep -qxF "${HARNESS_PRE_COMMIT_MARKER}" "${HOOKS_DIR}/pre-commit" 2>/dev/null; then
     log_success "Landmine pre-commit hook installed: ${HOOKS_DIR}/pre-commit"
+    record_check "hook" "pre-commit" "ok" "${HOOKS_DIR}/pre-commit"
 else
+    record_check "hook" "pre-commit" "warning" "a foreign pre-commit hook is installed"
     log_warn "A pre-commit hook exists that was not written by agent-harness: ${HOOKS_DIR}/pre-commit"
     log_info "Add 'harness scan --staged || exit 1' to it, or replace it with 'harness scan --install-hook --force'."
     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
@@ -216,6 +256,7 @@ printf '%s\n' "${CONFIG_REPORT}" | sed 's/^/  /'
 if [ "${CONFIG_REPORT_STATUS}" -ne 0 ]; then
     log_error "The resolved configuration did not validate."
     ERRORS_FOUND=$((ERRORS_FOUND + 1))
+    record_check "configuration" "config validate" "error" "the resolved configuration did not validate"
 fi
 
 if [ "${CHECK_AUTH}" = true ]; then
@@ -257,13 +298,27 @@ if [ "${CHECK_AUTH}" = true ]; then
     report_provider_auth "CI" "$(get_profile_value "ci.provider" "standalone")"
 fi
 
+emit_doctor_json() {
+    [ "${JSON_OUTPUT}" = true ] || return 0
+    local checks="[]"
+    [ ${#JSON_CHECKS[@]} -eq 0 ] || checks="$(printf '%s\n' "${JSON_CHECKS[@]}" | jq -s '.')"
+    jq -n --arg status "$1" --arg profile "${ACTIVE_PROFILE}" --arg repository "${REPO_DIR}" \
+        --argjson errors "${ERRORS_FOUND}" --argjson warnings "${WARNINGS_FOUND}" \
+        --argjson checks "${checks}" \
+        '{status: $status, profile: $profile, repository: $repository,
+          errors: $errors, warnings: $warnings, checks: $checks}' >&3
+}
+
 echo ""
 if [ ${ERRORS_FOUND} -eq 0 ] && [ ${WARNINGS_FOUND} -eq 0 ]; then
     log_success "Doctor check passed with 0 issues! Environment is healthy."
+    emit_doctor_json "healthy"
 elif [ ${ERRORS_FOUND} -eq 0 ]; then
     log_warn "Doctor check completed with ${WARNINGS_FOUND} warning(s)."
+    emit_doctor_json "warnings"
 else
     log_error "Doctor check failed with ${ERRORS_FOUND} error(s) and ${WARNINGS_FOUND} warning(s)."
     [ "${FIX_MODE}" = false ] && log_info "Run 'harness doctor --fix' to attempt automatic healing."
+    emit_doctor_json "failed"
     exit 1
 fi

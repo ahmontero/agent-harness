@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.0] - 2026-09-13
+
+### Added
+
+- `harness doctor --json`, `harness config validate --json` and `harness receipt list --json`.
+  `context`, `qa all`, `scan` and `spec status` already answered in JSON and these three did
+  not, while the workflow bundles instruct agents to read all seven. An agent parsing prose
+  is an agent that will eventually parse it wrong. Each uses the same stream swap the others
+  do — stdout carries the document and every human line goes to stderr — and each emits
+  exactly one document whatever the verdict, so the document and the exit status cannot
+  disagree. `doctor --json` reports the state of every check it ran, so "could not be
+  determined" stays separable from "passed" in the machine form too. An empty receipt listing
+  is an empty array rather than a sentence.
+- Shell completion offers each command's own subcommands and flags. It completed the
+  top-level names and stopped, so the second word — which is where every one of these
+  commands actually does something — was never completed at all. Both the Zsh and the Bash
+  files are generated from one table.
+
 ## [2.20.0] - 2026-09-13
 
 The lifecycle gaps: getting the harness fully installed, and getting it off a machine again.

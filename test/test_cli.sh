@@ -5714,4 +5714,134 @@ fi
 echo "  [PASS] worktree create --seed gives the new worktree its own surfaces."
 
 echo ""
+echo "=== 54. Testing Machine-Readable Diagnostics ==="
+# context, qa all, scan and spec status all answer in JSON; doctor, config validate and
+# receipt list did not -- and the workflow bundles instruct agents to read all seven. An
+# agent parsing prose is an agent that will eventually parse it wrong.
+MACHINE_REPO="${TMP_TEST_DIR}/machine-readable"
+mkdir -p "${MACHINE_REPO}"
+git -C "${MACHINE_REPO}" init -q
+git -C "${MACHINE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${MACHINE_REPO}" config user.name "Agent Harness Tests"
+cat > "${MACHINE_REPO}/harness.config.json" <<'MACHINE_CONFIG_EOF'
+{
+  "project": { "name": "machine-readable", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Machine", "unknownKey": 1 } }
+}
+MACHINE_CONFIG_EOF
+echo "seed" > "${MACHINE_REPO}/seed.txt"
+git -C "${MACHINE_REPO}" add -A
+git -C "${MACHINE_REPO}" commit -qm "chore: seed"
+
+machine_run() {
+    MACHINE_STATUS=0
+    MACHINE_OUTPUT="$( (cd "${MACHINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@" 2>/dev/null) )" || MACHINE_STATUS=$?
+}
+
+# config validate --json: the findings are already level/path/message; only the rendering
+# was human-only.
+machine_run config validate --json
+if ! printf '%s' "${MACHINE_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] config validate --json did not emit one JSON document: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r '.profile')" != "fixture" ]; then
+    echo "  [FAIL] config validate --json did not report the active profile: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r '[.findings[] | select(.path | test("unknownKey"))] | length')" -eq 0 ]; then
+    echo "  [FAIL] config validate --json did not carry its findings: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+# The document and the exit status have to agree, which is the whole reason both forms
+# emit exactly once: an unknown key is a warning, so this is a pass that carries findings.
+if [ "${MACHINE_STATUS}" -ne 0 ] || [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r '.status')" != "passed" ]; then
+    echo "  [FAIL] config validate --json disagreed with its own exit status ${MACHINE_STATUS}: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] config validate --json reports the resolution and every finding."
+
+# doctor --json: the counts and the state of every check it ran, so "could not run" stays
+# distinguishable from "passed" in the machine form too.
+machine_run doctor --json
+if ! printf '%s' "${MACHINE_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] doctor --json did not emit one JSON document: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+for machine_field in .status .errors .warnings; do
+    if [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r "${machine_field} // \"absent\"")" = "absent" ]; then
+        echo "  [FAIL] doctor --json omitted ${machine_field}: ${MACHINE_OUTPUT}"
+        exit 1
+    fi
+done
+if [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r '[.checks[] | select(.state == "error" or .state == "warning")] | length')" -eq 0 ]; then
+    echo "  [FAIL] doctor --json carried no check states: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${MACHINE_OUTPUT}" | grep -q "==="; then
+    echo "  [FAIL] doctor --json wrote its banner to stdout: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+# Drift and a missing hook are warnings, and doctor exits 0 on warnings: the document says
+# "warnings" and the status says 0, and neither is allowed to say something the other does not.
+if [ "${MACHINE_STATUS}" -ne 0 ] || [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r '.status')" != "warnings" ]; then
+    echo "  [FAIL] doctor --json disagreed with its own exit status ${MACHINE_STATUS}: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] doctor --json reports its counts and the state of every check."
+
+# receipt list --json: the summaries are already tabular; the table was the only rendering.
+MACHINE_RUN_ID="$( (cd "${MACHINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" receipt start fix --issue AH-60) )"
+machine_run receipt list --json
+if ! printf '%s' "${MACHINE_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] receipt list --json did not emit one JSON document: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+if [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r --arg run "${MACHINE_RUN_ID}" '[.[] | select(.runId == $run and .workflow == "fix" and .issue == "AH-60" and .state == "open")] | length')" -ne 1 ]; then
+    echo "  [FAIL] receipt list --json did not describe the open run: ${MACHINE_OUTPUT}"
+    exit 1
+fi
+if [ "${MACHINE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] receipt list --json exited ${MACHINE_STATUS} while emitting a listing"
+    exit 1
+fi
+echo "  [PASS] receipt list --json describes every recorded run."
+
+# An empty listing is an empty array, not an absence of output: a consumer that has to tell
+# "no receipts" from "the command printed prose" is back to parsing prose.
+MACHINE_EMPTY="${TMP_TEST_DIR}/machine-empty"
+mkdir -p "${MACHINE_EMPTY}"
+git -C "${MACHINE_EMPTY}" init -q
+MACHINE_EMPTY_OUTPUT="$( (cd "${MACHINE_EMPTY}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" receipt list --json 2>/dev/null) )"
+if [ "$(printf '%s' "${MACHINE_EMPTY_OUTPUT}" | jq -r 'length')" != "0" ]; then
+    echo "  [FAIL] receipt list --json on an empty repository was not an empty array: ${MACHINE_EMPTY_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] An empty receipt listing is an empty array."
+
+# Completion offered the top-level commands and stopped, so the subcommand -- which is where
+# every one of these commands actually does something -- was never completed.
+MACHINE_COMPLETION_HOME="${TMP_TEST_DIR}/machine-completion-home"
+mkdir -p "${MACHINE_COMPLETION_HOME}"
+(cd "${MACHINE_REPO}" && env -u STACK_PROFILE HOME="${MACHINE_COMPLETION_HOME}" \
+    "${HARNESS_ROOT}/bin/harness" completion install >/dev/null 2>&1)
+MACHINE_BASH_COMPLETION="${MACHINE_COMPLETION_HOME}/.local/share/bash-completion/completions/harness"
+if [ ! -f "${MACHINE_BASH_COMPLETION}" ]; then
+    echo "  [FAIL] completion install wrote no bash completion"
+    exit 1
+fi
+for machine_sub in "spec:archive" "qa:tdd" "worktree:seed" "uninstall:--global"; do
+    # -- or grep reads a pattern beginning with a dash as its own option.
+    if ! grep -qF -- "${machine_sub#*:}" "${MACHINE_BASH_COMPLETION}"; then
+        echo "  [FAIL] the bash completion does not offer '${machine_sub#*:}' for '${machine_sub%%:*}'"
+        exit 1
+    fi
+done
+if ! bash -n "${MACHINE_BASH_COMPLETION}"; then
+    echo "  [FAIL] the generated bash completion is not valid bash"
+    exit 1
+fi
+echo "  [PASS] Completion offers each command's own subcommands and flags."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

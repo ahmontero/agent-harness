@@ -34,7 +34,7 @@ Usage:
   harness receipt start <implement|fix|investigate> [--issue <token>]
   harness receipt phase <run_id> <phase_token> <started|passed|failed|blocked|skipped>
   harness receipt finish <run_id> <completed|failed|blocked|cancelled>
-  harness receipt list
+  harness receipt list [--json]
   harness receipt show <run_id>
   harness receipt prune [--keep <count>]
 USAGE_EOF
@@ -267,8 +267,26 @@ case "${ACTION}" in
         release_receipt_lock
         ;;
     list)
-        [ $# -eq 0 ] || { usage; exit 1; }
+        LIST_JSON=false
+        while [ $# -gt 0 ]; do
+            case "$1" in
+                --json) LIST_JSON=true; shift ;;
+                *) log_error "Unknown receipt list option: $1"; usage; exit 1 ;;
+            esac
+        done
         RECEIPT_ROWS="$(receipt_summaries)"
+        if [ "${LIST_JSON}" = true ]; then
+            # An empty listing is an empty array. A consumer that has to tell "no receipts"
+            # from "the command printed prose" is back to parsing prose, which is the thing
+            # the machine form exists to stop.
+            printf '%s\n' "${RECEIPT_ROWS}" | jq -R -s '
+                split("\n") | map(select(length > 0)) | map(split("\t")) |
+                map({runId: .[0], workflow: .[1],
+                     issue: (if .[2] == "-" then null else .[2] end),
+                     branch: (if .[3] == "-" then null else .[3] end),
+                     started: .[4], state: .[5]})'
+            exit 0
+        fi
         if [ -z "${RECEIPT_ROWS}" ]; then
             log_info "No receipts have been recorded in this repository."
             exit 0
