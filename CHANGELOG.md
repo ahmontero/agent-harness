@@ -6,6 +6,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.12.1] - 2026-09-12
+
+### Changed
+
+- The landmine scanner applies a rule in one `grep` invocation instead of one per file. It
+  spawned a process for every `(rule, file)` pair: on a 500-file repository that was 4000
+  processes, 6.6s with four rules and 13.2s with eight, linear in the product and about 94%
+  of the wall clock in process startup alone. 2.12.0 doubled the rule count and so doubled
+  the cost, and said so. The same 500 files and eight rules now scan in **0.74s**, and a
+  thousand files in **0.99s**.
+- Nothing about the findings changes, and that is the requirement the work was held to: the
+  same rule IDs, the same repository-relative paths, the same line numbers, the same
+  grouping of matches under a file, and the same order. A new test fixes that shape against
+  a fixture exercising a content rule, a path rule, `fileExtensions`, `excludePaths` and a
+  suppressed line, and it passed against the old implementation before the new one existed.
+- The file list is chunked with `xargs -0`. Three thousand nested paths are 1.9MB, past the
+  1MB limit macOS reports and well past the 128KB buffer GNU `xargs` uses by default.
+  Without chunking the failure is not a partial scan: `grep` is never invoked, its error is
+  swallowed by the redirection that was always there, and the scanner reports "passed with 0
+  errors" over a repository carrying violations. The suite covers it, and asserts the size of
+  its own fixture so it cannot quietly stop exercising the chunked path.
+- A rule's matches are keyed back to the repository path by matching its source as a literal
+  prefix rather than by splitting on the first colon, so a path containing a colon parses
+  correctly and `--staged` keeps reporting repository paths rather than the index blobs it
+  actually reads.
+
 ## [2.12.0] - 2026-09-12
 
 The scanner has always been described as a security scanner. Measured against a file
