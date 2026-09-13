@@ -11,14 +11,16 @@
       "simplify",
       "qa",
       "review",
-      "loop"
+      "loop",
+      "conflicts"
     ],
     "fix": [
       "bug",
       "tdd",
       "qa",
       "review",
-      "loop"
+      "loop",
+      "conflicts"
     ],
     "investigate": [
       "interview"

@@ -524,8 +524,10 @@ add_detected_profile() {
             + {rules: {invariants: "./rules/floor.md", landmines: "./rules/landmines.md", scanner: "./rules/landmines.json"}})}')")
 }
 
+# "<dotted key>\t<reason>". The key is kept apart from the prose so the report can print the
+# JSON to paste: knowing a key is missing was never the friction, knowing what to write was.
 note_unset_gate() {
-    DETECTED_UNSET+=("$1")
+    DETECTED_UNSET+=("$1"$'\t'"$2")
 }
 
 detect_python_profile() {
@@ -541,19 +543,19 @@ detect_python_profile() {
          [ -f "${target}/pytest.ini" ]; then
         qa="$(jq -nc '{testRunner: "pytest", testCommand: "pytest", tddCommand: "pytest {path}"}')"
     else
-        note_unset_gate "qa.testCommand for the python profile: no manage.py and no pytest in the dependencies"
+        note_unset_gate "python.qa.testCommand" "no manage.py and no pytest in the dependencies"
     fi
 
     if grep -qs '\[tool\.ruff' "${pyproject}" 2>/dev/null; then
         qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "ruff check ."}')"
     else
-        note_unset_gate "qa.lintCommand for the python profile: no [tool.ruff] in pyproject.toml"
+        note_unset_gate "python.qa.lintCommand" "no [tool.ruff] in pyproject.toml"
     fi
 
     if grep -qs '\[tool\.mypy' "${pyproject}" 2>/dev/null || [ -f "${target}/mypy.ini" ]; then
         qa="$(jq -nc --argjson qa "${qa}" '$qa + {typeCheckCommand: "mypy ."}')"
     else
-        note_unset_gate "qa.typeCheckCommand for the python profile: no [tool.mypy] and no mypy.ini"
+        note_unset_gate "python.qa.typeCheckCommand" "no [tool.mypy] and no mypy.ini"
     fi
 
     add_detected_profile python "Python" '["pyproject.toml","setup.py","requirements.txt"]' "${qa}"
@@ -573,7 +575,7 @@ detect_node_profile() {
     if jq -e '.scripts.test // empty' "${manifest}" >/dev/null 2>&1; then
         qa="$(jq -nc '{testCommand: "npm test"}')"
     else
-        note_unset_gate "qa.testCommand for the node profile: package.json declares no test script"
+        note_unset_gate "node.qa.testCommand" "package.json declares no test script"
     fi
 
     if jq -e '(.devDependencies // {}) + (.dependencies // {}) | has("vitest")' "${manifest}" >/dev/null 2>&1; then
@@ -581,13 +583,13 @@ detect_node_profile() {
     elif jq -e '(.devDependencies // {}) + (.dependencies // {}) | has("jest")' "${manifest}" >/dev/null 2>&1; then
         qa="$(jq -nc --argjson qa "${qa}" '$qa + {testRunner: "jest", tddCommand: "npx jest {path}"}')"
     else
-        note_unset_gate "qa.tddCommand for the node profile: neither vitest nor jest is a dependency"
+        note_unset_gate "node.qa.tddCommand" "neither vitest nor jest is a dependency"
     fi
 
     if jq -e '.scripts.lint // empty' "${manifest}" >/dev/null 2>&1; then
         qa="$(jq -nc --argjson qa "${qa}" '$qa + {lintCommand: "npm run lint"}')"
     else
-        note_unset_gate "qa.lintCommand for the node profile: package.json declares no lint script"
+        note_unset_gate "node.qa.lintCommand" "package.json declares no lint script"
     fi
 
     if jq -e '.scripts.typecheck // empty' "${manifest}" >/dev/null 2>&1; then
@@ -595,7 +597,7 @@ detect_node_profile() {
     elif [ -f "${target}/tsconfig.json" ]; then
         qa="$(jq -nc --argjson qa "${qa}" '$qa + {typeCheckCommand: "npx tsc --noEmit"}')"
     else
-        note_unset_gate "qa.typeCheckCommand for the node profile: no typecheck script and no tsconfig.json"
+        note_unset_gate "node.qa.typeCheckCommand" "no typecheck script and no tsconfig.json"
     fi
 
     add_detected_profile node "Node.js" '["package.json"]' "${qa}"
@@ -683,10 +685,16 @@ write_detected_config() {
     log_success "Detected $(printf '%s\n' "${DETECTED_PROFILES[@]}" | jq -r '.name' | tr '\n' ' ')in ${target}."
     if [ ${#DETECTED_UNSET[@]} -gt 0 ]; then
         log_warn "No evidence in the target for these, so they are left unset in ${destination}:"
+        local gate_key gate_reason gate_profile gate_leaf
         for gate in "${DETECTED_UNSET[@]}"; do
-            printf '  %s\n' "${gate}"
+            gate_key="${gate%%$'\t'*}"
+            gate_reason="${gate#*$'\t'}"
+            gate_profile="${gate_key%%.*}"
+            gate_leaf="${gate_key##*.}"
+            printf '  profiles.%s — %s\n' "${gate_key}" "${gate_reason}"
+            printf '      in profiles.%s.qa, write this project'"'"'s command, or paste this to record it has none:\n' "${gate_profile}"
+            printf '        "%s": false\n' "${gate_leaf}"
         done
-        log_info "Set each to this project's command, or to false to record that it has none."
     fi
 }
 

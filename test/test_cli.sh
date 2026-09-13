@@ -6,11 +6,61 @@
 
 set -eo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HARNESS_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
+TEST_DIR="${TEST_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+HARNESS_ROOT="${HARNESS_ROOT:-$(cd "${TEST_DIR}/.." && pwd)}"
 # Named here rather than in group 20 because the surface-content assertions in group 6
 # must exclude it: it is an installation record, not a published skill.
 SURFACE_MANIFEST=".agent-harness-surface.json"
+
+# Shared by every group, so it belongs above the first one. It used to be created inside
+# group 4, which meant any group could only run after the three before it.
+TMP_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
+
+# The suite is a linear script, so running one group is an extraction rather than a
+# dispatch: everything above the first group header is shared setup, and a group runs from
+# its header to the next one. `--group 3` selects by number, `--group scanner` by a
+# case-insensitive substring of the title.
+#
+# A filter that matches nothing exits non-zero. Passing over an empty selection would be a
+# gate that could not run reporting a pass, which is the defect this project keeps closing.
+GROUP_FILTER=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --group)
+            [ -n "${2:-}" ] || { echo "--group requires a group number or a substring of its title" >&2; exit 2; }
+            GROUP_FILTER="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: bash test/test_cli.sh [--group <number|substring>]"
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+
+if [ -n "${GROUP_FILTER}" ]; then
+    FILTERED_SUITE="${TMP_TEST_DIR}/filtered-suite.sh"
+    if ! awk -v filter="${GROUP_FILTER}" '
+        BEGIN { inpre = 1; sel = 0; found = 0; isnum = (filter ~ /^[0-9]+[a-z]*$/) }
+        /^echo "=== / {
+            inpre = 0
+            if (isnum) { sel = (index($0, "=== " filter ".") > 0) }
+            else       { sel = (index(tolower($0), tolower(filter)) > 0) }
+            if (sel) found = 1
+        }
+        { if (inpre || sel) print }
+        END { if (!found) exit 3 }
+    ' "$0" > "${FILTERED_SUITE}"; then
+        echo "No test group matches '${GROUP_FILTER}'." >&2
+        exit 2
+    fi
+    printf '\necho ""\necho "Selected group(s) passed."\n' >> "${FILTERED_SUITE}"
+    TEST_DIR="${TEST_DIR}" HARNESS_ROOT="${HARNESS_ROOT}" bash "${FILTERED_SUITE}"
+    exit $?
+fi
+
 
 echo "=== 1. Testing Shell Scripts Syntax ==="
 find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" "${HARNESS_ROOT}" -maxdepth 2 -type f \( -name "*.sh" -o -name "harness" -o -name "setup" \) | while read -r script; do
@@ -116,9 +166,6 @@ echo "  [PASS] agent-harness --help executed successfully."
 
 echo ""
 echo "=== 4. Testing Context Extraction ==="
-TMP_TEST_DIR=$(mktemp -d)
-trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
-
 CONTEXT_JSON=$("${HARNESS_ROOT}/bin/harness" context --json)
 if echo "${CONTEXT_JSON}" | grep -q "branch"; then
     echo "  [PASS] harness context --json produced valid JSON."
@@ -491,9 +538,28 @@ if [ ! -f "${HARNESS_ROOT}/harness.config.json" ]; then
     echo "  [FAIL] Repository must define local QA commands instead of using config.example.json"
     exit 1
 fi
-if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config.json")" != "env -u STACK_PROFILE npm test" ] || \
-   [ "$(jq -r '.profiles.harness.qa.lintCommand' "${HARNESS_ROOT}/harness.config.json")" != "./setup --verify" ]; then
-    echo "  [FAIL] Repository QA configuration does not target its canonical verification commands"
+if [ "$(jq -r '.profiles.harness.qa.testCommand' "${HARNESS_ROOT}/harness.config.json")" != "env -u STACK_PROFILE npm test" ]; then
+    echo "  [FAIL] Repository QA configuration does not target its canonical test command"
+    exit 1
+fi
+# The lint gate is asserted by what it must reach, not by a literal. It was pinned to
+# "./setup --verify", which is bash -n, while CI ran ShellCheck -- so harness qa all reported
+# a passing lint gate over code CI rejected, and a ShellCheck failure reached a published
+# pull request with local QA green. The chain below is the property that was missing: the
+# local gate runs the project's lint script, and that script is the ShellCheck CI runs.
+REPO_LINT_GATE="$(jq -r '.profiles.harness.qa.lintCommand' "${HARNESS_ROOT}/harness.config.json")"
+for lint_link in "npm run lint" "./setup --verify"; do
+    if ! printf '%s' "${REPO_LINT_GATE}" | grep -qF -- "${lint_link}"; then
+        echo "  [FAIL] the repository's lint gate does not run '${lint_link}': ${REPO_LINT_GATE}"
+        exit 1
+    fi
+done
+if ! jq -r '.scripts.lint' "${HARNESS_ROOT}/package.json" | grep -qF "shellcheck"; then
+    echo "  [FAIL] the lint script the gate runs does not invoke ShellCheck"
+    exit 1
+fi
+if ! grep -qF "shellcheck" "${HARNESS_ROOT}/.github/workflows/ci.yml"; then
+    echo "  [FAIL] CI no longer runs ShellCheck, so the local gate is asserting an alignment that is gone"
     exit 1
 fi
 echo "  [PASS] repository provides its canonical floor and landmine documentation."
@@ -4711,6 +4777,68 @@ for jsongate_typo in "scan --jsonn" "qa all --jsonn"; do
     fi
 done
 echo "  [PASS] a mistyped JSON option is refused rather than degraded to prose."
+
+echo ""
+echo "=== 48. Testing Minor Surface Gaps ==="
+# The README introduces its protocol list with "bundled privately inside those workflows".
+# Six of the sixteen were bundled nowhere. Four of those document CLI commands and duplicate
+# harness --help; conflicts is a capability with no CLI behind it, so an agent that met a
+# merge conflict in the default mode had no protocol for it at all.
+if [ "$(jq -r '.public.implement | index("conflicts") != null' "${HARNESS_ROOT}/core/skills/catalog.json")" != "true" ] || \
+   [ "$(jq -r '.public.fix | index("conflicts") != null' "${HARNESS_ROOT}/core/skills/catalog.json")" != "true" ]; then
+    echo "  [FAIL] conflicts reaches neither workflow that integrates work, so curated mode has no conflict protocol"
+    exit 1
+fi
+if grep -qF "The protocols below are bundled privately inside those workflows" "${HARNESS_ROOT}/README.md"; then
+    echo "  [FAIL] the README still claims every listed protocol is bundled inside a workflow"
+    exit 1
+fi
+echo "  [PASS] conflicts reaches the workflows that integrate, and the README says what each mode gets."
+
+# init named the gates it left unset and not what to write into them. Knowing a key is
+# missing was never the friction.
+MINOR_INIT="${TMP_TEST_DIR}/minor-init"
+mkdir -p "${MINOR_INIT}/home"
+git -C "${MINOR_INIT}" init -q 2>/dev/null || { mkdir -p "${MINOR_INIT}"; git -C "${MINOR_INIT}" init -q; }
+git -C "${MINOR_INIT}" config user.email "tests@agent-harness.local"
+git -C "${MINOR_INIT}" config user.name "Agent Harness Tests"
+printf '{"name":"x","version":"1.0.0"}\n' > "${MINOR_INIT}/package.json"
+git -C "${MINOR_INIT}" add -A
+git -C "${MINOR_INIT}" commit -q -m init
+MINOR_INIT_OUTPUT="$(env HOME="${MINOR_INIT}/home" HARNESS_STATE_DIR="${MINOR_INIT}/state" \
+    "${HARNESS_ROOT}/install.sh" --target "${MINOR_INIT}" 2>&1)"
+if ! printf '%s' "${MINOR_INIT_OUTPUT}" | grep -qF '"lintCommand": false'; then
+    echo "  [FAIL] init named the gates it left unset without showing what to write: ${MINOR_INIT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] init prints the JSON to paste for every gate it could not evidence."
+
+# The suite is 48 groups and about five minutes. This project's own tddCommand ran all of
+# it, while the protocol it ships calls harness qa tdd "fast feedback mode".
+MINOR_FILTER_OUTPUT="$(bash "${HARNESS_ROOT}/test/test_cli.sh" --group 3 2>&1)" || {
+    echo "  [FAIL] the suite could not run a single group: ${MINOR_FILTER_OUTPUT}"
+    exit 1
+}
+if ! printf '%s' "${MINOR_FILTER_OUTPUT}" | grep -qF "3. Testing CLI Dispatcher Output"; then
+    echo "  [FAIL] --group 3 did not run the group it names: ${MINOR_FILTER_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${MINOR_FILTER_OUTPUT}" | grep -qF "41. Testing Debt Marker"; then
+    echo "  [FAIL] --group 3 ran groups it was not asked for"
+    exit 1
+fi
+# A filter that selects nothing is a gate that could not run, not a gate that passed.
+MINOR_EMPTY_STATUS=0
+bash "${HARNESS_ROOT}/test/test_cli.sh" --group no-such-group >/dev/null 2>&1 || MINOR_EMPTY_STATUS=$?
+if [ "${MINOR_EMPTY_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] a filter matching no group exited 0, reporting a pass over nothing"
+    exit 1
+fi
+if [ "$(jq -r '.profiles.harness.qa.tddCommand' "${HARNESS_ROOT}/harness.config.json")" = "bash test/test_cli.sh" ]; then
+    echo "  [FAIL] this project's fast feedback loop is still its whole suite"
+    exit 1
+fi
+echo "  [PASS] the suite runs one group, refuses a filter that matches none, and tdd uses it."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"

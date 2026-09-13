@@ -6,6 +6,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.0] - 2026-09-13
+
+Three small gaps the audit left, and one it did not find because the gate that would have
+found it was checking less than it claimed.
+
+### Added
+
+- `test/test_cli.sh --group <number|substring>` runs one group. The suite is 48 groups and
+  about five minutes, and this repository's own `qa.tddCommand` was all of it — so the
+  RED-GREEN cycle the project exists to enforce was, here, a five-minute wait per iteration
+  while `core/skills/qa/SKILL.md` called it "fast feedback mode". `harness qa tdd 3` now
+  takes 0.2 seconds. A filter that matches no group exits non-zero rather than passing over
+  an empty selection.
+- `conflicts` is published into the `implement` and `fix` bundles. It is the one capability
+  of the six unbundled primitives with no CLI behind it, so an agent that met a merge
+  conflict in the default mode had no protocol for it at all — which happened in this
+  repository's own pull request #24.
+
+### Changed
+
+- `qa.lintCommand` runs the ShellCheck that CI runs. It was `./setup --verify`, which is
+  `bash -n`; ShellCheck ran only in the workflow. `harness qa all` therefore reported a
+  passing lint gate over code CI rejected, and a ShellCheck failure reached a published pull
+  request with local QA green. A gate that checks less than the real one is the fail-open
+  shape this project keeps closing, found this time in its own configuration.
+- The README's protocol list no longer claims all sixteen entries are bundled inside the
+  workflows. Five are reachable only through `--expert`, and four of those five document CLI
+  commands you can run directly, so a curated installation loses nothing it cannot reach
+  another way. The list now says which is which.
+- `harness init` prints the JSON to paste for each gate it left unset, not only the gate's
+  name. Knowing a key is missing was never the friction.
+
 ## [2.15.0] - 2026-09-12
 
 `harness context`, `harness debt` and `harness spec status` answered in JSON. The two
