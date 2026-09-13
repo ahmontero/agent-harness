@@ -6,6 +6,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.16.1] - 2026-09-13
+
+### Fixed
+
+- `harness worktree remove` accepts a relative path. It advertises `<issue_key|path>` and
+  matched only the absolute form: the key was compared as an opaque string against the path
+  `git worktree list` emits and against the directory name, so `nested/inside` or
+  `../wt-AH-2` — the forms anyone types from inside the repository — matched nothing and the
+  command answered "matches no worktree" about a worktree it had just listed.
+- `harness worktree seed`, thirty lines above in the same file, has always resolved its
+  argument with `pwd -P` and compared physical paths. One file, one concept, two treatments;
+  `remove` now uses the one that works.
+- Resolution does not loosen the match. The exactness this function was given after a
+  substring key removed two worktrees and destroyed an unsaved file is about naming one
+  worktree and no other, and a resolved path names exactly one directory — a path that is
+  not a worktree still matches nothing, which the regression asserts alongside the two
+  relative forms.
+
 ## [2.16.0] - 2026-09-13
 
 Three small gaps the audit left, and one it did not find because the gate that would have

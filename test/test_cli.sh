@@ -2337,6 +2337,35 @@ if [ "$(worktree_count)" != "3" ]; then
 fi
 echo "  [PASS] An ambiguous worktree key is refused."
 
+# `worktree remove` advertises <issue_key|path> and accepted only an absolute one. The key
+# was compared as an opaque string against the absolute path git emits and against the
+# directory name, so a relative path -- the form anyone types from inside the repository --
+# matched nothing. `worktree seed`, in the same file, already resolves its argument with
+# pwd -P and compares physical paths; remove simply never did.
+#
+# Exactness came from the substring match that once removed two worktrees and destroyed an
+# unsaved file. A resolved path is exact: it names one directory and no other.
+git -C "${WT_MAIN}" worktree add -q "${WT_MAIN}/nested/inside" HEAD
+RELATIVE_OUTPUT="$( (cd "${WT_MAIN}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree remove nested/inside --dry-run 2>&1) )" || true
+if ! printf '%s' "${RELATIVE_OUTPUT}" | grep -q "Would remove worktree"; then
+    echo "  [FAIL] a relative path to a worktree inside the repository matched nothing: ${RELATIVE_OUTPUT}"
+    exit 1
+fi
+RELATIVE_SIBLING="$( (cd "${WT_MAIN}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree remove ../wt-AH-2 --dry-run 2>&1) )" || true
+if ! printf '%s' "${RELATIVE_SIBLING}" | grep -q "wt-AH-2"; then
+    echo "  [FAIL] a relative path to a worktree beside the repository matched nothing: ${RELATIVE_SIBLING}"
+    exit 1
+fi
+# Resolution must not loosen the match: a path that is not a worktree still matches nothing.
+NOT_A_WORKTREE=0
+(cd "${WT_MAIN}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree remove nested --dry-run >/dev/null 2>&1) || NOT_A_WORKTREE=$?
+if [ "${NOT_A_WORKTREE}" -eq 0 ]; then
+    echo "  [FAIL] a directory that merely contains a worktree was accepted as one"
+    exit 1
+fi
+git -C "${WT_MAIN}" worktree remove --force "${WT_MAIN}/nested/inside"
+echo "  [PASS] worktree remove accepts a relative path without loosening what it matches."
+
 # ./setup is advertised as a guided interactive installer and asked nothing, so running it
 # from $HOME installed AGENTS.md, two symlinks, a config, rules, and four surfaces there.
 GUIDED_HOME="${TMP_TEST_DIR}/guided-home"
