@@ -6,6 +6,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.13.0] - 2026-09-12
+
+The Bounded Review Loop is what stops a review phase from ending when the agent gets tired
+of it, and only one workflow had all of it.
+
+> **Upgrade note — `/harness-fix` now bounds its review and opens a ledger.** A fix whose
+> review keeps finding problems will now stop at three rounds, adjudicate what is still open,
+> and reproduce its rulings, instead of the agent deciding privately when to stop. Runs that
+> previously ended quietly may now end `blocked` with a decision handed to you, which is the
+> point. Re-run `harness sync` so installed bundles pick up `references/loop.md`.
+
+### Added
+
+- `core/skills/loop/SKILL.md`, the Bounded Review Loop as a single protocol, bundled into
+  `/harness-implement`, `/harness-fix` and `/harness-orchestrate` as `references/loop.md`.
+  It carries the union of what the two previous copies had between them, not the
+  intersection.
+- `/harness-fix` opens a ledger alongside its receipt, runs the bounded loop in its review
+  phase, and reproduces `harness ledger rulings` before its final response. It had a review
+  phase with no bound on it at all, while `references/review.md` told it to classify findings
+  Critical, Important and Minor "because the bounded review loop in `/harness-implement`
+  consumes it" — a protocol `fix` did not have. The severity classification was a promise
+  `fix` could not keep.
+- `/harness-investigate` opens a ledger. It gains no loop: it is read-only and terminates at
+  a recommendation, so there is no correction to re-review and nothing to adjudicate. What it
+  does have is length, and re-deriving evidence after a compaction is the cost a ledger
+  removes.
+
+### Changed
+
+- `/harness-implement` and `/harness-orchestrate` reference the loop instead of restating it.
+  The two copies had already diverged by twelve lines, and one of those differences was the
+  stagnation breaker: the dispatched workflow never learned to sign a failed round, so a run
+  that kept failing the same way spent all three rounds re-deriving one failure before it
+  adjudicated. Nothing reported that — it took reading both to find. `/harness-orchestrate`
+  now inherits the signature by pointing at the copy that has it.
+- A test asserts the loop is stated once: no workflow may contain the loop's rules, every
+  workflow that runs it must reference it, and each must open the ledger the loop writes to.
+  The drift this removes cannot return by hand-editing one copy, because there is one.
+- `/harness-investigate` no longer claims the receipt is "the sole permitted metadata write",
+  which stopped being true the moment it opened a ledger.
+
 ## [2.12.1] - 2026-09-12
 
 ### Changed

@@ -17,11 +17,14 @@ Use this workflow to understand behavior, compare solutions, evaluate architectu
 
 ### Execution Receipt
 
-The sole permitted metadata write is the private Git receipt. Start it with:
+The only permitted writes are the private Git receipt and its ledger. Start both with:
 
 `RUN_ID="$(harness receipt start investigate --issue <issue-token>)"`
+`harness ledger start "$RUN_ID"`
 
-Omit `--issue` when unavailable. Record phase outcomes without free-form content, for example `harness receipt phase "$RUN_ID" evidence passed`. Finish with `harness receipt finish "$RUN_ID" completed`, or the matching `failed`, `blocked`, or `cancelled` outcome. If receipt recording fails, disclose the observability gap and keep the investigation itself read-only.
+Omit `--issue` when unavailable. Record phase outcomes without free-form content, for example `harness receipt phase "$RUN_ID" evidence passed`, and put anything that needs words in the ledger: `harness ledger append "$RUN_ID" phase "evidence passed — 17 of 17 commands guard, context does not"`. Finish with `harness receipt finish "$RUN_ID" completed`, or the matching `failed`, `blocked`, or `cancelled` outcome. If receipt or ledger recording fails, disclose the observability gap and keep the investigation itself read-only.
+
+The ledger is the run's memory, and an investigation is the workflow most likely to outlive its own context. A resumed run recovers what it has already established from `harness ledger show "$RUN_ID"` rather than gathering the same evidence twice. This workflow has no bounded review loop: it is read-only and produces a recommendation, so there is no correction to re-review and nothing to adjudicate.
 
 ## Phases
 
@@ -34,7 +37,7 @@ Omit `--issue` when unavailable. Record phase outcomes without free-form content
 
 ## Safety Boundary
 
-- Apart from its private execution receipt, this workflow is read-only: do not edit working-tree files, create specs or worktrees, install dependencies, mutate external systems, or run destructive commands.
+- Apart from its private execution receipt and ledger, this workflow is read-only: do not edit working-tree files, create specs or worktrees, install dependencies, mutate external systems, or run destructive commands.
 - Do not silently transition into `/harness-implement` or `/harness-fix` after finding an answer.
 - Do not commit, push, or open a pull request.
 - If the user explicitly requests implementation during the investigation, finish the current evidence summary and start the appropriate workflow as a distinct phase of work.

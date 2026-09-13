@@ -4470,4 +4470,77 @@ fi
 echo "  [PASS] a file list larger than the command-line limit is chunked without losing a finding."
 
 echo ""
+echo "=== 45. Testing Shared Review Loop ==="
+# The Bounded Review Loop is what makes a review gate terminate without dropping a finding,
+# and only /harness-implement had all of it. /harness-orchestrate carried a second
+# hand-maintained copy that had already fallen twelve lines behind -- one of them the
+# stagnation signature, so a dispatched run that kept failing the same way spent all three
+# rounds re-deriving one failure. /harness-fix had a review phase with no bound on it at
+# all, while references/review.md told it to classify findings "because the bounded review
+# loop in /harness-implement consumes it" -- a protocol fix does not have.
+LOOP_PRIMITIVE="${HARNESS_ROOT}/core/skills/loop/SKILL.md"
+if [ ! -f "${LOOP_PRIMITIVE}" ]; then
+    echo "  [FAIL] the bounded review loop has no single home: ${LOOP_PRIMITIVE} is missing"
+    exit 1
+fi
+if ! grep -qx "name: harness-loop" "${LOOP_PRIMITIVE}"; then
+    echo "  [FAIL] the loop primitive does not carry its namespaced frontmatter"
+    exit 1
+fi
+# Everything both copies had between them, the signature included.
+for loop_rule in "Three rounds is the cap" "harness ledger failure" "harness ledger rulings" "stagnant" "parked" "load-bearing"; do
+    if ! grep -qF "${loop_rule}" "${LOOP_PRIMITIVE}"; then
+        echo "  [FAIL] the shared loop lost a rule the copies had: ${loop_rule}"
+        exit 1
+    fi
+done
+echo "  [PASS] the bounded review loop exists once, with every rule both copies had."
+
+# A workflow says when to enter the loop. It does not restate the loop's rules, because two
+# statements of one protocol is the arrangement this group exists to remove.
+for looping_workflow in implement fix orchestrate; do
+    WORKFLOW_FILE="${HARNESS_ROOT}/core/skills/${looping_workflow}/SKILL.md"
+    if ! grep -qF "references/loop.md" "${WORKFLOW_FILE}"; then
+        echo "  [FAIL] ${looping_workflow} runs the bounded loop without referencing it"
+        exit 1
+    fi
+    if grep -qF "Three rounds is the cap" "${WORKFLOW_FILE}"; then
+        echo "  [FAIL] ${looping_workflow} restates the loop's rules instead of referencing them"
+        exit 1
+    fi
+    if [ "$(jq -r --arg w "${looping_workflow}" '.public[$w] | index("loop") != null' "${HARNESS_ROOT}/core/skills/catalog.json")" != "true" ]; then
+        echo "  [FAIL] the catalog does not publish references/loop.md into the ${looping_workflow} bundle"
+        exit 1
+    fi
+done
+echo "  [PASS] every workflow that runs the loop references it and none restates it."
+
+# A workflow that runs the loop has to open the ledger the loop writes to. That is the half
+# the workflow owns; the rulings and the signature are the loop's, asserted above where they
+# live. orchestrate inherits the signature its copy never had by referencing the one that
+# carries it, which the two assertions above already establish.
+for ledger_owner in implement fix orchestrate; do
+    if ! grep -qF 'harness ledger start' "${HARNESS_ROOT}/core/skills/${ledger_owner}/SKILL.md"; then
+        echo "  [FAIL] ${ledger_owner} runs the bounded loop without opening the ledger it writes to"
+        exit 1
+    fi
+done
+echo "  [PASS] every workflow that runs the loop opens the ledger the loop records into."
+
+# investigate gets the ledger and nothing else: it is read-only and has no correction to
+# re-review, so a bounded loop there would be a gate over nothing.
+INVESTIGATE_FILE="${HARNESS_ROOT}/core/skills/investigate/SKILL.md"
+if ! grep -qF "harness ledger start" "${INVESTIGATE_FILE}"; then
+    echo "  [FAIL] investigate opens no ledger, so a compacted investigation re-derives its evidence"
+    exit 1
+fi
+for absent_in_investigate in "references/loop.md" "Three rounds is the cap" "ledger rulings"; do
+    if grep -qF "${absent_in_investigate}" "${INVESTIGATE_FILE}"; then
+        echo "  [FAIL] investigate gained loop machinery it has no use for: ${absent_in_investigate}"
+        exit 1
+    fi
+done
+echo "  [PASS] investigate keeps a ledger and gains no loop."
+
+echo ""
 echo "All automated tests passed successfully! [100%]"

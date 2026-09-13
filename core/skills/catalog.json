@@ -10,13 +10,15 @@
       "tdd",
       "simplify",
       "qa",
-      "review"
+      "review",
+      "loop"
     ],
     "fix": [
       "bug",
       "tdd",
       "qa",
-      "review"
+      "review",
+      "loop"
     ],
     "investigate": [
       "interview"
@@ -25,7 +27,8 @@
       "spec",
       "tdd",
       "qa",
-      "review"
+      "review",
+      "loop"
     ]
   },
   "runtimes": {
@@ -40,6 +43,7 @@
     "debt",
     "doctor",
     "interview",
+    "loop",
     "qa",
     "questionnaire",
     "review",
