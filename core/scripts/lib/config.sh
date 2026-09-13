@@ -12,16 +12,52 @@ set -eo pipefail
 # pytest/ruff/mypy commands, and its targetRepoPath of ~/projects/backend-api. An
 # unconfigured repository must resolve to the built-in defaults, which are the same on
 # every machine, rather than to a profile nobody in the project has ever seen.
+
+# The names a project gives its own configuration, most specific first. A directory is
+# searched for all of them before the search moves to its parent, so a nested project's
+# harness.config.json is never shadowed by an ancestor's stack.config.json.
+CONFIG_PROJECT_FILENAMES=(
+    harness.config.json
+    .harnessrc.json
+    stack.config.json
+    .stackrc.json
+    config.json
+)
+
+# The search starts in the current directory and ascends to the repository root. Only the
+# current directory was ever read, so every command run from a subdirectory answered as
+# though the project had no configuration: the profile fell back to "default", every qa
+# gate reported it could not run, and the scanner read the built-in template rather than
+# the project's rules -- and `harness scan --all` reported a pass having read one subtree.
+#
+# It ascends no further than the repository root. A configuration above the checkout
+# belongs to nobody in the project, and adopting it would let a directory outside version
+# control decide how the checkout is scanned. Outside a repository get_repo_root returns
+# the directory it was given, so the loop runs once and the behaviour is unchanged.
+#
+# Paths are compared physically, because git reports a physical root and `pwd` is logical:
+# under a symlinked parent the two spellings never meet, and the ascent would run past the
+# root it is supposed to stop at.
 resolve_config_file() {
-    local harness_root candidate
+    local harness_root repo_root directory filename candidate
     harness_root="$(get_harness_root)"
+    directory="$(pwd -P)"
+    repo_root="$(get_repo_root "${directory}")"
+
+    while :; do
+        for filename in "${CONFIG_PROJECT_FILENAMES[@]}"; do
+            candidate="${directory}/${filename}"
+            if [ -f "${candidate}" ]; then
+                printf '%s\n' "${candidate}"
+                return
+            fi
+        done
+        [ "${directory}" != "${repo_root}" ] || break
+        [ "${directory}" != "/" ] || break
+        directory="$(dirname -- "${directory}")"
+    done
 
     for candidate in \
-        "$(pwd)/harness.config.json" \
-        "$(pwd)/.harnessrc.json" \
-        "$(pwd)/stack.config.json" \
-        "$(pwd)/.stackrc.json" \
-        "$(pwd)/config.json" \
         "${harness_root}/config.json" \
         "${HOME}/.config/agent-harness/config.json"
     do
@@ -161,5 +197,8 @@ get_target_repo() {
         fi
     fi
 
-    pwd
+    # The repository, not the directory the command happened to be typed in. Falling back
+    # to `pwd` made every path-taking command -- `scan --all`, `spec status`, `debt` --
+    # answer about a subtree while reporting it as the project.
+    get_repo_root "$(pwd -P)"
 }

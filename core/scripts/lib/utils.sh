@@ -37,6 +37,16 @@ get_harness_root() {
     cd -P "${lib_dir}/../../.." && pwd
 }
 
+# The repository a directory belongs to, or the directory itself when it belongs to none.
+# It lives here rather than in lib/git.sh because lib/config.sh resolves paths with it and
+# is sourced before lib/git.sh everywhere -- and by stack-config.sh and install.sh, which
+# never source lib/git.sh at all. Two implementations would eventually disagree about where
+# a repository starts, and every path the harness resolves is measured from that answer.
+get_repo_root() {
+    local start_dir="${1:-$(pwd)}"
+    git -C "${start_dir}" rev-parse --show-toplevel 2>/dev/null || printf '%s\n' "${start_dir}"
+}
+
 get_profile_tag() {
     local prof="${STACK_PROFILE:-default}"
     printf "%s%s[%s %s]%s" "${CYAN}" "${BOLD}" "$(echo "${prof}" | tr '[:lower:]' '[:upper:]')" "$1" "${RESET}"
