@@ -4980,10 +4980,11 @@ key_commit_subject() {
     (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit build "${type}" "${message}" >/dev/null 2>&1)
     git -C "${KEY_REPO}" log -1 --pretty=%s
 }
+# Sets KEY_CHECK_STATUS and KEY_CHECK_OUTPUT: read through command substitution the helper
+# runs in a subshell, and the output the failure message wants is lost with it.
 key_branch_check() {
-    local status=0
-    KEY_CHECK_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch check "$1" 2>&1) )" || status=$?
-    printf '%s' "${status}"
+    KEY_CHECK_STATUS=0
+    KEY_CHECK_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" branch check "$1" 2>&1) )" || KEY_CHECK_STATUS=$?
 }
 
 # Every key `branch check` calls conforming must survive into the commit subject.
@@ -4994,7 +4995,8 @@ for key_case in "P20-1234:feat/P20-1234-add-rate:feat(P20-1234): add rate" \
     KEY_REST="${key_case#*:}"
     KEY_BRANCH="${KEY_REST%%:*}"
     KEY_EXPECTED_SUBJECT="${KEY_REST#*:}"
-    if [ "$(key_branch_check "${KEY_BRANCH}")" != "0" ]; then
+    key_branch_check "${KEY_BRANCH}"
+    if [ "${KEY_CHECK_STATUS}" -ne 0 ]; then
         echo "  [FAIL] branch check rejected '${KEY_BRANCH}': ${KEY_CHECK_OUTPUT}"
         exit 1
     fi
@@ -5043,7 +5045,8 @@ for key_type in chore feat fix spike; do
         echo "  [FAIL] branch create refused its own type '${key_type}'"
         exit 1
     }
-    if [ "$(key_branch_check "${key_type}/AH-8-round-trip")" != "0" ]; then
+    key_branch_check "${key_type}/AH-8-round-trip"
+    if [ "${KEY_CHECK_STATUS}" -ne 0 ]; then
         echo "  [FAIL] branch check rejected a branch branch create just wrote: ${KEY_CHECK_OUTPUT}"
         exit 1
     fi
@@ -5173,6 +5176,162 @@ if ! printf '%s' "${REFUSE_HOOK_OUTPUT}" | grep -q "SEC-011"; then
     exit 1
 fi
 echo "  [PASS] The pre-commit hook runs the scan on a minimal PATH."
+
+echo ""
+echo "=== 51. Testing Changeset-Scoped Scanning ==="
+# A delta mode is a claim about a changeset, and it read whole files. A branch that added a
+# comment to a file carrying a credential from before the harness existed failed the gate
+# that qa all and ship both run -- with no way to exclude a path and no way to pass, short
+# of cleaning every legacy file a branch happens to touch or retiring the gate with
+# --no-verify. Adoption on an existing codebase had no incremental route.
+SCOPE_REPO="${TMP_TEST_DIR}/scan-scope"
+mkdir -p "${SCOPE_REPO}/vendor"
+git -C "${SCOPE_REPO}" init -q
+git -C "${SCOPE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${SCOPE_REPO}" config user.name "Agent Harness Tests"
+cat > "${SCOPE_REPO}/harness.config.json" <<'SCOPE_CONFIG_EOF'
+{
+  "project": { "name": "scan-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Scan scope", "git": { "trunkBranch": "main" } } }
+}
+SCOPE_CONFIG_EOF
+# harness-ignore: SEC-010
+printf 'legacy_password = "legacyvaluelegacyvalue"\n' > "${SCOPE_REPO}/legacy.py"
+# harness-ignore: SEC-010
+printf 'vendor_password = "vendorvaluevendorvalue"\n' > "${SCOPE_REPO}/vendor/bundled.py"
+git -C "${SCOPE_REPO}" add -A
+git -C "${SCOPE_REPO}" commit -qm "code that predates the harness"
+git -C "${SCOPE_REPO}" branch -M main
+
+# Sets SCOPE_STATUS and SCOPE_OUTPUT rather than printing the status: read through command
+# substitution the helper runs in a subshell, and the output it recorded is lost with it.
+scope_scan() {
+    SCOPE_STATUS=0
+    SCOPE_OUTPUT="$( (cd "${SCOPE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan "$@" 2>&1) )" || SCOPE_STATUS=$?
+}
+
+git -C "${SCOPE_REPO}" checkout -q -b feat/AH-1-touch-legacy
+printf '\n# an added comment, nothing more\n' >> "${SCOPE_REPO}/legacy.py"
+git -C "${SCOPE_REPO}" add -A
+git -C "${SCOPE_REPO}" commit -qm "touch one line of a legacy file"
+scope_scan --branch
+if [ "${SCOPE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] scan --branch failed on a line the branch did not add: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A delta scan ignores a violation the changeset did not introduce."
+
+# The same file, the same rule, on a line this branch does add.
+# harness-ignore: SEC-010
+printf 'new_password = "brandnewvaluebrandnew"\n' >> "${SCOPE_REPO}/legacy.py"
+git -C "${SCOPE_REPO}" add -A
+git -C "${SCOPE_REPO}" commit -qm "add a credential"
+scope_scan --branch
+if [ "${SCOPE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --branch passed over a credential the branch added: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${SCOPE_OUTPUT}" | grep -q "brandnewvalue"; then
+    echo "  [FAIL] scan --branch did not report the added line: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${SCOPE_OUTPUT}" | grep -q "legacyvalue"; then
+    echo "  [FAIL] scan --branch reported a line the branch did not add: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A delta scan reports a violation the changeset does introduce, and only that."
+
+# --all is the whole-repository question and keeps whole-file semantics.
+scope_scan --all
+if [ "${SCOPE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --all stopped reporting a pre-existing violation: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${SCOPE_OUTPUT}" | grep -q "legacyvalue"; then
+    echo "  [FAIL] scan --all did not report the pre-existing violation: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] scan --all still reads whole files."
+
+# A path rule has no lines, so it is answered by the changeset's file list, not its diff.
+printf 'SECRET=1\n' > "${SCOPE_REPO}/.env"
+git -C "${SCOPE_REPO}" add -f .env
+git -C "${SCOPE_REPO}" commit -qm "add an env file"
+scope_scan --branch
+if [ "${SCOPE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] scan --branch missed a path rule on a file the branch added: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${SCOPE_OUTPUT}" | grep -q "SEC-003"; then
+    echo "  [FAIL] scan --branch did not apply the path rule: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+git -C "${SCOPE_REPO}" rm -q --cached .env
+rm -f "${SCOPE_REPO}/.env"
+git -C "${SCOPE_REPO}" commit -qm "drop the env file"
+echo "  [PASS] A path rule is answered by the changed file list, not by the diff."
+
+# A rule could be scoped per rule and not per project, so excluding a vendored tree meant
+# repeating excludePaths in every rule a project has -- and in every rule the security
+# baseline adds, which a project does not own at all.
+git -C "${SCOPE_REPO}" checkout -q -b feat/AH-2-touch-vendor main
+# harness-ignore: SEC-010
+printf 'added_password = "addedvalueaddedvalue"\n' >> "${SCOPE_REPO}/vendor/bundled.py"
+git -C "${SCOPE_REPO}" add -A
+git -C "${SCOPE_REPO}" commit -qm "change vendored code"
+scope_scan --branch
+if [ "${SCOPE_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the vendored change was not reported before it was excluded: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+cat > "${SCOPE_REPO}/harness.config.json" <<'SCOPE_EXCLUDE_EOF'
+{
+  "project": { "name": "scan-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Scan scope", "git": { "trunkBranch": "main" },
+    "rules": { "excludePaths": ["vendor/*"] } } }
+}
+SCOPE_EXCLUDE_EOF
+scope_scan --branch
+if [ "${SCOPE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] rules.excludePaths did not exclude the vendored tree: ${SCOPE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] rules.excludePaths excludes a path from every rule, the baseline's included."
+
+# qa all hard-coded --branch, so a project that wants the whole repository read before a
+# pull request had no way to say so.
+scope_qa_scan_mode() {
+    (cd "${SCOPE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all --json 2>/dev/null \
+        | jq -r '.gates[] | select(.name == "scan") | .command')
+}
+if [ "$(scope_qa_scan_mode)" != "harness scan --branch" ]; then
+    echo "  [FAIL] qa all did not default to --branch: $(scope_qa_scan_mode)"
+    exit 1
+fi
+cat > "${SCOPE_REPO}/harness.config.json" <<'SCOPE_MODE_EOF'
+{
+  "project": { "name": "scan-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Scan scope", "git": { "trunkBranch": "main" },
+    "qa": { "scanMode": "all" }, "rules": { "excludePaths": ["vendor/*"] } } }
+}
+SCOPE_MODE_EOF
+if [ "$(scope_qa_scan_mode)" != "harness scan --all" ]; then
+    echo "  [FAIL] qa.scanMode did not reach the scan gate: $(scope_qa_scan_mode)"
+    exit 1
+fi
+cat > "${SCOPE_REPO}/harness.config.json" <<'SCOPE_BAD_MODE_EOF'
+{
+  "project": { "name": "scan-scope-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Scan scope", "qa": { "scanMode": "everything" } } }
+}
+SCOPE_BAD_MODE_EOF
+SCOPE_BAD_STATUS=0
+SCOPE_BAD_OUTPUT="$( (cd "${SCOPE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all 2>&1) )" || SCOPE_BAD_STATUS=$?
+if [ "${SCOPE_BAD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] qa all accepted an unknown qa.scanMode: ${SCOPE_BAD_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] qa.scanMode selects the scan gate's mode and refuses one it does not have."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"

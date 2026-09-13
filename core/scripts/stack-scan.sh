@@ -9,6 +9,20 @@
 #   1  the scan ran and found at least one
 #   2  the scan could not run: no rules could be read, or no range could be resolved
 #
+# What a mode reads:
+#   --staged, --diff, --branch   the lines the changeset adds
+#   --all                        every line of every tracked file
+#
+# A delta mode is a claim about a changeset and used to read whole files, so a branch that
+# added a comment to a file carrying a credential from before the harness existed failed
+# the gate `qa all` and `ship` both run. With no way to exclude a path and no way to pass
+# short of cleaning every legacy file a branch happens to touch, the only remaining move
+# was --no-verify -- retiring the gate rather than satisfying it. Adoption on an existing
+# codebase needs an incremental route, and the whole-repository question is still --all.
+#
+# Path rules are the exception: a rule that matches a filename has no line to belong to, so
+# it is answered by the changeset's file list in every mode.
+#
 # 2 is the same status stack-qa.sh reports as GATE_UNRUNNABLE, so a scanner that could not
 # determine what to read is aggregated as "could not run" rather than as a gate that
 # passed. Every refusal below exits 2 for that reason.
@@ -294,6 +308,18 @@ fi
 
 RULES_DISPLAY="${RULES_SOURCE_PATH}${BASELINE_NOTE}"
 
+# Exclusions a project declares once, applied to every rule including the security
+# baseline's. A rule could only be scoped from inside itself, so excluding a vendored tree
+# meant repeating excludePaths in every rule the project has -- and in the baseline's rules,
+# which the project does not own and cannot edit without overriding them wholesale.
+PROFILE_EXCLUDES=()
+while IFS= read -r profile_exclude; do
+    [ -n "${profile_exclude}" ] && PROFILE_EXCLUDES+=("${profile_exclude}")
+done < <(printf '%s' "$(get_profile_value "rules.excludePaths" "[]")" | jq -r '.[]? // empty' 2>/dev/null || true)
+if [ ${#PROFILE_EXCLUDES[@]} -gt 0 ]; then
+    log_info "Excluded by profiles.${ACTIVE_PROFILE}.rules.excludePaths: ${PROFILE_EXCLUDES[*]}"
+fi
+
 log_info "Running Landmine Scanner [${SCAN_MODE}] using rules: ${RULES_DISPLAY}..."
 
 # A rule says what it matches: file content through "pattern", or the repository-relative
@@ -449,6 +475,65 @@ else
     done < <(git ls-files 2>/dev/null || true)
 fi
 
+# The line numbers a changeset adds, per file, read from the same range the file list came
+# from. Numbers are on the new side of the diff, which is the side every SCAN_SOURCES entry
+# holds: the index blob under --staged, the working tree otherwise.
+#
+# The prefixes are forced rather than inherited, because diff.noprefix in a user's Git
+# configuration would silently change what this parses and the failure would be a scan that
+# reports nothing.
+scan_added_lines() {
+    git -c core.quotePath=false diff -U0 --no-color --src-prefix=a/ --dst-prefix=b/ \
+        --diff-filter=ACMR "$@" 2>/dev/null | awk '
+        /^\+\+\+ / {
+            if ($0 == "+++ /dev/null") { path = ""; next }
+            path = substr($0, 7)
+            next
+        }
+        /^@@ / {
+            if (path == "") next
+            split($3, added, ",")
+            start = substr(added[1], 2) + 0
+            count = (2 in added) ? added[2] + 0 : 1
+            for (offset = 0; offset < count; offset++) print path "\t" (start + offset)
+        }
+    '
+}
+
+# ADDED_LINES is index-parallel to FILES_TO_SCAN, each entry a space-delimited set.
+ADDED_LINES=()
+if [ "${SCAN_MODE}" != "all" ]; then
+    for (( collect=0; collect<${#FILES_TO_SCAN[@]}; collect++ )); do
+        ADDED_LINES+=("")
+    done
+    case "${SCAN_MODE}" in
+        staged) DIFF_RANGE=(--cached) ;;
+        branch) DIFF_RANGE=("${BRANCH_BASE}") ;;
+        *)      DIFF_RANGE=() ;;
+    esac
+    while IFS=$'\t' read -r added_path added_line; do
+        [ -n "${added_path}" ] || continue
+        for (( collect=0; collect<${#FILES_TO_SCAN[@]}; collect++ )); do
+            if [ "${FILES_TO_SCAN[collect]}" = "${added_path}" ]; then
+                ADDED_LINES[collect]="${ADDED_LINES[collect]} ${added_line}"
+                break
+            fi
+        done
+    done < <(scan_added_lines "${DIFF_RANGE[@]+"${DIFF_RANGE[@]}"}")
+fi
+
+# True when a content finding belongs to the changeset. --all asks about every line, so it
+# answers yes to all of them.
+line_is_in_changeset() {
+    local added="$1"
+    local line_number="$2"
+    [ "${SCAN_MODE}" != "all" ] || return 0
+    case " ${added} " in
+        *" ${line_number} "*) return 0 ;;
+    esac
+    return 1
+}
+
 if [ ${#FILES_TO_SCAN[@]} -eq 0 ]; then
     # Named so the zero can be judged. "No files to scan" alone reads the same whether the
     # selection is genuinely empty or the mode was the wrong question to ask.
@@ -584,8 +669,13 @@ for (( i=0; i<RULE_COUNT; i++ )); do
     # was 4000 processes and about 94% of its wall clock.
     RULE_FILES=()
     RULE_SOURCES=()
+    RULE_ADDED=()
     for (( f=0; f<${#FILES_TO_SCAN[@]}; f++ )); do
         file="${FILES_TO_SCAN[f]}"
+
+        if [ ${#PROFILE_EXCLUDES[@]} -gt 0 ] && path_is_excluded "${file}" "${PROFILE_EXCLUDES[@]}"; then
+            continue
+        fi
 
         if [ ${#EXCLUDES[@]} -gt 0 ] && path_is_excluded "${file}" "${EXCLUDES[@]}"; then
             continue
@@ -604,6 +694,13 @@ for (( i=0; i<RULE_COUNT; i++ )); do
 
         RULE_FILES+=("${file}")
         RULE_SOURCES+=("${SCAN_SOURCES[f]}")
+        # Carried alongside rather than looked up by name later: the rule's list is a subset
+        # of FILES_TO_SCAN, so the loop below indexes into this one and not into that.
+        if [ "${SCAN_MODE}" = "all" ]; then
+            RULE_ADDED+=("")
+        else
+            RULE_ADDED+=("${ADDED_LINES[f]}")
+        fi
     done
     [ ${#RULE_FILES[@]} -gt 0 ] || continue
 
@@ -647,7 +744,8 @@ for (( i=0; i<RULE_COUNT; i++ )); do
             esac
             raw_match="${match_row#"${source_path}:"}"
             match_line="${raw_match%%:*}"
-            if ! line_is_suppressed "${source_path}" "${match_line}" "${ID}"; then
+            if line_is_in_changeset "${RULE_ADDED[r]}" "${match_line}" && \
+               ! line_is_suppressed "${source_path}" "${match_line}" "${ID}"; then
                 KEPT_MATCHES="${KEPT_MATCHES}${raw_match}"$'\n'
             fi
             MATCH_INDEX=$((MATCH_INDEX + 1))

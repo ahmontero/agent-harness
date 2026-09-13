@@ -6,6 +6,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.18.0] - 2026-09-13
+
+A delta mode now reads the delta. This is the change that makes the harness adoptable on a
+codebase that existed before it.
+
+### Changed
+
+- `harness scan --staged`, `--diff` and `--branch` report findings on the lines the
+  changeset adds. They read whole files, so a branch that added a comment to a file carrying
+  a credential from before the harness existed failed the gate `qa all` and `harness ship`
+  both run. With no way to exclude a path and no way to pass short of cleaning every legacy
+  file a branch happens to touch, the only remaining move was `--no-verify` — retiring the
+  gate rather than satisfying it.
+- `--all` is unchanged and still reads every line of every tracked file. It is the
+  whole-repository question, and a project that wants that answer before a pull request now
+  has `qa.scanMode` to ask it.
+- Path rules are unchanged in every mode: a rule matching a filename has no line to belong
+  to, so it is answered by the changeset's file list. Staging a `.env` is still caught.
+
+### Added
+
+- `profiles.<name>.rules.excludePaths` excludes a path from every rule, the security
+  baseline's included. A rule could only be scoped from inside itself, so excluding a
+  vendored tree meant repeating `excludePaths` in every rule a project has — and in the
+  baseline's rules, which a project does not own and cannot scope without overriding them
+  wholesale.
+- `profiles.<name>.qa.scanMode` selects the mode `harness qa all` scans in, defaulting to
+  `branch`. An unknown value fails the gate rather than falling back to a mode nobody chose.
+  Both keys are described in `schema.json`, so `harness config validate` checks them.
+
 ## [2.17.0] - 2026-09-13
 
 Seven defects the audit found in the CLI itself. Two of them change what previously

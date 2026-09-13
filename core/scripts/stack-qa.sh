@@ -190,7 +190,7 @@ case "${ACTION}" in
         # this is a lookup rather than another path through the resolution logic.
         gate_command() {
             case "$1" in
-                scan)  printf 'harness scan --branch' ;;
+                scan)  printf 'harness scan --%s' "${SCAN_GATE_MODE}" ;;
                 lint)  get_profile_value "qa.lintCommand" "" ;;
                 types) get_profile_value "qa.typeCheckCommand" "" ;;
                 tests) resolve_test_command ;;
@@ -227,6 +227,21 @@ case "${ACTION}" in
             jq -n --arg status "$1" --argjson gates "${gates}" '{status: $status, gates: $gates}' >&3
         }
 
+        # Which question the scan gate asks. --branch is the default because the aggregate
+        # runs before a branch is published; a project that wants the whole repository read
+        # at that moment had no way to say so, and hard-coding the mode is also what makes
+        # the answer untestable from the outside.
+        SCAN_GATE_MODE="$(get_profile_value "qa.scanMode" "branch")"
+        case "${SCAN_GATE_MODE}" in
+            branch|staged|diff|all) ;;
+            *)
+                log_error "Unknown qa.scanMode '${SCAN_GATE_MODE}' in profiles.${ACTIVE_PROFILE}."
+                log_info "Use one of: branch, staged, diff, all."
+                emit_qa_json "failed"
+                exit 1
+                ;;
+        esac
+
         run_gate() {
             local gate_name="$1"
             shift
@@ -235,10 +250,11 @@ case "${ACTION}" in
             record_gate "${gate_name}" "${status}"
         }
 
-        # --branch, not --diff. The aggregate suite is what runs before a branch is
-        # published, and at that moment the working tree is clean: --diff read an empty set
-        # and reported a passing scan over a branch whose commits were never inspected.
-        run_gate "scan" "${SCRIPT_DIR}/stack-scan.sh" --branch
+        # --branch by default, never --diff. The aggregate suite is what runs before a
+        # branch is published, and at that moment the working tree is clean: --diff read an
+        # empty set and reported a passing scan over a branch whose commits were never
+        # inspected. qa.scanMode moves it, and is validated above.
+        run_gate "scan" "${SCRIPT_DIR}/stack-scan.sh" "--${SCAN_GATE_MODE}"
         run_gate "lint" gate_lint
         run_gate "types" gate_types
         run_gate "tests" gate_test

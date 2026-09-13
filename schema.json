@@ -151,6 +151,17 @@
                   "boolean"
                 ],
                 "description": "Command to run type checker (e.g. 'mypy .' or 'tsc --noEmit'). Set to false to record that this project genuinely has no such gate."
+              },
+              "scanMode": {
+                "description": "Which question 'harness qa all' asks the landmine scanner. The delta modes read the lines the changeset adds; 'all' reads every tracked file.",
+                "type": "string",
+                "enum": [
+                  "branch",
+                  "staged",
+                  "diff",
+                  "all"
+                ],
+                "default": "branch"
               }
             }
           },
@@ -208,6 +219,13 @@
               "securityBaseline": {
                 "type": "boolean",
                 "description": "Apply the built-in security baseline on top of the configured rules (default true). Set false to record that this project deliberately scans without it."
+              },
+              "excludePaths": {
+                "description": "Globs excluded from every rule, the security baseline's included. A '*' spans '/', so 'vendor/*' covers everything beneath vendor/.",
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
               }
             }
           }
