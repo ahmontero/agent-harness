@@ -6,11 +6,61 @@
 
 set -eo pipefail
 
-TEST_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-HARNESS_ROOT="$(cd "${TEST_DIR}/.." && pwd)"
+TEST_DIR="${TEST_DIR:-$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)}"
+HARNESS_ROOT="${HARNESS_ROOT:-$(cd "${TEST_DIR}/.." && pwd)}"
 # Named here rather than in group 20 because the surface-content assertions in group 6
 # must exclude it: it is an installation record, not a published skill.
 SURFACE_MANIFEST=".agent-harness-surface.json"
+
+# Shared by every group, so it belongs above the first one. It used to be created inside
+# group 4, which meant any group could only run after the three before it.
+TMP_TEST_DIR=$(mktemp -d)
+trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
+
+# The suite is a linear script, so running one group is an extraction rather than a
+# dispatch: everything above the first group header is shared setup, and a group runs from
+# its header to the next one. `--group 3` selects by number, `--group scanner` by a
+# case-insensitive substring of the title.
+#
+# A filter that matches nothing exits non-zero. Passing over an empty selection would be a
+# gate that could not run reporting a pass, which is the defect this project keeps closing.
+GROUP_FILTER=""
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --group)
+            [ -n "${2:-}" ] || { echo "--group requires a group number or a substring of its title" >&2; exit 2; }
+            GROUP_FILTER="$2"
+            shift 2
+            ;;
+        -h|--help)
+            echo "Usage: bash test/test_cli.sh [--group <number|substring>]"
+            exit 0
+            ;;
+        *) echo "Unknown option: $1" >&2; exit 2 ;;
+    esac
+done
+
+if [ -n "${GROUP_FILTER}" ]; then
+    FILTERED_SUITE="${TMP_TEST_DIR}/filtered-suite.sh"
+    if ! awk -v filter="${GROUP_FILTER}" '
+        BEGIN { inpre = 1; sel = 0; found = 0; isnum = (filter ~ /^[0-9]+[a-z]*$/) }
+        /^echo "=== / {
+            inpre = 0
+            if (isnum) { sel = (index($0, "=== " filter ".") > 0) }
+            else       { sel = (index(tolower($0), tolower(filter)) > 0) }
+            if (sel) found = 1
+        }
+        { if (inpre || sel) print }
+        END { if (!found) exit 3 }
+    ' "$0" > "${FILTERED_SUITE}"; then
+        echo "No test group matches '${GROUP_FILTER}'." >&2
+        exit 2
+    fi
+    printf '\necho ""\necho "Selected group(s) passed."\n' >> "${FILTERED_SUITE}"
+    TEST_DIR="${TEST_DIR}" HARNESS_ROOT="${HARNESS_ROOT}" bash "${FILTERED_SUITE}"
+    exit $?
+fi
+
 
 echo "=== 1. Testing Shell Scripts Syntax ==="
 find "${HARNESS_ROOT}/bin" "${HARNESS_ROOT}/core/scripts" "${HARNESS_ROOT}" -maxdepth 2 -type f \( -name "*.sh" -o -name "harness" -o -name "setup" \) | while read -r script; do
@@ -116,9 +166,6 @@ echo "  [PASS] agent-harness --help executed successfully."
 
 echo ""
 echo "=== 4. Testing Context Extraction ==="
-TMP_TEST_DIR=$(mktemp -d)
-trap 'rm -rf "${TMP_TEST_DIR}"' EXIT
-
 CONTEXT_JSON=$("${HARNESS_ROOT}/bin/harness" context --json)
 if echo "${CONTEXT_JSON}" | grep -q "branch"; then
     echo "  [PASS] harness context --json produced valid JSON."
@@ -4730,6 +4777,35 @@ for jsongate_typo in "scan --jsonn" "qa all --jsonn"; do
     fi
 done
 echo "  [PASS] a mistyped JSON option is refused rather than degraded to prose."
+
+echo ""
+echo "=== 48. Testing Minor Surface Gaps ==="
+# The suite is 48 groups and about five minutes. This project's own tddCommand ran all of
+# it, while the protocol it ships calls harness qa tdd "fast feedback mode".
+MINOR_FILTER_OUTPUT="$(bash "${HARNESS_ROOT}/test/test_cli.sh" --group 3 2>&1)" || {
+    echo "  [FAIL] the suite could not run a single group: ${MINOR_FILTER_OUTPUT}"
+    exit 1
+}
+if ! printf '%s' "${MINOR_FILTER_OUTPUT}" | grep -qF "3. Testing CLI Dispatcher Output"; then
+    echo "  [FAIL] --group 3 did not run the group it names: ${MINOR_FILTER_OUTPUT}"
+    exit 1
+fi
+if printf '%s' "${MINOR_FILTER_OUTPUT}" | grep -qF "41. Testing Debt Marker"; then
+    echo "  [FAIL] --group 3 ran groups it was not asked for"
+    exit 1
+fi
+# A filter that selects nothing is a gate that could not run, not a gate that passed.
+MINOR_EMPTY_STATUS=0
+bash "${HARNESS_ROOT}/test/test_cli.sh" --group no-such-group >/dev/null 2>&1 || MINOR_EMPTY_STATUS=$?
+if [ "${MINOR_EMPTY_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] a filter matching no group exited 0, reporting a pass over nothing"
+    exit 1
+fi
+if [ "$(jq -r '.profiles.harness.qa.tddCommand' "${HARNESS_ROOT}/harness.config.json")" = "bash test/test_cli.sh" ]; then
+    echo "  [FAIL] this project's fast feedback loop is still its whole suite"
+    exit 1
+fi
+echo "  [PASS] the suite runs one group, refuses a filter that matches none, and tdd uses it."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"
