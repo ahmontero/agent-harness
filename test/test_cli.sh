@@ -3180,6 +3180,83 @@ if [ "${TERMINAL_LEFT}" != "2" ]; then
 fi
 echo "  [PASS] receipt prune keeps the newest terminal receipts and never prunes an open run."
 
+# A run is a receipt and a ledger under one ID, and prune removed the receipt only. The
+# ledger it left behind is not merely extra bytes: `receipt list` is the only index of run
+# IDs, so once the receipt is gone the ledger cannot be named, read, or removed through the
+# CLI at all. It accumulates under .git/ for the life of the repository, holding the words
+# the receipt's closed schema could not.
+#
+# Pruning both halves is what makes the class of orphan unreachable rather than merely
+# tidied: there is no way to reach a state where a ledger outlives the receipt that names it.
+LEDGER_PRUNE_REPO="${TMP_TEST_DIR}/ledger-prune"
+mkdir -p "${LEDGER_PRUNE_REPO}"
+git -C "${LEDGER_PRUNE_REPO}" init -q
+git -C "${LEDGER_PRUNE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${LEDGER_PRUNE_REPO}" config user.name "Agent Harness Tests"
+echo "seed" > "${LEDGER_PRUNE_REPO}/seed.txt"
+git -C "${LEDGER_PRUNE_REPO}" add -A
+git -C "${LEDGER_PRUNE_REPO}" commit -qm "chore: seed"
+
+ledger_prune_harness() {
+    (cd "${LEDGER_PRUNE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@")
+}
+LEDGER_PRUNE_DIR="${LEDGER_PRUNE_REPO}/.git/agent-harness/ledgers"
+
+ledger_prune_index=0
+while [ "${ledger_prune_index}" -lt 3 ]; do
+    ledger_prune_run="$(ledger_prune_harness receipt start fix)"
+    ledger_prune_harness ledger start "${ledger_prune_run}" >/dev/null
+    ledger_prune_harness ledger append "${ledger_prune_run}" phase "work worth remembering" >/dev/null
+    ledger_prune_harness receipt finish "${ledger_prune_run}" completed
+    ledger_prune_index=$((ledger_prune_index + 1))
+done
+LEDGER_PRUNE_OPEN="$(ledger_prune_harness receipt start fix)"
+ledger_prune_harness ledger start "${LEDGER_PRUNE_OPEN}" >/dev/null
+
+ledger_prune_harness receipt prune --keep 1 >/dev/null
+
+# The assertions are about which files pair up, never about which runs prune chose. A
+# receipt records its start time to the second, and three runs created in a loop routinely
+# share one -- so the order among them is whatever `sort` does with equal keys, and naming
+# the runs that should have gone made this test fail intermittently on its own subject.
+# Which receipts prune keeps is group 32's question above; this is only about the ledger
+# following the receipt.
+#
+# Every surviving ledger is named by a surviving receipt: this is the property that makes
+# the orphan unreachable rather than merely uncommon, and it holds over the whole directory
+# rather than over the files this particular prune removed.
+for ledger_file in "${LEDGER_PRUNE_DIR}"/*.md; do
+    [ -f "${ledger_file}" ] || continue
+    ledger_name="$(basename "${ledger_file}" .md)"
+    if [ ! -f "${LEDGER_PRUNE_REPO}/.git/agent-harness/runs/${ledger_name}.jsonl" ]; then
+        echo "  [FAIL] a ledger survived with no receipt to name it: ${ledger_name}"
+        exit 1
+    fi
+done
+# And the converse: prune removes a run, not every ledger. Every receipt still present keeps
+# a readable ledger, the open run among them.
+LEDGER_PRUNE_KEPT=0
+for receipt_file in "${LEDGER_PRUNE_REPO}"/.git/agent-harness/runs/*.jsonl; do
+    [ -f "${receipt_file}" ] || continue
+    receipt_name="$(basename "${receipt_file}" .jsonl)"
+    if ! ledger_prune_harness ledger show "${receipt_name}" >/dev/null 2>&1; then
+        echo "  [FAIL] receipt prune removed the ledger of a run it kept: ${receipt_name}"
+        exit 1
+    fi
+    LEDGER_PRUNE_KEPT=$((LEDGER_PRUNE_KEPT + 1))
+done
+# Two survive by construction: one kept terminal run and the open one. A prune that removed
+# every ledger, or none, would satisfy the two loops above and not this.
+if [ "${LEDGER_PRUNE_KEPT}" -ne 2 ]; then
+    echo "  [FAIL] expected 2 runs to survive the prune, found ${LEDGER_PRUNE_KEPT}"
+    exit 1
+fi
+if [ "$(find "${LEDGER_PRUNE_DIR}" -name '*.md' | grep -c .)" -ne 2 ]; then
+    echo "  [FAIL] receipt prune left $(find "${LEDGER_PRUNE_DIR}" -name '*.md' | grep -c .) ledger(s) for 2 surviving runs"
+    exit 1
+fi
+echo "  [PASS] receipt prune removes a run's ledger with its receipt, and only those."
+
 echo ""
 echo "=== 33. Testing Branch-Range Scanning ==="
 # The scan gate inside `qa all` ran in --diff mode, which reads the working tree against
