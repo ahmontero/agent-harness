@@ -6,6 +6,42 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.0] - 2026-09-14
+
+### Breaking
+
+- `harness doctor` exits non-zero where it previously exited `0`: any repository whose test,
+  lint or type gate is unconfigured. A pipeline that runs `harness doctor` and reads its exit
+  status will start failing on such a repository. The fix in each case is to configure the
+  gate, or to record that the project has none with `false` — the same two answers
+  `harness qa all` has always demanded. A CLI's exit status is part of its contract, which is
+  why this is a major release rather than a minor one: the change is deliberate and is the
+  defect being closed, not a side effect of closing it.
+
+### Added
+
+- `harness doctor` reports whether this project's test, lint and type gates can run. It
+  answered `0 errors` for a repository whose gates were all unconfigured, and the very next
+  command — `qa all`, or the `ship` that runs it — failed on exactly that. `harness init`
+  warns once at install time and nothing reported it afterwards, so the command whose whole
+  job is to say what is wrong was silent about the one thing that stops the next one.
+- A gate that cannot run is an error and doctor exits non-zero, because that is the verdict
+  `qa all` already reaches and `rules/floor.md` invariant 1 is that a gate which could not
+  run is not a gate that passed. A gate the configuration declares absent with `false` is a
+  recorded decision and leaves the exit status alone — which is what keeps the error
+  satisfiable. Both states appear in `doctor --json` under section `qa`.
+- Gate resolution moved to `core/scripts/lib/qa.sh`, read by both `harness qa all` and
+  `harness doctor`. Doctor answering this from its own copy is how the two would eventually
+  disagree about whether a project can pass its own QA — the divergence `lib/specs.sh` and
+  `lib/surface.sh` were each extracted to prevent. Doctor executes nothing; it reports what
+  the resolution says.
+
+### Changed
+
+- Four test fixtures now declare their gates absent. Each group judges something else —
+  surface drift, machine-readable output, CLI alias reporting — through an exit status that
+  would otherwise carry a second, unrelated cause.
+
 ## [2.21.3] - 2026-09-14
 
 ### Fixed
