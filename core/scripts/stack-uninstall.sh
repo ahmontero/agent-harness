@@ -126,10 +126,16 @@ if [ -n "${REPO_SCOPE}" ]; then
         [ -n "${directory}" ] && collect_surface "${directory}"
     done < <(surface_repo_list "${REPO_SCOPE}")
 
+    # Both managed hooks, each identified by its own marker: a hook agent-harness installed
+    # and does not remove is litter it left in somebody's repository.
     HOOKS_DIR="$(resolve_hooks_dir "${REPO_SCOPE}" 2>/dev/null || true)"
-    if [ -n "${HOOKS_DIR}" ] && [ -f "${HOOKS_DIR}/pre-commit" ] && \
-       grep -qxF "${HARNESS_PRE_COMMIT_MARKER}" "${HOOKS_DIR}/pre-commit" 2>/dev/null; then
-        REMOVALS+=("${HOOKS_DIR}/pre-commit")
+    if [ -n "${HOOKS_DIR}" ]; then
+        for managed_hook in "pre-commit:${HARNESS_PRE_COMMIT_MARKER}" "commit-msg:${HARNESS_COMMIT_MSG_MARKER}"; do
+            hook_file="${HOOKS_DIR}/${managed_hook%%:*}"
+            if [ -f "${hook_file}" ] && grep -qxF "${managed_hook#*:}" "${hook_file}" 2>/dev/null; then
+                REMOVALS+=("${hook_file}")
+            fi
+        done
     fi
 fi
 

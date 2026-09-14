@@ -2237,7 +2237,9 @@ git -C "${DOCTOR_CLAIMS_REPO}" init -q
 DOCTOR_CLAIMS_HOME="${TMP_TEST_DIR}/doctor-claims-home"
 mkdir -p "${DOCTOR_CLAIMS_HOME}"
 DOCTOR_CLAIMS="$(cd "${DOCTOR_CLAIMS_REPO}" && env -u STACK_PROFILE HOME="${DOCTOR_CLAIMS_HOME}" "${HARNESS_ROOT}/bin/harness" doctor 2>&1 || true)"
-for section in "CLI Installation" "Pre-Commit Hook" "Configuration"; do
+# Named by what is reported rather than by the section header, which now covers two
+# managed hooks: requiring both by name is the assertion the header stood in for.
+for section in "CLI Installation" "pre-commit" "commit-msg" "Configuration"; do
     if ! printf '%s' "${DOCTOR_CLAIMS}" | grep -q "${section}"; then
         echo "  [FAIL] doctor does not report on ${section}: ${DOCTOR_CLAIMS}"
         exit 1
@@ -6239,3 +6241,142 @@ for gate_name in tests lint types; do
     fi
 done
 echo "  [PASS] doctor and qa all resolve every gate through one implementation."
+
+echo ""
+echo "=== 57. Testing Commit Message Hook ==="
+# `commit check` enforces three rules and had no enforcement point until `harness ship` or
+# CI -- by which time the commit is in the history and the only remedy is rewriting it.
+# AH-42 is the proof: `commit build` wrote a non-conforming commit and the disagreement
+# surfaced at ship. The scanner ships a pre-commit hook; the message validator shipped none.
+MSGHOOK_REPO="${TMP_TEST_DIR}/commit-msg-hook"
+mkdir -p "${MSGHOOK_REPO}"
+git -C "${MSGHOOK_REPO}" init -q
+git -C "${MSGHOOK_REPO}" config user.email "tests@agent-harness.local"
+git -C "${MSGHOOK_REPO}" config user.name "Agent Harness Tests"
+cat > "${MSGHOOK_REPO}/harness.config.json" <<'MSGHOOK_CONFIG_EOF'
+{
+  "project": { "name": "commit-msg-hook", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Hook fixture",
+    "git": { "forbiddenCommitTrailers": ["Co-Authored-By: Robot"] },
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
+}
+MSGHOOK_CONFIG_EOF
+echo "seed" > "${MSGHOOK_REPO}/seed.txt"
+git -C "${MSGHOOK_REPO}" add -A
+git -C "${MSGHOOK_REPO}" commit -qm "chore: seed"
+git -C "${MSGHOOK_REPO}" branch -M main
+
+msghook_harness() {
+    (cd "${MSGHOOK_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" "$@")
+}
+# Commits through git itself, so the hook is what decides. Returns git's status.
+msghook_commit() {
+    MSGHOOK_OUTPUT="$( (cd "${MSGHOOK_REPO}" && git commit -m "$1" 2>&1) )" && MSGHOOK_STATUS=0 || MSGHOOK_STATUS=$?
+}
+
+# Guarded: an unimplemented subcommand returns non-zero, and an unguarded call would
+# abort the group under `set -e` before the assertion below could name what is missing.
+msghook_harness commit --install-hook >/dev/null 2>&1 || true
+if [ ! -x "${MSGHOOK_REPO}/.git/hooks/commit-msg" ]; then
+    echo "  [FAIL] harness commit --install-hook installed no executable commit-msg hook"
+    exit 1
+fi
+echo "  [PASS] commit --install-hook installs the message validator's hook."
+
+# R2: a message commit check would reject never becomes a commit.
+git -C "${MSGHOOK_REPO}" checkout -q -B feat/AH-99-hooked
+printf 'one\n' > "${MSGHOOK_REPO}/work.txt"
+git -C "${MSGHOOK_REPO}" add work.txt
+MSGHOOK_HEAD_BEFORE="$(git -C "${MSGHOOK_REPO}" rev-parse HEAD)"
+msghook_commit "made some changes"
+if [ "${MSGHOOK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the commit-msg hook accepted a message commit check rejects: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+if [ "$(git -C "${MSGHOOK_REPO}" rev-parse HEAD)" != "${MSGHOOK_HEAD_BEFORE}" ]; then
+    echo "  [FAIL] the commit-msg hook refused and the commit was created anyway"
+    exit 1
+fi
+# The refusal has to name what is wrong, or the next move is --no-verify.
+if ! printf '%s' "${MSGHOOK_OUTPUT}" | grep -q "Conventional Commits"; then
+    echo "  [FAIL] the hook refused without naming the rule: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+# Every rule commit check applies, applied here: the branch's issue key, and a trailer the
+# configuration forbids.
+msghook_commit "feat: no issue key"
+if [ "${MSGHOOK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the hook accepted a subject missing the branch's issue key: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+msghook_commit "$(printf 'feat(AH-99): forbidden trailer\n\nCo-Authored-By: Robot <r@example.com>\n')"
+if [ "${MSGHOOK_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] the hook accepted a trailer the configuration forbids: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] The hook applies every rule commit check applies, before the commit exists."
+
+# A conforming message still commits, or the hook is a wall rather than a gate.
+msghook_commit "feat(AH-99): add the work"
+if [ "${MSGHOOK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] the commit-msg hook rejected a conforming message: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A conforming message still commits."
+
+# R4: messages the project did not author. This repository's own history is mostly merge
+# commits; a hook that rejected them would be uninstalled the first time someone merged.
+git -C "${MSGHOOK_REPO}" checkout -q main
+printf 'trunk\n' > "${MSGHOOK_REPO}/trunk.txt"
+git -C "${MSGHOOK_REPO}" add trunk.txt
+git -C "${MSGHOOK_REPO}" commit -qm "chore: trunk moves on" --no-verify
+MSGHOOK_MERGE_STATUS=0
+MSGHOOK_MERGE_OUTPUT="$( (cd "${MSGHOOK_REPO}" && git merge --no-ff -m "Merge branch 'feat/AH-99-hooked'" feat/AH-99-hooked 2>&1) )" || MSGHOOK_MERGE_STATUS=$?
+if [ "${MSGHOOK_MERGE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] the commit-msg hook rejected a merge commit: ${MSGHOOK_MERGE_OUTPUT}"
+    exit 1
+fi
+# fixup!/squash! are rewritten by rebase, so they are not this project's to conform.
+printf 'two\n' > "${MSGHOOK_REPO}/work.txt"
+git -C "${MSGHOOK_REPO}" add work.txt
+msghook_commit "fixup! feat(AH-99): add the work"
+if [ "${MSGHOOK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] the commit-msg hook rejected a fixup! message: ${MSGHOOK_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A merge and a fixup! message are not the project's to conform, and pass."
+
+# R5: git hands the hook the raw file, template comments included. A forbidden trailer
+# named in a comment is not a trailer the commit carries.
+MSGHOOK_FILE="${TMP_TEST_DIR}/commit-msg-body"
+printf 'feat(AH-99): a real subject\n\n# Co-Authored-By: Robot <r@example.com>\n# Please enter the commit message for your changes.\n' > "${MSGHOOK_FILE}"
+MSGHOOK_FILE_STATUS=0
+MSGHOOK_FILE_OUTPUT="$(msghook_harness commit check --message-file "${MSGHOOK_FILE}" 2>&1)" || MSGHOOK_FILE_STATUS=$?
+if [ "${MSGHOOK_FILE_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] commit check --message-file read a commented-out trailer as a real one: ${MSGHOOK_FILE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] commit check --message-file strips the comments git adds before judging."
+
+# R1: the same foreign-hook protection the scanner's installer has.
+printf '#!/usr/bin/env bash\ntrue\n' > "${MSGHOOK_REPO}/.git/hooks/commit-msg"
+chmod 755 "${MSGHOOK_REPO}/.git/hooks/commit-msg"
+MSGHOOK_FOREIGN_STATUS=0
+MSGHOOK_FOREIGN="$(msghook_harness commit --install-hook 2>&1)" || MSGHOOK_FOREIGN_STATUS=$?
+if [ "${MSGHOOK_FOREIGN_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit --install-hook overwrote a hook agent-harness did not write"
+    exit 1
+fi
+if ! printf '%s' "${MSGHOOK_FOREIGN}" | grep -q -- "--message-file"; then
+    echo "  [FAIL] commit --install-hook refused without printing the line to add manually: ${MSGHOOK_FOREIGN}"
+    exit 1
+fi
+if ! msghook_harness commit --install-hook --force >/dev/null 2>&1; then
+    echo "  [FAIL] commit --install-hook --force did not replace the foreign hook"
+    exit 1
+fi
+if [ ! -f "${MSGHOOK_REPO}/.git/hooks/commit-msg.harness-backup" ]; then
+    echo "  [FAIL] commit --install-hook --force did not back the foreign hook up"
+    exit 1
+fi
+echo "  [PASS] commit --install-hook refuses a foreign hook and --force backs it up first."

@@ -48,7 +48,7 @@ HARNESS_SUBCOMMANDS=(
     "scan:--staged --diff --branch --all --base --json --rules --install-hook --force"
     "worktree:create list seed remove --base --seed --force --dry-run"
     "branch:create check list --base"
-    "commit:build check --branch --base"
+    "commit:build check --branch --base --message-file --install-hook --force"
     "debt:--json --all --path"
     "receipt:start phase finish list show prune --issue --keep --json"
     "ledger:start append show rulings signature failure"

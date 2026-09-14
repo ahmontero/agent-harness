@@ -106,6 +106,8 @@ ${BOLD}Core Commands:${RESET}
                 harness commit build <type> "<message>"
                 harness commit check [commit_hash]
                 harness commit check --branch [--base <ref>]
+                harness commit check --message-file <path>
+                harness commit --install-hook [--force]
 
   ${GREEN}debt${RESET}          Scan & harvest technical debt markers ("# pragmatism:", "# defer:")
                 harness debt [--json] [--all] [--path <path>]
