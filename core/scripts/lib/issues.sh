@@ -16,8 +16,20 @@ set -eo pipefail
 ISSUE_KEY_PATTERN='[A-Z][A-Z0-9]*-[0-9]+|[0-9]+'
 BRANCH_TYPE_PATTERN='chore|feat|fix|spike'
 
+# The Conventional Commits types `commit check` enforces. It lived only inside that check's
+# own grep, so `commit build` had nothing to validate against and accepted any word at all:
+# `harness commit build feature "..."` wrote `feature(AH-2): ...`, which the same harness
+# then rejected -- and by then it was already in the history, so the way back was rewriting
+# it. `commit build`'s usage string carried a third, shorter list for the same reason, and
+# now reads off this one.
+COMMIT_TYPE_PATTERN='feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert'
+
 branch_types_for_humans() {
     printf '%s\n' "${BRANCH_TYPE_PATTERN//|/, }"
+}
+
+commit_types_for_humans() {
+    printf '%s\n' "${COMMIT_TYPE_PATTERN//|/, }"
 }
 
 require_branch_type() {
@@ -27,6 +39,17 @@ require_branch_type() {
         log_error "Unsupported branch type '${type}'."
         log_info "Use one of: $(branch_types_for_humans)."
         log_info "'harness branch check' accepts no other, so creating one would hand you a branch the harness itself rejects."
+        return 1
+    fi
+}
+
+require_commit_type() {
+    local type="$1"
+    local pattern="^(${COMMIT_TYPE_PATTERN})$"
+    if ! [[ "${type}" =~ ${pattern} ]]; then
+        log_error "Unsupported commit type '${type}'."
+        log_info "Use one of: $(commit_types_for_humans)."
+        log_info "'harness commit check' accepts no other, so building one would write a commit the harness itself rejects."
         return 1
     fi
 }

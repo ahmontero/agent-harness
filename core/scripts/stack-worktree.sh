@@ -111,6 +111,11 @@ case "${ACTION}" in
             exit 1
         fi
 
+        # This command shares `branch create`'s argument parser and did not share its type
+        # check, so it wrote the same branch `branch check` rejects -- with a worktree
+        # directory to undo alongside it.
+        require_branch_type "${TYPE}"
+
         ISSUE_KEY="$(normalize_issue_key "${RAW_KEY}")"
         BRANCH_NAME="${TYPE}/${ISSUE_KEY}-${SLUG}"
         PARENT_DIR="$(dirname "${REPO_DIR}")"

@@ -26,9 +26,16 @@ case "${ACTION}" in
         TYPE="${1:-feat}"
         MSG="${2:-}"
         if [ -z "${MSG}" ]; then
-            log_error "Usage: harness commit build <feat|fix|docs|refactor|test|chore> \"<message>\""
+            log_error "Usage: harness commit build <type> \"<message>\""
+            log_info "Use one of: $(commit_types_for_humans)."
             exit 1
         fi
+
+        # The creator is held to the list the validator enforces, the way `branch create` is
+        # held to the list `branch check` enforces. Without this the command wrote a commit
+        # `harness commit check` rejects and `harness ship` refuses to publish, discovered
+        # once the work was already committed.
+        require_commit_type "${TYPE}"
 
         if git diff --cached --quiet 2>/dev/null; then
             log_error "Nothing is staged, so there is no commit to build."
@@ -103,9 +110,9 @@ case "${ACTION}" in
             body="$(git log -1 --pretty=%B "${revision}")"
 
             if [ "${REQUIRE_CONVENTIONAL}" != "false" ] && \
-               ! printf '%s' "${subject}" | grep -Eq '^(feat|fix|docs|style|refactor|perf|test|build|ci|chore|revert)(\([a-zA-Z0-9_.-]+\))?!?: .+'; then
+               ! printf '%s' "${subject}" | grep -Eq "^(${COMMIT_TYPE_PATTERN})(\([a-zA-Z0-9_.-]+\))?!?: .+"; then
                 log_error "${short} does not conform to Conventional Commits: ${subject}"
-                log_info "Expected '<type>(<scope>): <description>' with type one of feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert."
+                log_info "Expected '<type>(<scope>): <description>' with type one of $(commit_types_for_humans)."
                 problems=$((problems + 1))
             fi
 

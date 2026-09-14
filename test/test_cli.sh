@@ -5079,6 +5079,90 @@ for key_type in chore feat fix spike; do
 done
 echo "  [PASS] Every type branch create writes is a type branch check accepts."
 
+# The same disagreement, one layer down. `commit build` took any type at all and wrote a
+# commit `commit check` then rejects -- and unlike a branch, a commit is already in the
+# history when the disagreement surfaces, so the user is left rewriting it. The type list
+# lived only inside check_one_commit's own grep, which is what let the two drift: the usage
+# string advertised a third, shorter list again.
+git -C "${KEY_REPO}" checkout -q main
+git -C "${KEY_REPO}" checkout -q -B feat/AH-42-commit-type
+printf 'commit type\n' > "${KEY_REPO}/fixture.txt"
+git -C "${KEY_REPO}" add fixture.txt
+KEY_BUILD_HEAD="$(git -C "${KEY_REPO}" rev-parse HEAD)"
+KEY_BUILD_STATUS=0
+KEY_BUILD_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit build feature "unsupported type" 2>&1) )" || KEY_BUILD_STATUS=$?
+if [ "${KEY_BUILD_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] commit build accepted a type commit check rejects: ${KEY_BUILD_OUTPUT}"
+    exit 1
+fi
+if [ "$(git -C "${KEY_REPO}" rev-parse HEAD)" != "${KEY_BUILD_HEAD}" ]; then
+    echo "  [FAIL] commit build refused and committed anyway: $(git -C "${KEY_REPO}" log -1 --pretty=%s)"
+    exit 1
+fi
+if ! printf '%s' "${KEY_BUILD_OUTPUT}" | grep -q "revert"; then
+    echo "  [FAIL] commit build refused without naming the types it accepts: ${KEY_BUILD_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] commit build refuses a type commit check would reject, and commits nothing."
+
+# Every type commit build writes must be a type commit check accepts, including the five
+# the old usage string never mentioned.
+for key_commit_type in feat fix docs style refactor perf test build ci chore revert; do
+    printf '%s\n' "${key_commit_type}" > "${KEY_REPO}/fixture.txt"
+    git -C "${KEY_REPO}" add fixture.txt
+    (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit build "${key_commit_type}" "round trip" >/dev/null 2>&1) || {
+        echo "  [FAIL] commit build refused its own type '${key_commit_type}'"
+        exit 1
+    }
+    KEY_COMMIT_CHECK_STATUS=0
+    KEY_COMMIT_CHECK_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" commit check 2>&1) )" || KEY_COMMIT_CHECK_STATUS=$?
+    if [ "${KEY_COMMIT_CHECK_STATUS}" -ne 0 ]; then
+        echo "  [FAIL] commit check rejected a commit commit build just wrote: ${KEY_COMMIT_CHECK_OUTPUT}"
+        exit 1
+    fi
+done
+echo "  [PASS] Every type commit build writes is a type commit check accepts."
+
+# `worktree create` shares branch create's argument parser and did not share its type check,
+# so it wrote the same branch branch check rejects -- and a worktree directory to undo with
+# it. The worktree path is the one stack-worktree.sh derives: <parent>/<repo>-<ISSUE_KEY>.
+KEY_WORKTREE_DIR="${TMP_TEST_DIR}/issue-key-grammar-AH-43"
+git -C "${KEY_REPO}" checkout -q main
+KEY_WT_STATUS=0
+KEY_WT_OUTPUT="$( (cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree create feature AH-43 unsupported-type 2>&1) )" || KEY_WT_STATUS=$?
+if [ "${KEY_WT_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] worktree create accepted a type branch check rejects: ${KEY_WT_OUTPUT}"
+    exit 1
+fi
+if [ -d "${KEY_WORKTREE_DIR}" ]; then
+    echo "  [FAIL] worktree create refused and created the worktree anyway: ${KEY_WORKTREE_DIR}"
+    exit 1
+fi
+if git -C "${KEY_REPO}" show-ref --verify --quiet refs/heads/feature/AH-43-unsupported-type; then
+    echo "  [FAIL] worktree create refused and created the branch anyway"
+    exit 1
+fi
+if ! printf '%s' "${KEY_WT_OUTPUT}" | grep -q "feat"; then
+    echo "  [FAIL] worktree create refused without naming the types it accepts: ${KEY_WT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] worktree create refuses a type branch check would reject, and creates nothing."
+
+# And the guard is not tighter than the validator: a type branch check accepts still builds
+# a worktree, on the branch branch check reads back.
+KEY_SPIKE_WORKTREE="${TMP_TEST_DIR}/issue-key-grammar-AH-44"
+(cd "${KEY_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" worktree create spike AH-44 round-trip >/dev/null 2>&1) || {
+    echo "  [FAIL] worktree create refused a type branch check accepts"
+    exit 1
+}
+key_branch_check "spike/AH-44-round-trip"
+if [ "${KEY_CHECK_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] branch check rejected a branch worktree create just wrote: ${KEY_CHECK_OUTPUT}"
+    exit 1
+fi
+git -C "${KEY_REPO}" worktree remove --force "${KEY_SPIKE_WORKTREE}"
+echo "  [PASS] Every type worktree create writes is a type branch check accepts."
+
 echo ""
 echo "=== 50. Testing Refusals And Hook Portability ==="
 REFUSE_REPO="${TMP_TEST_DIR}/refusals"
