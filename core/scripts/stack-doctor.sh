@@ -58,6 +58,17 @@ JSON_CHECKS=()
 # Records a check's outcome for the machine form alongside the line a human reads. The
 # states are the ones the counters already distinguish, so "could not be determined" stays
 # separable from "passed" here too.
+#
+# Every branch of a check calls this, including the one where it passes. It used to be
+# called only where a check had something to complain about, so `.checks[]` held the
+# problems and nothing else -- and the documented filter for reading it,
+# `select(.state != "ok")`, cannot tell a check that passed from a check that was never
+# reported. A machine form that omits the passes is a machine form that cannot be used to
+# establish that anything was actually checked.
+#
+# Section 2 is deliberately not recorded: which agent harnesses are installed on the machine
+# is context for the reader, not a check -- it touches neither counter and has no pass or
+# fail to report.
 record_check() {
     [ "${JSON_OUTPUT}" = true ] || return 0
     JSON_CHECKS+=("$(jq -nc --arg section "$1" --arg name "$2" --arg state "$3" --arg detail "${4:-}" \
@@ -113,10 +124,11 @@ log_info "--- 3. Repository Symlinks & Health ---"
 if [ -d "${REPO_DIR}" ]; then
     if [ -f "${REPO_DIR}/AGENTS.md" ]; then
         log_success "Canonical AGENTS.md exists in target repository."
+        record_check "repository" "AGENTS.md" "ok" "${REPO_DIR}/AGENTS.md"
     else
         log_warn "Missing AGENTS.md in ${REPO_DIR}"
         WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
-    record_check "repository" "AGENTS.md" "warning"
+        record_check "repository" "AGENTS.md" "warning"
         if [ "${FIX_MODE}" = true ]; then
             template="$(get_harness_root)/core/templates/AGENTS-template.md"
             if [ -f "${template}" ]; then
@@ -291,6 +303,8 @@ if [ "${CONFIG_REPORT_STATUS}" -ne 0 ]; then
     log_error "The resolved configuration did not validate."
     ERRORS_FOUND=$((ERRORS_FOUND + 1))
     record_check "configuration" "config validate" "error" "the resolved configuration did not validate"
+else
+    record_check "configuration" "config validate" "ok"
 fi
 
 if [ "${CHECK_AUTH}" = true ]; then

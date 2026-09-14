@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.3] - 2026-09-14
+
+### Fixed
+
+- `harness doctor --json` records a check that passed, not only one that failed. 2.21.0
+  introduced it saying it "reports the state of every check it ran", the skill says a check
+  that could not run is reported as unavailable and never as clean, and the README hands
+  agents `select(.state != "ok")` to read it with — but `record_check` was called only where
+  a check had something to complain about. The `AGENTS.md` check recorded nothing when the
+  file was present and the configuration check recorded nothing when the configuration
+  validated, so `.checks[]` held the problems and nothing else and that filter could not
+  tell a check that passed from a check that was never reported. A machine form that omits
+  the passes cannot be used to establish that anything was checked at all.
+- The agent-harness detection section stays deliberately out of `.checks[]`: which harnesses
+  are installed on the machine is context for the reader rather than a check, and it touches
+  neither counter.
+
 ## [2.21.2] - 2026-09-14
 
 ### Fixed
