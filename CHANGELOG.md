@@ -6,6 +6,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [2.21.2] - 2026-09-14
+
+### Fixed
+
+- `harness commit build` refuses a type `harness commit check` rejects, and commits nothing.
+  It took any word at all, so `harness commit build feature "..."` wrote
+  `feature(AH-2): ...` — a commit this harness made and then refused, discovered at
+  `harness ship` when the only way back was rewriting history. The Conventional Commits type
+  list existed in exactly one place, inside `check_one_commit`'s own grep, which is what let
+  the two drift: `commit build`'s usage string advertised a third, shorter list that omitted
+  `style`, `perf`, `build`, `ci` and `revert`. All three now read `COMMIT_TYPE_PATTERN` in
+  `lib/issues.sh`, beside the branch-type grammar the same divergence already forced there.
+- `harness worktree create` refuses a type `harness branch check` rejects, and creates
+  neither the branch nor the worktree. It shares `branch create`'s argument parser and did
+  not share its `require_branch_type` guard, so it wrote the branch that command was fixed to
+  refuse — with a worktree directory to undo alongside it.
+
 ## [2.21.1] - 2026-09-13
 
 ### Fixed
