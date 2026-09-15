@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.0.1] - 2026-09-14
+
+### Fixed
+
+- `harness receipt prune` removes a run's ledger with its receipt. A run is both files under
+  one ID, and prune removed the receipt only — while `receipt list` is the only index of run
+  IDs, so once the receipt was gone its ledger could not be named, read, or removed through
+  the CLI at all. It accumulated under `.git/` for the life of the repository, holding
+  exactly the words the receipt's closed schema cannot. Pruning the pair is what makes that
+  orphan unreachable rather than merely rare: no sequence of commands now leaves a ledger
+  whose receipt is gone. A run that is kept, and an open run, both keep theirs.
+- Which receipts `receipt prune` keeps is not fully determined when runs tie: a receipt
+  records its start time to the second, runs created in quick succession routinely share
+  one, and the ordering sorts on that timestamp alone. Prune still keeps the right *number*
+  and never touches an open run; among same-second runs, which one it keeps is whatever
+  `sort` does with equal keys. Found while writing this change's regression — it named the
+  runs it expected to be pruned and failed intermittently on its own subject — and left
+  as a separate finding rather than widened into this diff. The regression now asserts the
+  pairing of ledgers to receipts, which is what this change is about, and not prune's
+  choice, which is group 32's question.
+- Ledgers orphaned by an earlier `receipt prune` are not swept: this removes the ledger of a
+  receipt it is removing and nothing else, so it can never delete a record the caller did not
+  ask it to prune. Existing orphans are visible as `.md` files under
+  `.git/agent-harness/ledgers/` with no matching `.jsonl` under `runs/`.
+
 ## [3.0.0] - 2026-09-14
 
 ### Breaking

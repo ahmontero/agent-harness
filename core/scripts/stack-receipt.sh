@@ -26,6 +26,10 @@ if [[ "${COMMON_DIR}" != /* ]]; then
     COMMON_DIR="$(cd "${REPO_DIR}/${COMMON_DIR}" && pwd -P)"
 fi
 RECEIPTS_DIR="${COMMON_DIR}/agent-harness/runs"
+# A run is a receipt and a ledger under one ID. Pruning reads this directory because the
+# ledger has no lifecycle of its own: it is created by the workflow that opened the receipt
+# and is named by the same ID.
+LEDGERS_DIR="${COMMON_DIR}/agent-harness/ledgers"
 mkdir -p "${RECEIPTS_DIR}"
 
 usage() {
@@ -336,15 +340,28 @@ case "${ACTION}" in
             TERMINAL_RUNS+=("${run_id}")
         done <<< "$(receipt_summaries)"
 
+        # Both halves of the run, or neither. Removing the receipt alone left the ledger
+        # behind, and `receipt list` is the only index of run IDs -- so once the receipt was
+        # gone its ledger could not be named, read, or removed through the CLI at all. It
+        # accumulated under .git/ for the life of the repository, holding the words the
+        # receipt's closed schema cannot. Pruning the pair is what makes that orphan
+        # unreachable rather than merely rare: no sequence of commands leaves a ledger whose
+        # receipt is gone.
         REMOVED=0
+        LEDGERS_REMOVED=0
         EXCESS=$(( ${#TERMINAL_RUNS[@]} - KEEP ))
         prune_index=0
         while [ "${prune_index}" -lt "${EXCESS}" ]; do
-            rm -f "${RECEIPTS_DIR}/${TERMINAL_RUNS[${prune_index}]}.jsonl"
+            PRUNED_RUN="${TERMINAL_RUNS[${prune_index}]}"
+            rm -f "${RECEIPTS_DIR}/${PRUNED_RUN}.jsonl"
+            if [ -e "${LEDGERS_DIR}/${PRUNED_RUN}.md" ] || [ -L "${LEDGERS_DIR}/${PRUNED_RUN}.md" ]; then
+                rm -f "${LEDGERS_DIR}/${PRUNED_RUN}.md"
+                LEDGERS_REMOVED=$((LEDGERS_REMOVED + 1))
+            fi
             REMOVED=$((REMOVED + 1))
             prune_index=$((prune_index + 1))
         done
-        log_success "Pruned ${REMOVED} terminal receipt(s); ${KEEP} kept, open runs untouched."
+        log_success "Pruned ${REMOVED} terminal run(s) — ${REMOVED} receipt(s) and ${LEDGERS_REMOVED} ledger(s); ${KEEP} kept, open runs untouched."
         ;;
     -h|--help|help)
         usage
