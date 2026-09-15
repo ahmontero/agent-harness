@@ -25,6 +25,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
+source "${SCRIPT_DIR}/lib/qa.sh"
 
 GATE_UNRUNNABLE=2
 GATE_DECLARED_ABSENT=3
@@ -65,19 +66,25 @@ append_quoted_arguments() {
 
 # Resolves one configured command and runs it, or refuses. Extra arguments are appended,
 # which is what lets `harness qa test tests/unit -k name` forward to the configured runner.
+#
+# What the gate resolves to, and whether it can run at all, are answered by lib/qa.sh --
+# the same answers `harness doctor` reports without running anything. Asking here and
+# deciding there would let the two disagree about whether this project can pass its own QA.
 run_configured_gate() {
     local label="$1"
-    local key="$2"
-    local command_line="$3"
-    shift 3
+    local gate="$2"
+    shift 2
+    local key command_line
+    key="$(qa_gate_config_key "${gate}")"
+    command_line="$(qa_gate_command "${gate}")"
 
-    case "${command_line}" in
-        "")
+    case "$(qa_gate_state "${gate}")" in
+        unrunnable)
             log_error "QA gate '${label}' could not run: nothing is configured for it."
             log_info "Set profiles.${ACTIVE_PROFILE}.${key} to the command this project uses, or to false to record that it has none."
             return "${GATE_UNRUNNABLE}"
             ;;
-        false|none)
+        declared-absent)
             log_warn "QA gate '${label}' skipped: the configuration declares this project has none (${key}: false)."
             return "${GATE_DECLARED_ABSENT}"
             ;;
@@ -87,38 +94,16 @@ run_configured_gate() {
     eval "$(append_quoted_arguments "${command_line}" "$@")"
 }
 
-# The test command may also be expressed as a runner name, which is the older and more
-# common form in a recipe's configuration.
-resolve_test_command() {
-    local configured runner
-    configured="$(get_profile_value "qa.testCommand" "")"
-    if [ -n "${configured}" ]; then
-        printf '%s\n' "${configured}"
-        return
-    fi
-    runner="$(get_profile_value "qa.testRunner" "")"
-    case "${runner}" in
-        pytest) printf '%s\n' "pytest" ;;
-        django) printf '%s\n' "python manage.py test" ;;
-        jest)   printf '%s\n' "npm test --" ;;
-        vitest) printf '%s\n' "npx vitest run" ;;
-        cargo)  printf '%s\n' "cargo test" ;;
-        go)     printf '%s\n' "go test ./..." ;;
-        false|none) printf '%s\n' "false" ;;
-        *) printf '%s\n' "" ;;
-    esac
-}
-
 gate_test() {
-    run_configured_gate "test suite" "qa.testCommand" "$(resolve_test_command)" "$@"
+    run_configured_gate "test suite" tests "$@"
 }
 
 gate_lint() {
-    run_configured_gate "lint" "qa.lintCommand" "$(get_profile_value "qa.lintCommand" "")"
+    run_configured_gate "lint" lint
 }
 
 gate_types() {
-    run_configured_gate "types" "qa.typeCheckCommand" "$(get_profile_value "qa.typeCheckCommand" "")"
+    run_configured_gate "types" types
 }
 
 # A gate invoked on its own reports a declared-absent checker as success: nothing is
@@ -190,10 +175,8 @@ case "${ACTION}" in
         # this is a lookup rather than another path through the resolution logic.
         gate_command() {
             case "$1" in
-                scan)  printf 'harness scan --%s' "${SCAN_GATE_MODE}" ;;
-                lint)  get_profile_value "qa.lintCommand" "" ;;
-                types) get_profile_value "qa.typeCheckCommand" "" ;;
-                tests) resolve_test_command ;;
+                scan) printf 'harness scan --%s' "${SCAN_GATE_MODE}" ;;
+                *)    qa_gate_command "$1" ;;
             esac
         }
 

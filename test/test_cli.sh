@@ -1677,6 +1677,16 @@ DOCTOR_DIR="${TMP_TEST_DIR}/doctor-target"
 mkdir -p "${DOCTOR_DIR}"
 git -C "${DOCTOR_DIR}" init -q
 "${HARNESS_ROOT}/install.sh" --target "${DOCTOR_DIR}" >/dev/null
+# This group judges one thing: whether drift alone keeps doctor at exit 0. A bare fixture
+# repository has no test, lint or type command, and doctor now reports an unrunnable gate
+# as an error -- so without this the exit status would carry two independent causes and the
+# assertion below would pass or fail for a reason it is not about. Declaring the gates
+# absent is the configuration's own way of recording that a project has none, so it removes
+# the second cause rather than suppressing it.
+DOCTOR_CONFIG_TEMP="$(mktemp)"
+jq '.profiles.default.qa = {"testCommand": false, "lintCommand": false, "typeCheckCommand": false}' \
+    "${DOCTOR_DIR}/stack.config.json" > "${DOCTOR_CONFIG_TEMP}"
+mv "${DOCTOR_CONFIG_TEMP}" "${DOCTOR_DIR}/stack.config.json"
 printf '\nlocally edited\n' >> "${DOCTOR_DIR}/.claude/skills/harness-implement/SKILL.md"
 
 # HOME is isolated for the whole group. `doctor --fix` repairs both the scopes doctor
@@ -5810,9 +5820,13 @@ git -C "${MACHINE_REPO}" config user.name "Agent Harness Tests"
 cat > "${MACHINE_REPO}/harness.config.json" <<'MACHINE_CONFIG_EOF'
 {
   "project": { "name": "machine-readable", "defaultProfile": "fixture" },
-  "profiles": { "fixture": { "displayName": "Machine", "unknownKey": 1 } }
+  "profiles": { "fixture": { "displayName": "Machine", "unknownKey": 1,
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
 }
 MACHINE_CONFIG_EOF
+# The gates are declared absent so this fixture carries exactly one problem -- the unknown
+# configuration key, which is a warning. Leaving them unset would add unrunnable gates,
+# which are errors, and the assertions below are about doctor staying at exit 0 on warnings.
 echo "seed" > "${MACHINE_REPO}/seed.txt"
 git -C "${MACHINE_REPO}" add -A
 git -C "${MACHINE_REPO}" commit -qm "chore: seed"
@@ -5890,7 +5904,8 @@ git -C "${COMPLETE_REPO}" config user.name "Agent Harness Tests"
 cat > "${COMPLETE_REPO}/harness.config.json" <<'COMPLETE_CONFIG_EOF'
 {
   "project": { "name": "doctor-json-complete", "defaultProfile": "fixture" },
-  "profiles": { "fixture": { "displayName": "Complete" } }
+  "profiles": { "fixture": { "displayName": "Complete",
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
 }
 COMPLETE_CONFIG_EOF
 printf '# Agents\n' > "${COMPLETE_REPO}/AGENTS.md"
@@ -6002,6 +6017,16 @@ mkdir -p "${ALIAS_REPO}"
 git -C "${ALIAS_REPO}" init -q
 git -C "${ALIAS_REPO}" config user.email "tests@agent-harness.local"
 git -C "${ALIAS_REPO}" config user.name "Agent Harness Tests"
+# This group judges CLI alias reporting. Its gates are declared absent so an unrunnable
+# gate -- an error, which would make doctor exit non-zero -- cannot reach the unguarded
+# command substitutions below and abort the group under `set -e` for an unrelated reason.
+cat > "${ALIAS_REPO}/harness.config.json" <<'ALIAS_CONFIG_EOF'
+{
+  "project": { "name": "alias-repo", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Alias fixture",
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
+}
+ALIAS_CONFIG_EOF
 echo "seed" > "${ALIAS_REPO}/seed.txt"
 git -C "${ALIAS_REPO}" add -A
 git -C "${ALIAS_REPO}" commit -qm "chore: seed"
@@ -6044,3 +6069,96 @@ echo "  [PASS] An alias pointing at this checkout is reported as current."
 
 echo ""
 echo "All automated tests passed successfully! [100%]"
+
+echo ""
+echo "=== 56. Testing Doctor QA Gate Readiness ==="
+# doctor answered "0 errors" for a repository whose lint, type and test gates cannot run,
+# and the very next command -- qa all, or the ship that runs it -- failed on exactly that.
+# init warns about it once at install time and nothing reported it afterwards, so the
+# command whose whole job is to say what is wrong was silent about the one thing that
+# stops the next one.
+#
+# The two fixtures are the whole distinction: a gate nobody configured cannot run and is a
+# problem, and a gate a project has recorded it does not have is a decision and is not.
+GATE_UNSET_REPO="${TMP_TEST_DIR}/doctor-gates-unset"
+GATE_DECLARED_REPO="${TMP_TEST_DIR}/doctor-gates-declared"
+for gate_repo in "${GATE_UNSET_REPO}" "${GATE_DECLARED_REPO}"; do
+    mkdir -p "${gate_repo}"
+    git -C "${gate_repo}" init -q
+    git -C "${gate_repo}" config user.email "tests@agent-harness.local"
+    git -C "${gate_repo}" config user.name "Agent Harness Tests"
+    printf '# Agents\n' > "${gate_repo}/AGENTS.md"
+    echo "seed" > "${gate_repo}/seed.txt"
+done
+cat > "${GATE_UNSET_REPO}/harness.config.json" <<'GATE_UNSET_EOF'
+{
+  "project": { "name": "gates-unset", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Gates unset" } }
+}
+GATE_UNSET_EOF
+cat > "${GATE_DECLARED_REPO}/harness.config.json" <<'GATE_DECLARED_EOF'
+{
+  "project": { "name": "gates-declared", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Gates declared absent",
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
+}
+GATE_DECLARED_EOF
+for gate_repo in "${GATE_UNSET_REPO}" "${GATE_DECLARED_REPO}"; do
+    git -C "${gate_repo}" add -A
+    git -C "${gate_repo}" commit -qm "chore: seed"
+done
+
+gate_doctor() {
+    GATE_DOCTOR_STATUS=0
+    GATE_DOCTOR_JSON="$( (cd "$1" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor --json 2>/dev/null) )" || GATE_DOCTOR_STATUS=$?
+}
+
+# R1, R2, R4: every gate is named, each carries a state, and the verdict is an error that
+# reaches the exit status.
+gate_doctor "${GATE_UNSET_REPO}"
+for gate_name in tests lint types; do
+    if [ "$(printf '%s' "${GATE_DOCTOR_JSON}" | jq -r --arg name "${gate_name}" \
+            '[.checks[] | select(.section == "qa" and .name == $name and .state == "error")] | length')" -ne 1 ]; then
+        echo "  [FAIL] doctor --json did not report the unrunnable gate '${gate_name}' as an error: ${GATE_DOCTOR_JSON}"
+        exit 1
+    fi
+done
+if [ "${GATE_DOCTOR_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] doctor exited 0 for a repository whose lint, type and test gates cannot run"
+    exit 1
+fi
+if [ "$(printf '%s' "${GATE_DOCTOR_JSON}" | jq -r '.status')" != "failed" ]; then
+    echo "  [FAIL] doctor --json disagreed with its own non-zero exit status: ${GATE_DOCTOR_JSON}"
+    exit 1
+fi
+echo "  [PASS] doctor reports a gate that cannot run as an error and exits non-zero."
+
+# R3: the refusal stays satisfiable. A project that has recorded it has no linter is not a
+# project with a broken environment, and must not be held to a gate it can never pass.
+gate_doctor "${GATE_DECLARED_REPO}"
+for gate_name in tests lint types; do
+    if [ "$(printf '%s' "${GATE_DOCTOR_JSON}" | jq -r --arg name "${gate_name}" \
+            '[.checks[] | select(.section == "qa" and .name == $name and .state == "ok")] | length')" -ne 1 ]; then
+        echo "  [FAIL] doctor --json did not report the declared-absent gate '${gate_name}' as ok: ${GATE_DOCTOR_JSON}"
+        exit 1
+    fi
+done
+if [ "$(printf '%s' "${GATE_DOCTOR_JSON}" | jq -r '[.checks[] | select(.section == "qa" and .state == "error")] | length')" -ne 0 ]; then
+    echo "  [FAIL] doctor treated a declared-absent gate as a problem: ${GATE_DOCTOR_JSON}"
+    exit 1
+fi
+echo "  [PASS] A gate the configuration declares absent is reported and is not a problem."
+
+# R5: one resolver. doctor and qa all must never disagree about whether a gate can run --
+# the whole reason resolution moved into a library rather than being written twice.
+GATE_QA_JSON="$( (cd "${GATE_UNSET_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all --json 2>/dev/null) )" || true
+gate_doctor "${GATE_UNSET_REPO}"
+for gate_name in tests lint types; do
+    GATE_QA_STATE="$(printf '%s' "${GATE_QA_JSON}" | jq -r --arg name "${gate_name}" '.gates[] | select(.name == $name) | .status')"
+    GATE_DOCTOR_STATE="$(printf '%s' "${GATE_DOCTOR_JSON}" | jq -r --arg name "${gate_name}" '.checks[] | select(.section == "qa" and .name == $name) | .detail')"
+    if [ "${GATE_QA_STATE}" != "unrunnable" ] || [ "${GATE_DOCTOR_STATE}" != "unrunnable" ]; then
+        echo "  [FAIL] doctor and qa all disagree about '${gate_name}': qa=${GATE_QA_STATE} doctor=${GATE_DOCTOR_STATE}"
+        exit 1
+    fi
+done
+echo "  [PASS] doctor and qa all resolve every gate through one implementation."

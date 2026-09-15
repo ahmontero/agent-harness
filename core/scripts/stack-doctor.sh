@@ -11,6 +11,7 @@ source "${SCRIPT_DIR}/lib/utils.sh"
 source "${SCRIPT_DIR}/lib/config.sh"
 source "${SCRIPT_DIR}/lib/git.sh"
 source "${SCRIPT_DIR}/lib/surface.sh"
+source "${SCRIPT_DIR}/lib/qa.sh"
 
 ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
@@ -307,9 +308,45 @@ else
     record_check "configuration" "config validate" "ok"
 fi
 
+echo ""
+log_info "--- 8. QA Gates ---"
+# doctor answered "0 errors" for a repository whose lint, type and test gates cannot run,
+# and the very next command -- `qa all`, or the `ship` that runs it -- failed on exactly
+# that. `harness init` warns once at install time and nothing reported it afterwards, so
+# the command whose whole job is to say what is wrong was silent about the one thing that
+# stops the next one.
+#
+# Unrunnable is an error rather than a warning, because it is the verdict `qa all` already
+# reaches: rules/floor.md invariant 1 is that a gate which could not run is not a gate that
+# passed, and reporting that as a warning here would be this command disagreeing with the
+# floor. A gate the configuration declares absent with false is a recorded decision and is
+# not a problem -- which is what keeps the error satisfiable.
+#
+# The states come from lib/qa.sh, so nothing is executed here and doctor cannot reach a
+# verdict `qa all` would contradict.
+for qa_gate in "${QA_COMMAND_GATES[@]}"; do
+    QA_GATE_KEY="$(qa_gate_config_key "${qa_gate}")"
+    case "$(qa_gate_state "${qa_gate}")" in
+        runnable)
+            log_success "QA gate '${qa_gate}' is configured: $(qa_gate_command "${qa_gate}")"
+            record_check "qa" "${qa_gate}" "ok" "runnable"
+            ;;
+        declared-absent)
+            log_success "QA gate '${qa_gate}': this project records that it has none (${QA_GATE_KEY}: false)."
+            record_check "qa" "${qa_gate}" "ok" "declared-absent"
+            ;;
+        *)
+            log_error "QA gate '${qa_gate}' cannot run: nothing is configured for it."
+            log_info "Set profiles.${ACTIVE_PROFILE}.${QA_GATE_KEY} to the command this project uses, or to false to record that it has none."
+            ERRORS_FOUND=$((ERRORS_FOUND + 1))
+            record_check "qa" "${qa_gate}" "error" "unrunnable"
+            ;;
+    esac
+done
+
 if [ "${CHECK_AUTH}" = true ]; then
     echo ""
-    log_info "--- 8. Provider Authentication ---"
+    log_info "--- 9. Provider Authentication ---"
     # One shape for every provider that has a CLI: the tool, and the command that says
     # whether it is signed in. Adding a provider is a row, not a branch.
     report_provider_auth() {
