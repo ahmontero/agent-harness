@@ -5874,6 +5874,54 @@ if [ "${MACHINE_STATUS}" -ne 0 ] || [ "$(printf '%s' "${MACHINE_OUTPUT}" | jq -r
 fi
 echo "  [PASS] doctor --json reports its counts and the state of every check."
 
+# "the state of every check it ran" is what the line above claims, what 2.21.0's changelog
+# promised, and what the `jq` recipe in the README tells agents to filter on -- and
+# record_check was called only where a check had something to complain about. The AGENTS.md
+# check recorded nothing when the file was present, and the configuration check recorded
+# nothing when the configuration validated. An agent filtering
+# `.checks[] | select(.state != "ok")` therefore cannot tell a check that passed from a
+# check that was never reported at all, which is the distinction the machine form exists
+# to make. The fixture above has neither file, so both holes need a repository that passes.
+COMPLETE_REPO="${TMP_TEST_DIR}/doctor-json-complete"
+mkdir -p "${COMPLETE_REPO}"
+git -C "${COMPLETE_REPO}" init -q
+git -C "${COMPLETE_REPO}" config user.email "tests@agent-harness.local"
+git -C "${COMPLETE_REPO}" config user.name "Agent Harness Tests"
+cat > "${COMPLETE_REPO}/harness.config.json" <<'COMPLETE_CONFIG_EOF'
+{
+  "project": { "name": "doctor-json-complete", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Complete" } }
+}
+COMPLETE_CONFIG_EOF
+printf '# Agents\n' > "${COMPLETE_REPO}/AGENTS.md"
+echo "seed" > "${COMPLETE_REPO}/seed.txt"
+git -C "${COMPLETE_REPO}" add -A
+git -C "${COMPLETE_REPO}" commit -qm "chore: seed"
+
+COMPLETE_OUTPUT="$( (cd "${COMPLETE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" doctor --json 2>/dev/null) )" || true
+if ! printf '%s' "${COMPLETE_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] doctor --json did not emit one JSON document for a passing repository: ${COMPLETE_OUTPUT}"
+    exit 1
+fi
+# Each row is asserted with its state, so recording a passing check as anything other than
+# "ok" would not satisfy this either.
+for complete_row in "repository:AGENTS.md" "configuration:config validate"; do
+    COMPLETE_SECTION="${complete_row%%:*}"
+    COMPLETE_NAME="${complete_row#*:}"
+    if [ "$(printf '%s' "${COMPLETE_OUTPUT}" | jq -r --arg section "${COMPLETE_SECTION}" --arg name "${COMPLETE_NAME}" \
+            '[.checks[] | select(.section == $section and .name == $name and .state == "ok")] | length')" -ne 1 ]; then
+        echo "  [FAIL] doctor --json did not record the passing check ${COMPLETE_SECTION}/${COMPLETE_NAME}: ${COMPLETE_OUTPUT}"
+        exit 1
+    fi
+done
+# And the counters still agree with the rows: a check recorded as ok must not have been
+# counted as a problem.
+if [ "$(printf '%s' "${COMPLETE_OUTPUT}" | jq -r '.errors')" -ne 0 ]; then
+    echo "  [FAIL] doctor --json reported errors for a repository whose checks pass: ${COMPLETE_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] doctor --json records a check that passed, not only one that failed."
+
 # receipt list --json: the summaries are already tabular; the table was the only rendering.
 MACHINE_RUN_ID="$( (cd "${MACHINE_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" receipt start fix --issue AH-60) )"
 machine_run receipt list --json
