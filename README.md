@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-3.2.1-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-4.0.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -425,9 +425,15 @@ Path rules are the exception: a rule matching a filename has no line to belong t
 answered by the changeset's file list in every mode. Staging a `.env` is caught whatever the
 mode.
 
-`harness qa all` scans in `--branch` mode. `profiles.<name>.qa.scanMode` moves it to
-`staged`, `diff` or `all` for a project that wants the whole repository read before a pull
-request; an unknown value fails the gate rather than falling back to a mode nobody chose.
+`harness qa all` scans in `--branch` mode on a branch, and in `--all` mode on the trunk.
+That is not a convenience: on the trunk a delta scan has no range — `merge-base(trunk, HEAD)`
+is `HEAD` — so it would select the empty set and report a pass having read nothing. The
+trunk's build is the one that has to read the whole repository.
+
+`profiles.<name>.qa.scanMode` pins a mode explicitly — `branch`, `staged`, `diff` or `all` —
+and is honoured on the trunk as anywhere else, so a project adopting the scanner on an
+existing codebase can keep a delta mode everywhere. An unknown value fails the gate rather
+than falling back to a mode nobody chose.
 
 ```jsonc
 "qa":    { "scanMode": "all" },

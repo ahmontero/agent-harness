@@ -428,6 +428,75 @@ for gate in scan lint types test; do
     run_qa_failure_case "${gate}"
 done
 
+# On the trunk a delta scan has no range: merge-base(trunk, HEAD) is HEAD, so --branch reads
+# the empty set and returns 0. `qa all` then printed "All required QA gates passed" over a
+# repository carrying committed secrets -- the exact shape this file's header says invariant 1
+# forbids, reached by asking the wrong question rather than by suppressing the answer.
+#
+# It is not hypothetical: `harness init --with-ci` writes a pipeline that runs `qa all` on
+# push to the trunk, so every adopter's trunk build had a scan gate that read nothing.
+TRUNK_SCAN_REPO="${TMP_TEST_DIR}/qa-trunk-scan"
+mkdir -p "${TRUNK_SCAN_REPO}"
+git -C "${TRUNK_SCAN_REPO}" init -q -b main
+git -C "${TRUNK_SCAN_REPO}" config user.email "tests@agent-harness.local"
+git -C "${TRUNK_SCAN_REPO}" config user.name "Agent Harness Tests"
+cat > "${TRUNK_SCAN_REPO}/harness.config.json" <<'TRUNK_SCAN_CONFIG_EOF'
+{
+  "project": { "name": "trunk-scan", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "Trunk scan",
+    "qa": { "testCommand": false, "lintCommand": false, "typeCheckCommand": false } } }
+}
+TRUNK_SCAN_CONFIG_EOF
+# A finding that predates the branch: exactly what a delta mode is designed not to report,
+# and exactly what the trunk's own build has to. The fixture value is not a credential, and
+# the scanner reading this suite's own text is the gate working.
+# harness-ignore: SEC-010
+printf 'api_key = "aaaaaaaaaaaaaaaaaaaaaaaa"\n' > "${TRUNK_SCAN_REPO}/leak.py"
+git -C "${TRUNK_SCAN_REPO}" add -A
+git -C "${TRUNK_SCAN_REPO}" commit -qm "chore: seed"
+
+trunk_scan_qa() {
+    TRUNK_SCAN_STATUS=0
+    TRUNK_SCAN_OUTPUT="$( (cd "${TRUNK_SCAN_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" qa all 2>&1) )" || TRUNK_SCAN_STATUS=$?
+}
+
+trunk_scan_qa
+if [ "${TRUNK_SCAN_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] qa all on the trunk passed over a committed secret: ${TRUNK_SCAN_OUTPUT}"
+    exit 1
+fi
+if ! printf '%s' "${TRUNK_SCAN_OUTPUT}" | grep -q "SEC-"; then
+    echo "  [FAIL] qa all on the trunk failed without naming the finding: ${TRUNK_SCAN_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] qa all on the trunk asks the whole-repository question, not an empty delta."
+
+# On a branch the delta question is still the right one: this must not become a repository
+# scan on every branch, which is what the delta modes exist to avoid.
+git -C "${TRUNK_SCAN_REPO}" checkout -q -b feat/AH-99-clean
+printf 'ok = 1\n' > "${TRUNK_SCAN_REPO}/clean.py"
+git -C "${TRUNK_SCAN_REPO}" add clean.py
+git -C "${TRUNK_SCAN_REPO}" commit -qm "feat(AH-99): add a clean file"
+trunk_scan_qa
+if [ "${TRUNK_SCAN_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] qa all on a branch reported the trunk's pre-existing finding: ${TRUNK_SCAN_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] On a branch the scan gate still reads only what the branch changes."
+
+# A project that has chosen a mode keeps it, on the trunk as anywhere else. The refusal has
+# to stay configurable or a repository adopting the harness cannot pass its own trunk build.
+git -C "${TRUNK_SCAN_REPO}" checkout -q main
+TRUNK_SCAN_TEMP="$(mktemp)"
+jq '.profiles.fixture.qa.scanMode = "branch"' "${TRUNK_SCAN_REPO}/harness.config.json" > "${TRUNK_SCAN_TEMP}"
+mv "${TRUNK_SCAN_TEMP}" "${TRUNK_SCAN_REPO}/harness.config.json"
+trunk_scan_qa
+if [ "${TRUNK_SCAN_STATUS}" -ne 0 ]; then
+    echo "  [FAIL] an explicit qa.scanMode of branch was overridden on the trunk: ${TRUNK_SCAN_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] An explicitly configured scanMode is honoured on the trunk too."
+
 echo ""
 echo "=== 8. Testing Delta Spec Verification ==="
 SPEC_TEST_DIR="${TMP_TEST_DIR}/spec-verification"
