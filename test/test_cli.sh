@@ -6496,3 +6496,52 @@ if [ -e "${CI_BARE}/.github/workflows/agent-harness.yml" ]; then
     exit 1
 fi
 echo "  [PASS] A bare init writes no pipeline."
+
+echo ""
+echo "=== 59. Testing Recipe Test-Path Exclusions ==="
+# A rule named "Bare assert outside tests" that fires on a test file is a false positive in
+# the one place a project cannot fix the code -- pytest is written with assert -- so the only
+# remaining move is --no-verify, which retires the whole gate. The python recipe excluded
+# "tests/*", "*/tests/*", "test_*.py", "*_test.py" and "conftest.py", and the exclusion is a
+# bash [[ == ]] glob where '*' spans '/': a pattern not starting with '*' can only match a
+# path that starts with it. So src/app/test_foo.py and src/app/conftest.py -- the layout
+# pytest documents for tests beside the code -- matched none of them.
+RECIPE_GLOB_REPO="${TMP_TEST_DIR}/recipe-test-globs"
+mkdir -p "${RECIPE_GLOB_REPO}/src/app" "${RECIPE_GLOB_REPO}/tests"
+git -C "${RECIPE_GLOB_REPO}" init -q
+git -C "${RECIPE_GLOB_REPO}" config user.email "tests@agent-harness.local"
+git -C "${RECIPE_GLOB_REPO}" config user.name "Agent Harness Tests"
+
+# Every layout pytest supports, each with the bare assert that is correct there.
+printf 'def test_one():\n    assert 1 == 1\n' > "${RECIPE_GLOB_REPO}/src/app/test_foo.py"
+printf 'import pytest\n\n\ndef helper():\n    assert True\n' > "${RECIPE_GLOB_REPO}/src/app/conftest.py"
+printf 'def test_two():\n    assert 2 == 2\n' > "${RECIPE_GLOB_REPO}/tests/test_bar.py"
+printf 'def test_three():\n    assert 3 == 3\n' > "${RECIPE_GLOB_REPO}/src/app/bar_test.py"
+# And production code, where the rule must still fire: the exclusions must not be widened
+# into a rule that never matches anything.
+printf 'def charge(amount):\n    assert amount > 0\n    return amount\n' > "${RECIPE_GLOB_REPO}/src/app/billing.py"
+git -C "${RECIPE_GLOB_REPO}" add -A
+git -C "${RECIPE_GLOB_REPO}" commit -qm "chore: seed"
+
+RECIPE_GLOB_OUTPUT="$( (cd "${RECIPE_GLOB_REPO}" && env -u STACK_PROFILE "${HARNESS_ROOT}/bin/harness" scan --all --json \
+    --rules "${HARNESS_ROOT}/recipes/python-fastapi/rules/landmines.json" 2>/dev/null) )" || true
+if ! printf '%s' "${RECIPE_GLOB_OUTPUT}" | jq -e . >/dev/null 2>&1; then
+    echo "  [FAIL] the scan emitted no JSON document for the recipe's rules: ${RECIPE_GLOB_OUTPUT}"
+    exit 1
+fi
+for recipe_test_file in "src/app/test_foo.py" "src/app/conftest.py" "tests/test_bar.py" "src/app/bar_test.py"; do
+    if [ "$(printf '%s' "${RECIPE_GLOB_OUTPUT}" | jq -r --arg f "${recipe_test_file}" \
+            '[.findings[] | select(.rule == "ASSERT-001" and .file == $f)] | length')" -ne 0 ]; then
+        echo "  [FAIL] ASSERT-001 fired on a test file it is named to exclude: ${recipe_test_file}"
+        exit 1
+    fi
+done
+echo "  [PASS] ASSERT-001 excludes every layout pytest supports, not only a root tests/ directory."
+
+# The exclusions must not have been widened into a rule that never fires.
+if [ "$(printf '%s' "${RECIPE_GLOB_OUTPUT}" | jq -r \
+        '[.findings[] | select(.rule == "ASSERT-001" and .file == "src/app/billing.py")] | length')" -ne 1 ]; then
+    echo "  [FAIL] ASSERT-001 no longer fires on production code: ${RECIPE_GLOB_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] ASSERT-001 still fires on production code."

@@ -6,6 +6,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.1] - 2026-09-15
+
+### Fixed
+
+- The `python-fastapi` recipe's `ASSERT-001` excluded `test_*.py` and `conftest.py` and
+  matched neither where pytest actually puts them. Exclusions are bash `[[ == ]]` globs with
+  `*` spanning `/`, so a pattern that does not start with `*` only matches a path that starts
+  with it: `tests/*` already had `*/tests/*` beside it, and these two had no such pair. A
+  test written beside the code it tests — the layout pytest documents — was reported as a
+  bare assert in production, by a rule named "Bare assert outside tests". It is the worst
+  shape a false positive can take: the code cannot be changed, because pytest is written with
+  `assert`, so the only remaining move is `--no-verify`, which retires the whole gate.
+- `*/test_*.py` and `*/conftest.py` rather than `*test_*.py` and `*conftest.py`: the latter
+  pair also excludes `src/latest_config.py`, and an exclusion that hides production files is a
+  worse failure than the one being fixed.
+- An audit of every exclusion glob this project ships found seven anchored at the start and
+  only these two wrong. `cmd/*`, `main.go` and `scripts/*` are anchored deliberately — they
+  name a convention that lives at the repository root — and `tests/*` already carries its
+  nested pair.
+
+### Changed
+
+- The README states how exclusion globs are matched, which is the behaviour that produced
+  this defect. A recipe author reads `landmines.json`, not `stack-scan.sh`.
+
 ## [3.2.0] - 2026-09-14
 
 ### Added

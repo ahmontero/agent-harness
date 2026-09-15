@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-3.2.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-3.2.1-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -468,7 +468,16 @@ changes the shape of the answer, never the verdict.
 
 A rule's own `excludePaths` takes glob patterns and scopes that one rule without switching
 it off (`vendor/*`, `*.generated.js`, `tests/*`); `profiles.<name>.rules.excludePaths` above
-does the same for every rule at once. A single line can be exempted in place:
+does the same for every rule at once.
+
+Globs are matched against the repository-relative path with `*` spanning `/`, so **a pattern
+that does not start with `*` only matches a path that starts with it**. `tests/*` excludes a
+root `tests/` directory and nothing nested; `*/tests/*` is what excludes the rest. Write both
+when you mean both — a rule scoped to `test_*.py` alone will fire on `src/app/test_foo.py`.
+Prefer `*/test_*.py` over `*test_*.py`: the latter also swallows `src/latest_config.py`, and
+an exclusion that hides production files is worse than the false positive it was meant to fix.
+
+A single line can be exempted in place:
 
 ```python
 value = legacy_call()  # harness-ignore: NO_RAW_SQL
