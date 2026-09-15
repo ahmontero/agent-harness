@@ -40,8 +40,10 @@
       "tests/*",
       "*/tests/*",
       "test_*.py",
+      "*/test_*.py",
       "*_test.py",
-      "conftest.py"
+      "conftest.py",
+      "*/conftest.py"
     ],
     "level": "error",
     "message": "python -O strips assert. Raise HTTPException or a domain error instead."
