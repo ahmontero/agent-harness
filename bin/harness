@@ -137,7 +137,7 @@ ${BOLD}Core Commands:${RESET}
                 harness sync --check
 
   ${GREEN}init${RESET}          Initialize agent harness in current repository
-                harness init [--recipe <name>] [--with-hook]
+                harness init [--recipe <name>] [--with-hook] [--with-ci [--force]]
 
   ${GREEN}uninstall${RESET}     Remove the surfaces, CLI symlinks and hook agent-harness installed
                 harness uninstall [--global|--target <path>] [--dry-run] [--yes]

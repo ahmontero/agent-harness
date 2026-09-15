@@ -83,6 +83,51 @@ install_managed_hook() {
     printf '%s\n' "${hook_path}"
 }
 
+# The CI template's marker. A generated pipeline carrying it is ours to rewrite; one without
+# it belongs to the project and is refused.
+# shellcheck disable=SC2034 # consumed by the scripts that source this library
+HARNESS_CI_TEMPLATE_MARKER="# agent-harness-ci-template-v1"
+
+# Copies a managed file into place under the same contract install_managed_hook applies to a
+# hook: ours by marker is rewritten idempotently, anything else is refused, and --force backs
+# it up first. A pipeline is the second thing this project generates into somebody's
+# repository, and the first one's rules are the ones worth keeping.
+#
+# stdout is the return channel -- the caller reads the written path from it -- so every human
+# line here goes to stderr.
+install_managed_file() {
+    local source="$1"
+    local destination="$2"
+    local marker="$3"
+    local force="$4"
+    local temporary
+
+    if [ ! -f "${source}" ]; then
+        log_error "The template is missing: ${source}"
+        return 1
+    fi
+    if [ -e "${destination}" ] && ! grep -qxF "${marker}" "${destination}" 2>/dev/null; then
+        if [ "${force}" != true ]; then
+            log_error "A file agent-harness did not write already exists: ${destination}" >&2
+            log_info "Re-run with --force to back it up and replace it." >&2
+            return 1
+        fi
+        if [ -e "${destination}.harness-backup" ]; then
+            log_error "Refusing to overwrite an existing backup: ${destination}.harness-backup" >&2
+            return 1
+        fi
+        cp -p "${destination}" "${destination}.harness-backup"
+        log_warn "Backed up the previous file to ${destination}.harness-backup."
+    fi
+
+    mkdir -p "$(dirname -- "${destination}")"
+    temporary="$(mktemp "$(dirname -- "${destination}")/.harness.XXXXXX")"
+    cat "${source}" > "${temporary}"
+    chmod 644 "${temporary}"
+    mv "${temporary}" "${destination}"
+    printf '%s\n' "${destination}"
+}
+
 ensure_git_repo() {
     local repo_dir="${1:-$(pwd)}"
     if [ ! -d "${repo_dir}/.git" ] && ! git -C "${repo_dir}" rev-parse --is-inside-work-tree >/dev/null 2>&1; then

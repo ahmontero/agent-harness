@@ -52,6 +52,7 @@ SCRIPTS_DIR="${HARNESS_ROOT}/core/scripts"
 
 source "${SCRIPTS_DIR}/lib/utils.sh"
 source "${SCRIPTS_DIR}/lib/config.sh"
+source "${SCRIPTS_DIR}/lib/git.sh"
 source "${SCRIPTS_DIR}/lib/transaction.sh"
 source "${SCRIPTS_DIR}/lib/surface.sh"
 
@@ -63,6 +64,7 @@ ${BOLD}Usage:${RESET}
   ./setup                     # Guided interactive installer (Default)
   ./setup --target <path>     # Initialize harness in target repository
   ./setup --target <path> --with-hook # ...and install the scanner's pre-commit hook
+  ./setup --target <path> --with-ci   # ...and write the CI pipeline for its ci.provider
   ./setup --target <path> --expert # Expose advanced primitive skills too
   ./setup --recipe <name>     # Initialize with recipe (python-fastapi, typescript-fullstack, go-microservices)
   ./setup --global            # Install skills & rules globally to user home
@@ -92,6 +94,8 @@ SEED_TARGET=""
 GUIDED_MODE=false
 ROLLBACK_MODE=false
 WITH_HOOK=false
+WITH_CI=false
+FORCE_CI=false
 SKILL_MODE="curated"
 ASSUME_YES=false
 
@@ -119,12 +123,20 @@ while [[ $# -gt 0 ]]; do
             SEED_TARGET="$2"; shift 2 ;;
         --rollback) ROLLBACK_MODE=true; shift ;;
         --with-hook) WITH_HOOK=true; shift ;;
+        --with-ci) WITH_CI=true; shift ;;
+        --force) FORCE_CI=true; shift ;;
         --expert) SKILL_MODE="expert"; shift ;;
         --yes|-y) ASSUME_YES=true; shift ;;
         -h|--help) usage; exit 0 ;;
         *) log_error "Unknown option: $1"; usage; exit 1 ;;
     esac
 done
+
+if [ "${FORCE_CI}" = true ] && [ "${WITH_CI}" != true ]; then
+    log_error "--force replaces a CI pipeline agent-harness did not write and only applies with --with-ci."
+    exit 1
+fi
+
 
 # Rollback Mode
 if [ "${ROLLBACK_MODE}" = true ]; then
@@ -869,7 +881,53 @@ install_target_repo() {
         fi
     fi
 
+    # Every local gate is bypassable with --no-verify, so CI is the only place a project's
+    # floor is actually enforced -- and an adopter received nothing for it. Written beside
+    # the hook and for the same reasons: outside the transaction, idempotent over its own
+    # file, refusing anything it did not write.
+    #
+    # `harness uninstall` deliberately does not remove it. A pipeline is a file the
+    # repository commits and owns, like AGENTS.md and rules/, and those are exactly what
+    # uninstall leaves alone.
+    if [ "${WITH_CI}" = true ]; then
+        scaffold_ci "${target}" || return 1
+    fi
+
     log_success "agent-harness initialized in ${target}"
+}
+
+# Writes the pipeline for the target's configured ci.provider.
+#
+# The GitHub destination is one workflow among many by design. The GitLab one is an include
+# target rather than .gitlab-ci.yml, so an adopter's own pipeline cannot be touched even
+# under --force: there is no code path that writes to it.
+scaffold_ci() {
+    local target="$1"
+    local provider destination written
+
+    provider="$( cd "${target}" && get_profile_value "ci.provider" "github" )"
+    case "${provider}" in
+        github) destination="${target}/.github/workflows/agent-harness.yml" ;;
+        gitlab) destination="${target}/.gitlab/agent-harness.yml" ;;
+        *)
+            # Shipping a template nobody here can run would be a claim this project cannot
+            # execute, which rules/floor.md invariant 3 forbids.
+            log_error "No CI template is available for provider '${provider}'; nothing was written."
+            log_info "agent-harness ships pipelines for github and gitlab. Adapt one of core/templates/ci/ by hand, or set profiles.<profile>.ci.provider to one of those."
+            return 1
+            ;;
+    esac
+
+    written="$(install_managed_file "${HARNESS_ROOT}/core/templates/ci/${provider}.yml" \
+        "${destination}" "${HARNESS_CI_TEMPLATE_MARKER}" "${FORCE_CI}")" || {
+        log_info "The rest of the installation stands; write the pipeline later with 'harness init --with-ci'."
+        return 1
+    }
+    log_success "Wrote the ${provider} pipeline to ${written}."
+    if [ "${provider}" = "gitlab" ]; then
+        log_info "This is an include target, not your pipeline. Add it to .gitlab-ci.yml:"
+        printf '  include:\n    - local: .gitlab/agent-harness.yml\n'
+    fi
 }
 
 # 3. Global Installation

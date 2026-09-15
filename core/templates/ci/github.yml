@@ -1,0 +1,53 @@
+# agent-harness-ci-template-v1
+# Written by `harness init --with-ci`. Re-running rewrites this file while the line above is
+# present; remove it and the installer will refuse to touch the file instead.
+name: Agent Harness
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  harness:
+    name: Quality floor
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          # 'commit check --branch' and the scan inside 'qa all' both resolve a merge base,
+          # and the default depth of 1 has none. A gate that cannot resolve its range exits 2
+          # and reports that it could not run -- correct, and useless.
+          fetch-depth: 0
+
+      - name: Install jq
+        run: sudo apt-get update && sudo apt-get install -y jq
+
+      - name: Install agent-harness
+        # This installs whatever is on agent-harness's main branch at the moment the job
+        # runs: it is not pinned, and a change there changes what gates your pipeline. This
+        # file is yours now -- pin it to a tag or a commit if your project needs a fixed
+        # version, and review what you are running as you would any other CI dependency.
+        run: |
+          curl -fsSL https://raw.githubusercontent.com/ahmontero/agent-harness/main/install.sh | bash
+          echo "${HOME}/.local/bin" >> "${GITHUB_PATH}"
+
+      - name: Validate the resolved configuration
+        run: harness config validate
+
+      - name: Check this branch's commit messages
+        # Against the pull request's base, not the trunk: a stacked branch legitimately
+        # carries its parent's commits, and those belong to the parent's issue.
+        run: |
+          if [ -n "${{ github.base_ref }}" ]; then
+            harness commit check --branch --base "origin/${{ github.base_ref }}"
+          else
+            harness commit check --branch
+          fi
+
+      - name: Run the full quality floor
+        # scan, lint, types and tests. A gate that could not run is not a gate that passed:
+        # configure it, or record that this project has none with false.
+        run: harness qa all

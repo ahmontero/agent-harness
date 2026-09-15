@@ -1,0 +1,33 @@
+# agent-harness-ci-template-v1
+# Written by `harness init --with-ci`. Re-running rewrites this file while the line above is
+# present; remove it and the installer will refuse to touch the file instead.
+#
+# This is an include target, never your pipeline. Wire it in from .gitlab-ci.yml:
+#
+#   include:
+#     - local: .gitlab/agent-harness.yml
+#
+# Your own .gitlab-ci.yml is yours; agent-harness does not write to it.
+
+agent-harness:
+  stage: test
+  image: debian:stable-slim
+  variables:
+    # 'commit check --branch' and the scan inside 'qa all' both resolve a merge base, and a
+    # shallow clone has none. A gate that cannot resolve its range exits 2 and reports that
+    # it could not run -- correct, and useless.
+    GIT_DEPTH: 0
+  # The install below fetches whatever is on agent-harness's main branch at the moment the
+  # job runs: it is not pinned, and a change there changes what gates your pipeline. This
+  # file is yours now -- pin it to a tag or a commit if your project needs a fixed version,
+  # and review what you are running as you would any other CI dependency.
+  before_script:
+    - apt-get update && apt-get install -y --no-install-recommends ca-certificates curl git jq
+    - curl -fsSL https://raw.githubusercontent.com/ahmontero/agent-harness/main/install.sh | bash
+    - export PATH="${HOME}/.local/bin:${PATH}"
+  script:
+    - harness config validate
+    - harness commit check --branch
+    # scan, lint, types and tests. A gate that could not run is not a gate that passed:
+    # configure it, or record that this project has none with false.
+    - harness qa all

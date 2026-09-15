@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-3.1.0-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-3.2.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -682,6 +682,25 @@ harness completion install
 
 It writes a Zsh completion to `~/.zsh/completion/_harness` and a Bash completion to
 `~/.local/share/bash-completion/completions/harness`, and prints how to load each.
+
+---
+
+### 🏗️ CI for the project that adopts it
+
+Every local gate is bypassable with `--no-verify`, so CI is the only place a project's floor is actually enforced. `harness init --with-ci` writes the pipeline for the profile's `ci.provider`:
+
+```bash
+harness init --with-ci
+```
+
+| Provider | File | Shape |
+| :--- | :--- | :--- |
+| `github` | `.github/workflows/agent-harness.yml` | one workflow among many |
+| `gitlab` | `.gitlab/agent-harness.yml` | an `include:` target — your `.gitlab-ci.yml` is never written to |
+
+The pipeline checks out full history (both `--branch` gates resolve a merge base, and a depth-1 clone has none), installs agent-harness, then runs `harness config validate`, `harness commit check --branch` and `harness qa all`.
+
+A file carrying the template's marker is rewritten idempotently; one without it is refused, and `--force` backs it up first — the same contract the hook installer has. `azure` is refused by name rather than scaffolded from a template nobody here can run. `harness uninstall` does not remove the pipeline: like `AGENTS.md` and `rules/`, it is a file the repository commits and owns.
 
 ---
 
