@@ -210,11 +210,30 @@ case "${ACTION}" in
             jq -n --arg status "$1" --argjson gates "${gates}" '{status: $status, gates: $gates}' >&3
         }
 
-        # Which question the scan gate asks. --branch is the default because the aggregate
-        # runs before a branch is published; a project that wants the whole repository read
-        # at that moment had no way to say so, and hard-coding the mode is also what makes
-        # the answer untestable from the outside.
-        SCAN_GATE_MODE="$(get_profile_value "qa.scanMode" "branch")"
+        # Which question the scan gate asks, and it is not the same question everywhere.
+        #
+        # On a branch it is --branch: the aggregate runs before the work is published, and a
+        # delta mode is what lets a project adopt the scanner without first cleaning every
+        # legacy file a branch happens to touch.
+        #
+        # On the trunk there is no branch to ask about. merge-base(trunk, HEAD) is HEAD, so
+        # --branch selects the empty set and returns 0 -- and `qa all` printed "All required
+        # QA gates passed" over a repository carrying committed secrets. That is the shape
+        # this file's header calls out as forbidden by rules/floor.md invariant 1, reached by
+        # asking the wrong question rather than by suppressing the answer. It is the trunk's
+        # build that has to read the whole repository, which is what --all is.
+        #
+        # A configured mode still wins, on the trunk as anywhere else: the refusal has to stay
+        # satisfiable. Distinguishing "configured as branch" from "defaulted to branch" is why
+        # the lookup asks for an empty default rather than "branch".
+        SCAN_GATE_MODE="$(get_profile_value "qa.scanMode" "")"
+        if [ -z "${SCAN_GATE_MODE}" ]; then
+            if [ "$(get_current_branch "${REPO_DIR}")" = "$(get_trunk_branch "${REPO_DIR}")" ]; then
+                SCAN_GATE_MODE="all"
+            else
+                SCAN_GATE_MODE="branch"
+            fi
+        fi
         case "${SCAN_GATE_MODE}" in
             branch|staged|diff|all) ;;
             *)

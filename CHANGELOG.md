@@ -6,6 +6,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [4.0.0] - 2026-09-15
+
+### Breaking
+
+- `harness qa all` reads the whole repository on the trunk, where it previously read nothing.
+  A delta scan has no range there — `merge-base(trunk, HEAD)` is `HEAD` — so `--branch`
+  selected the empty set, returned 0, and the aggregate printed "All required QA gates
+  passed" over a repository carrying committed secrets. A trunk build that has pre-existing
+  findings therefore goes from green to red. That verdict is the correct one: the green was
+  false, and `rules/floor.md` invariant 1 is the rule it broke. Set
+  `profiles.<profile>.qa.scanMode` to keep a delta mode on the trunk, or clear the findings.
+
+### Fixed
+
+- The wrong question, not a suppressed answer. `stack-qa.sh`'s own header records the same
+  shape from 2.x — a gate that "reported success having checked nothing" — and this reached
+  it by asking a question with no range rather than by ignoring a result.
+- It was not hypothetical once 3.2.0 shipped: `harness init --with-ci` writes a pipeline that
+  runs `qa all` on push to the trunk, so every adopter's trunk build had a scan gate that read
+  nothing. The template needs no change; asking the right question at the seam fixes it.
+- An explicitly configured `qa.scanMode` is honoured on the trunk as anywhere else, so the
+  refusal stays satisfiable. Distinguishing a configured `branch` from a defaulted one is why
+  the lookup now asks for an empty default.
+
 ## [3.2.1] - 2026-09-15
 
 ### Fixed
