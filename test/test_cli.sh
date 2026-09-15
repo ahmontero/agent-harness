@@ -6380,3 +6380,119 @@ if [ ! -f "${MSGHOOK_REPO}/.git/hooks/commit-msg.harness-backup" ]; then
     exit 1
 fi
 echo "  [PASS] commit --install-hook refuses a foreign hook and --force backs it up first."
+
+echo ""
+echo "=== 58. Testing CI Scaffolding ==="
+# init installs surfaces, rules, a configuration and optionally the scanner's hook -- and
+# nothing for CI. Every local gate is bypassable with --no-verify, so CI is the only place a
+# project's floor is actually enforced; this repository's own CI caught three defects in this
+# series. An adopter received none of it.
+ci_fixture() {
+    local dir="$1" provider="$2"
+    mkdir -p "${dir}"
+    git -C "${dir}" init -q
+    git -C "${dir}" config user.email "tests@agent-harness.local"
+    git -C "${dir}" config user.name "Agent Harness Tests"
+    cat > "${dir}/harness.config.json" <<CI_CONFIG_EOF
+{
+  "project": { "name": "ci-fixture", "defaultProfile": "fixture" },
+  "profiles": { "fixture": { "displayName": "CI fixture", "ci": { "provider": "${provider}" } } }
+}
+CI_CONFIG_EOF
+}
+ci_init() {
+    CI_INIT_STATUS=0
+    CI_INIT_OUTPUT="$( (cd "$1" && env -u STACK_PROFILE "${HARNESS_ROOT}/install.sh" --target "$1" "${@:2}" 2>&1) )" || CI_INIT_STATUS=$?
+}
+
+CI_GH="${TMP_TEST_DIR}/ci-github"
+ci_fixture "${CI_GH}" github
+ci_init "${CI_GH}" --with-ci
+CI_GH_FILE="${CI_GH}/.github/workflows/agent-harness.yml"
+if [ ! -f "${CI_GH_FILE}" ]; then
+    echo "  [FAIL] init --with-ci wrote no GitHub workflow: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+# R5: both --branch gates resolve a merge base, and a depth-1 clone has none. Without full
+# history the pipeline exits 2 and reports it could not run -- correct, and useless.
+if ! grep -q 'fetch-depth: 0' "${CI_GH_FILE}"; then
+    echo "  [FAIL] the generated workflow does not check out full history, so --branch gates cannot resolve a base"
+    exit 1
+fi
+for ci_gate in "config validate" "commit check --branch" "qa all"; do
+    if ! grep -qF "${ci_gate}" "${CI_GH_FILE}"; then
+        echo "  [FAIL] the generated workflow does not run 'harness ${ci_gate}'"
+        exit 1
+    fi
+done
+echo "  [PASS] init --with-ci writes a GitHub workflow that runs the harness's own gates."
+
+# R3: ours is rewritten idempotently; a file we did not write is refused.
+CI_GH_DIGEST="$(git hash-object "${CI_GH_FILE}")"
+ci_init "${CI_GH}" --with-ci
+if [ "${CI_INIT_STATUS}" -ne 0 ] || [ "$(git hash-object "${CI_GH_FILE}")" != "${CI_GH_DIGEST}" ]; then
+    echo "  [FAIL] re-running init --with-ci over its own file was not idempotent: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+printf 'name: somebody elses pipeline\n' > "${CI_GH_FILE}"
+ci_init "${CI_GH}" --with-ci
+if [ "${CI_INIT_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] init --with-ci overwrote a workflow agent-harness did not write"
+    exit 1
+fi
+if [ "$(cat "${CI_GH_FILE}")" != "name: somebody elses pipeline" ]; then
+    echo "  [FAIL] init --with-ci refused and replaced the foreign workflow anyway"
+    exit 1
+fi
+ci_init "${CI_GH}" --with-ci --force
+if [ "${CI_INIT_STATUS}" -ne 0 ] || [ ! -f "${CI_GH_FILE}.harness-backup" ]; then
+    echo "  [FAIL] init --with-ci --force did not replace the foreign workflow and back it up: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] The workflow is idempotent over its own file and refuses one it did not write."
+
+# R2: an adopter's GitLab pipeline is never touched. The file is an include: target, so
+# .gitlab-ci.yml cannot be clobbered even under --force.
+CI_GL="${TMP_TEST_DIR}/ci-gitlab"
+ci_fixture "${CI_GL}" gitlab
+printf 'stages:\n  - build\n' > "${CI_GL}/.gitlab-ci.yml"
+CI_GL_PIPELINE_DIGEST="$(git hash-object "${CI_GL}/.gitlab-ci.yml")"
+ci_init "${CI_GL}" --with-ci --force
+if [ ! -f "${CI_GL}/.gitlab/agent-harness.yml" ]; then
+    echo "  [FAIL] init --with-ci wrote no GitLab include file: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+if [ "$(git hash-object "${CI_GL}/.gitlab-ci.yml")" != "${CI_GL_PIPELINE_DIGEST}" ]; then
+    echo "  [FAIL] init --with-ci modified the adopter's own .gitlab-ci.yml"
+    exit 1
+fi
+# The reader has to be told how to wire it in, or the file sits there doing nothing.
+if ! printf '%s' "${CI_INIT_OUTPUT}" | grep -q "include"; then
+    echo "  [FAIL] init --with-ci wrote a GitLab include target without saying how to include it: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] The GitLab file is an include target and the adopter's own pipeline is untouched."
+
+# R4: a provider whose template nobody here can run is refused by name, not guessed at.
+CI_AZ="${TMP_TEST_DIR}/ci-azure"
+ci_fixture "${CI_AZ}" azure
+ci_init "${CI_AZ}" --with-ci
+if [ "${CI_INIT_STATUS}" -eq 0 ]; then
+    echo "  [FAIL] init --with-ci claimed to scaffold CI for a provider it has no template for"
+    exit 1
+fi
+if ! printf '%s' "${CI_INIT_OUTPUT}" | grep -qi "azure"; then
+    echo "  [FAIL] init --with-ci refused without naming the provider: ${CI_INIT_OUTPUT}"
+    exit 1
+fi
+echo "  [PASS] A provider with no verifiable template is refused by name."
+
+# Without the flag, nothing is written. Changing what a bare init does is not this delta's.
+CI_BARE="${TMP_TEST_DIR}/ci-bare"
+ci_fixture "${CI_BARE}" github
+ci_init "${CI_BARE}"
+if [ -e "${CI_BARE}/.github/workflows/agent-harness.yml" ]; then
+    echo "  [FAIL] init wrote a CI pipeline without --with-ci"
+    exit 1
+fi
+echo "  [PASS] A bare init writes no pipeline."

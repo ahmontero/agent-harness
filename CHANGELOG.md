@@ -6,6 +6,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.2.0] - 2026-09-14
+
+### Added
+
+- `harness init --with-ci` writes the CI pipeline for the profile's `ci.provider`. `init`
+  installed surfaces, rules, a configuration and optionally the scanner's hook, and nothing
+  for CI — yet every local gate is bypassable with `--no-verify`, so CI is the only place a
+  project's floor is actually enforced. This repository's own CI caught three defects in the
+  2.21.2–3.1.0 series; an adopter received none of it and had to write the pipeline
+  themselves, which means most would not.
+- Both destinations are additive. A GitHub workflow is one file among many by design; the
+  GitLab file is an `include:` target rather than `.gitlab-ci.yml`, so there is no code path
+  that writes to an adopter's own pipeline — not even under `--force`.
+- The generated pipeline checks out full history, installs agent-harness, and runs
+  `harness config validate`, `harness commit check --branch` and `harness qa all`. Full
+  history because both `--branch` gates resolve a merge base and a depth-1 clone has none.
+- A pipeline carrying the template's marker is rewritten idempotently; one without it is
+  refused, and `--force` backs it up first. `install_managed_file` in `lib/git.sh` applies
+  the contract `install_managed_hook` already applies to hooks.
+- `azure` is refused by name. Shipping an Azure Pipelines template nobody here can run would
+  be a claim this project cannot execute, which `rules/floor.md` invariant 3 forbids.
+- The generated pipeline installs agent-harness from `main` and does not pin a version. That
+  is stated in a comment at the install step of both templates rather than only in this
+  changelog: it runs in someone else's CI, a change on `main` changes what gates their
+  pipeline, and the file is theirs to pin once written.
+- `harness uninstall` deliberately leaves the pipeline. It is a file the repository commits
+  and owns, like `AGENTS.md` and `rules/`, and those are exactly what uninstall leaves alone.
+
 ## [3.1.0] - 2026-09-14
 
 ### Added
