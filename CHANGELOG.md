@@ -6,6 +6,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [3.1.0] - 2026-09-14
+
+### Added
+
+- `harness commit --install-hook` installs a `commit-msg` hook. `harness commit check`
+  enforces Conventional Commits, the branch's issue key and forbidden trailers, and had no
+  enforcement point until `harness ship` or CI — by which time the commit is in the history
+  and the only remedy is rewriting it. 2.21.2 is the proof: `commit build` wrote a
+  non-conforming commit and the disagreement surfaced at `ship`. The scanner has shipped a
+  `pre-commit` hook since the beginning; the message validator shipped none.
+- `harness commit check --message-file <path>` judges a message before it is a commit, and
+  shares one implementation with the revision path. Two copies of three rules is the
+  divergence this project keeps closing, and the copy inside a hook is the one nobody would
+  notice had fallen behind.
+- A merge, a revert, and a `fixup!`/`squash!` subject pass untouched: git writes the first
+  two and the rebase rewrites the third, so none is the project's to conform. This
+  repository's own history is mostly merge commits — a hook that rejected them would be
+  uninstalled the first time someone merged. Comment lines are stripped before judging, so a
+  trailer quoted in git's template is not read as one the commit carries.
+- `harness doctor` reports both managed hooks and `harness uninstall` removes both. A second
+  managed hook the diagnostic ignored and the uninstaller left behind is the asymmetry 2.21.3
+  was about.
+
+### Changed
+
+- `harness doctor`'s section 6 is now "Git Hooks" rather than "Pre-Commit Hook", because it
+  reports two. The `--json` form is unaffected: hooks were already rows under section `hook`,
+  and `commit-msg` is a new row beside `pre-commit`.
+- Both hook installers share `install_managed_hook` in `lib/git.sh`: the foreign-hook
+  refusal, the backup, the atomic rename and the PATH fallback are one implementation rather
+  than one per hook. Its refusal writes to stderr, because stdout is the channel the caller
+  reads the installed path from.
+
 ## [3.0.1] - 2026-09-14
 
 ### Fixed

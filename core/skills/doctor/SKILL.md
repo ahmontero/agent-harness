@@ -1,6 +1,6 @@
 ---
 name: harness-doctor
-description: Diagnoses and self-heals the engineering environment: CLI dependencies and symlinks, installed skill surfaces, the landmine pre-commit hook, the resolved configuration, and whether this project's QA gates can run.
+description: Diagnoses and self-heals the engineering environment: CLI dependencies and symlinks, installed skill surfaces, the landmine pre-commit and commit-msg hooks, the resolved configuration, and whether this project's QA gates can run.
 argument-hint: "[--fix] [--check-auth]"
 ---
 
@@ -9,7 +9,8 @@ argument-hint: "[--fix] [--check-auth]"
 Diagnoses, in order: required and optional executables; which agent harnesses are active;
 the target repository's `AGENTS.md`; whether each installed skill surface is still current;
 whether the `~/.local/bin` CLI symlinks resolve to this checkout and are on `PATH`; whether
-the repository's `pre-commit` hook is agent-harness's own, a foreign hook, or absent;
+each of the repository's managed hooks — the scanner's `pre-commit` and the message
+validator's `commit-msg` — is agent-harness's own, a foreign hook, or absent;
 whether the resolved configuration passes `harness config validate`; and whether this
 project's test, lint and type gates can run at all.
 

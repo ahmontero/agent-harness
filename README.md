@@ -1,7 +1,7 @@
 # 🚀 agent-harness
 
 <p align="center">
-  <a href="package.json"><img src="https://img.shields.io/badge/version-3.0.1-blue.svg" alt="Version" /></a>
+  <a href="package.json"><img src="https://img.shields.io/badge/version-3.1.0-blue.svg" alt="Version" /></a>
   <a href=".github/workflows/ci.yml"><img src="https://github.com/ahmontero/agent-harness/actions/workflows/ci.yml/badge.svg" alt="CI Status" /></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-lightgrey.svg" alt="License: MIT" /></a>
   <a href="README.md"><img src="https://img.shields.io/badge/Harnesses-Antigravity%20|%20Claude%20Code%20|%20Codex%20|%20Cursor%20|%20.agents-purple.svg" alt="Multi-Harness" /></a>
@@ -272,7 +272,7 @@ Diagnoses environment health:
 - Verifies required executables, target repository health, and which agent harnesses are active.
 - Reports whether each installed skill surface is still current, with a reason per drifted surface. Drift is a warning, not an error: a stale surface still works.
 - Checks that the `~/.local/bin` CLI symlinks resolve to this checkout and that the directory is on `PATH`.
-- Reports whether the repository's `pre-commit` hook is agent-harness's own, a foreign hook, or absent.
+- Reports whether each managed hook — the scanner's `pre-commit` and the message validator's `commit-msg` — is agent-harness's own, a foreign hook, or absent.
 - Validates the resolved configuration; a configuration that does not validate is an error, not a warning.
 - Reports whether this project's test, lint and type gates can run. A gate nobody configured is an error and exits non-zero: `harness qa all` and `harness ship` will refuse on it, and doctor is where you find that out first. A gate declared absent with `false` is a recorded decision and is not a problem. Doctor executes nothing — it reads the same resolution `qa all` runs, so the two cannot disagree.
 - `--check-auth` reports whether the configured issue and CI provider CLIs are authenticated.

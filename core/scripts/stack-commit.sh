@@ -16,6 +16,34 @@ ACTIVE_PROFILE=$(get_active_profile)
 REPO_DIR="$(get_target_repo "${ACTIVE_PROFILE}")"
 ensure_git_repo "${REPO_DIR}"
 
+# The message validator had no enforcement point until `harness ship` or CI, by which time
+# the commit is in the history and the only remedy is rewriting it. The scanner ships a
+# pre-commit hook; this is the same idea one hook later, and it goes through the same
+# installer in lib/git.sh so the refusal, the backup and the PATH fallback cannot drift.
+INSTALL_HOOK=false
+FORCE_HOOK=false
+COMMIT_ARGUMENTS=()
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --install-hook) INSTALL_HOOK=true; shift ;;
+        --force) FORCE_HOOK=true; shift ;;
+        *) COMMIT_ARGUMENTS+=("$1"); shift ;;
+    esac
+done
+set -- "${COMMIT_ARGUMENTS[@]+"${COMMIT_ARGUMENTS[@]}"}"
+
+if [ "${FORCE_HOOK}" = true ] && [ "${INSTALL_HOOK}" != true ]; then
+    log_error "--force replaces a foreign commit-msg hook and only applies with --install-hook."
+    exit 1
+fi
+if [ "${INSTALL_HOOK}" = true ]; then
+    HOOK_PATH="$(install_managed_hook "${REPO_DIR}" commit-msg "${HARNESS_COMMIT_MSG_MARKER}" \
+        'exec "${HARNESS_CLI}" commit check --message-file "$1"' \
+        'harness commit check --message-file "$1" || exit 1' "${FORCE_HOOK}")" || exit 1
+    log_success "Installed the commit message hook into ${HOOK_PATH}."
+    exit 0
+fi
+
 ACTION="${1:-build}"
 shift || true
 
@@ -67,8 +95,12 @@ case "${ACTION}" in
         CHECK_RANGE=false
         CHECK_BASE=""
         COMMIT_HASH=""
+        MESSAGE_FILE=""
         while [ $# -gt 0 ]; do
             case "$1" in
+                --message-file)
+                    [ -n "${2:-}" ] || { log_error "--message-file requires a path."; exit 1; }
+                    MESSAGE_FILE="$2"; shift 2 ;;
                 --branch) CHECK_RANGE=true; shift ;;
                 --base)
                     [ -n "${2:-}" ] || { log_error "--base requires a git revision."; exit 1; }
@@ -87,6 +119,10 @@ case "${ACTION}" in
             log_error "--branch reads a range; it takes no single revision."
             exit 1
         fi
+        if [ -n "${MESSAGE_FILE}" ] && { [ "${CHECK_RANGE}" = true ] || [ -n "${COMMIT_HASH}" ]; }; then
+            log_error "--message-file judges a message that is not a commit yet; it takes no revision or range."
+            exit 1
+        fi
 
         # Each rule is satisfiable, the way a project with no linter records that it has
         # none. A convention nobody in the project follows is a gate that can never pass,
@@ -101,13 +137,17 @@ case "${ACTION}" in
         BRANCH="$(get_current_branch "${REPO_DIR}")"
         BRANCH_KEY="$(issue_key_from_branch "${BRANCH}")"
 
-        # Returns non-zero and reports every rule the commit breaks, rather than the first.
-        check_one_commit() {
-            local revision="$1"
-            local subject body short problems=0 trailer
-            short="$(git log -1 --pretty=%h "${revision}")"
-            subject="$(git log -1 --pretty=%s "${revision}")"
-            body="$(git log -1 --pretty=%B "${revision}")"
+        # The rules, applied to a subject and a body from wherever they came: a revision that
+        # exists, or a message file the commit-msg hook is holding before one does. Two
+        # copies of three rules is the divergence this repository keeps closing, and the
+        # copy in the hook would be the one nobody noticed had fallen behind.
+        #
+        # Returns non-zero and reports every rule the message breaks, rather than the first.
+        check_message() {
+            local short="$1"
+            local subject="$2"
+            local body="$3"
+            local problems=0 trailer
 
             if [ "${REQUIRE_CONVENTIONAL}" != "false" ] && \
                ! printf '%s' "${subject}" | grep -Eq "^(${COMMIT_TYPE_PATTERN})(\([a-zA-Z0-9_.-]+\))?!?: .+"; then
@@ -134,6 +174,41 @@ case "${ACTION}" in
 
             [ "${problems}" -eq 0 ]
         }
+
+        check_one_commit() {
+            local revision="$1"
+            check_message \
+                "$(git log -1 --pretty=%h "${revision}")" \
+                "$(git log -1 --pretty=%s "${revision}")" \
+                "$(git log -1 --pretty=%B "${revision}")"
+        }
+
+        # A message file, judged before it becomes a commit.
+        #
+        # Comment lines go first: git hands the hook the raw file including its own template,
+        # and a forbidden trailer quoted in a comment is not a trailer the commit carries.
+        #
+        # Three kinds of message are not the project's to conform. A merge and a revert are
+        # written by git, and this repository's own history is mostly merge commits -- a hook
+        # that rejected them would be uninstalled the first time someone merged. A fixup! or
+        # squash! subject is rewritten by the rebase it exists for.
+        if [ -n "${MESSAGE_FILE}" ]; then
+            if [ ! -f "${MESSAGE_FILE}" ]; then
+                log_error "The commit message file does not exist: ${MESSAGE_FILE}"
+                exit 1
+            fi
+            GIT_DIR_PATH="$(git rev-parse --git-dir 2>/dev/null || echo .git)"
+            if [ -e "${GIT_DIR_PATH}/MERGE_HEAD" ] || [ -e "${GIT_DIR_PATH}/REVERT_HEAD" ]; then
+                exit 0
+            fi
+            MESSAGE_BODY="$(grep -v '^#' "${MESSAGE_FILE}" || true)"
+            MESSAGE_SUBJECT="$(printf '%s\n' "${MESSAGE_BODY}" | grep -v '^[[:space:]]*$' | head -n 1)"
+            case "${MESSAGE_SUBJECT}" in
+                "fixup! "*|"squash! "*|"Merge "*|"Revert "*) exit 0 ;;
+            esac
+            check_message "the commit message" "${MESSAGE_SUBJECT}" "${MESSAGE_BODY}" || exit 1
+            exit 0
+        fi
 
         if [ "${CHECK_RANGE}" != true ]; then
             COMMIT_HASH="${COMMIT_HASH:-HEAD}"

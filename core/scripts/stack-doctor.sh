@@ -275,24 +275,42 @@ case ":${PATH}:" in
 esac
 
 echo ""
-log_info "--- 6. Pre-Commit Hook ---"
+log_info "--- 6. Git Hooks ---"
+# Two managed hooks now, reported by one function. agent-harness installs the scanner's
+# pre-commit hook and the message validator's commit-msg hook, and a second managed hook
+# the diagnostic did not know about is the asymmetry AH-43 was about.
 HOOKS_DIR="$(resolve_hooks_dir "${REPO_DIR}" 2>/dev/null || true)"
+report_managed_hook() {
+    local hook_name="$1"
+    local marker="$2"
+    local install_command="$3"
+    local manual_line="$4"
+    local hook_path="${HOOKS_DIR}/${hook_name}"
+
+    if [ ! -e "${hook_path}" ]; then
+        log_warn "There is no agent-harness ${hook_name} hook in ${HOOKS_DIR}. Run '${install_command}'."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "hook" "${hook_name}" "warning" "no ${hook_name} hook is installed"
+    elif grep -qxF "${marker}" "${hook_path}" 2>/dev/null; then
+        log_success "agent-harness ${hook_name} hook installed: ${hook_path}"
+        record_check "hook" "${hook_name}" "ok" "${hook_path}"
+    else
+        log_warn "A ${hook_name} hook exists that was not written by agent-harness: ${hook_path}"
+        log_info "Add '${manual_line}' to it, or replace it with '${install_command} --force'."
+        WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+        record_check "hook" "${hook_name}" "warning" "a foreign ${hook_name} hook is installed"
+    fi
+}
 if [ -z "${HOOKS_DIR}" ]; then
     log_warn "Hook state unavailable: ${REPO_DIR} is not a Git repository."
     WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
     record_check "hook" "pre-commit" "warning" "not a Git repository"
-elif [ ! -e "${HOOKS_DIR}/pre-commit" ]; then
-    log_warn "There is no agent-harness pre-commit hook in ${HOOKS_DIR}. Run 'harness scan --install-hook'."
-    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
-    record_check "hook" "pre-commit" "warning" "no pre-commit hook is installed"
-elif grep -qxF "${HARNESS_PRE_COMMIT_MARKER}" "${HOOKS_DIR}/pre-commit" 2>/dev/null; then
-    log_success "Landmine pre-commit hook installed: ${HOOKS_DIR}/pre-commit"
-    record_check "hook" "pre-commit" "ok" "${HOOKS_DIR}/pre-commit"
+    record_check "hook" "commit-msg" "warning" "not a Git repository"
 else
-    record_check "hook" "pre-commit" "warning" "a foreign pre-commit hook is installed"
-    log_warn "A pre-commit hook exists that was not written by agent-harness: ${HOOKS_DIR}/pre-commit"
-    log_info "Add 'harness scan --staged || exit 1' to it, or replace it with 'harness scan --install-hook --force'."
-    WARNINGS_FOUND=$((WARNINGS_FOUND + 1))
+    report_managed_hook "pre-commit" "${HARNESS_PRE_COMMIT_MARKER}" \
+        "harness scan --install-hook" "harness scan --staged || exit 1"
+    report_managed_hook "commit-msg" "${HARNESS_COMMIT_MSG_MARKER}" \
+        "harness commit --install-hook" 'harness commit check --message-file "$1" || exit 1'
 fi
 
 echo ""

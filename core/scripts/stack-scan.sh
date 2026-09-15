@@ -136,61 +136,12 @@ scan_exit() {
     exit "${code}"
 }
 
-# The marker is what makes "our hook" a decidable question. Without it the installer
-# cannot tell an idempotent re-run from silently destroying a hook the project depends on,
-# and it previously resolved that ambiguity by overwriting and reporting success. It lives
-# in lib/git.sh because `harness doctor` reports on the same hook.
-HOOK_MARKER="${HARNESS_PRE_COMMIT_MARKER}"
-
-# The hook ran `harness` by name, so it needed whatever PATH the committing process had.
-# A GUI Git client does not inherit a login shell, so ~/.local/bin is absent and every
-# commit from one died with "exec: harness: not found" -- fail-closed, but with an error
-# that names nothing actionable, and the usual next move is --no-verify, which retires the
-# gate the hook exists to be.
-#
-# The checkout that installed the hook is written in, and the name is kept as a fallback so
-# a checkout that later moves degrades to the old behaviour rather than to nothing.
-write_pre_commit_hook() {
-    local hook_path="$1"
-    local hooks_dir temporary harness_cli
-    hooks_dir="$(dirname -- "${hook_path}")"
-    harness_cli="$(get_harness_root)/bin/harness"
-    temporary="$(mktemp "${hooks_dir}/pre-commit.harness.XXXXXX")"
-    cat > "${temporary}" <<HOOK_EOF
-#!/usr/bin/env bash
-${HOOK_MARKER}
-HARNESS_CLI="${harness_cli}"
-[ -x "\${HARNESS_CLI}" ] || HARNESS_CLI="harness"
-exec "\${HARNESS_CLI}" scan --staged
-HOOK_EOF
-    chmod 755 "${temporary}"
-    mv "${temporary}" "${hook_path}"
-}
-
+# Installing the scanner's hook goes through the same installer the message validator's
+# does: the foreign-hook refusal, the backup, the atomic rename and the PATH fallback are
+# one implementation in lib/git.sh rather than one per hook.
 if [ "${INSTALL_HOOK}" = true ]; then
-    # rev-parse resolves the hooks directory for linked worktrees too, where .git is a
-    # file and ${REPO_DIR}/.git/hooks would be a directory git never reads.
-    HOOKS_DIR="$(resolve_hooks_dir "${REPO_DIR}")"
-    HOOK_PATH="${HOOKS_DIR}/pre-commit"
-    HOOK_BACKUP="${HOOK_PATH}.harness-backup"
-    mkdir -p "${HOOKS_DIR}"
-
-    if [ -e "${HOOK_PATH}" ] && ! grep -qxF "${HOOK_MARKER}" "${HOOK_PATH}" 2>/dev/null; then
-        if [ "${FORCE_HOOK}" != true ]; then
-            log_error "A pre-commit hook that agent-harness did not write already exists: ${HOOK_PATH}"
-            log_info "Add this line to it instead, or re-run with --force to back it up and replace it:"
-            printf '  harness scan --staged || exit 1\n'
-            exit 1
-        fi
-        if [ -e "${HOOK_BACKUP}" ]; then
-            log_error "Refusing to overwrite an existing backup: ${HOOK_BACKUP}"
-            exit 1
-        fi
-        cp -p "${HOOK_PATH}" "${HOOK_BACKUP}"
-        log_warn "Backed up the previous pre-commit hook to ${HOOK_BACKUP}."
-    fi
-
-    write_pre_commit_hook "${HOOK_PATH}"
+    HOOK_PATH="$(install_managed_hook "${REPO_DIR}" pre-commit "${HARNESS_PRE_COMMIT_MARKER}" \
+        'exec "${HARNESS_CLI}" scan --staged' 'harness scan --staged || exit 1' "${FORCE_HOOK}")" || exit 1
     log_success "Installed Landmine pre-commit hook into ${HOOK_PATH}."
     exit 0
 fi
